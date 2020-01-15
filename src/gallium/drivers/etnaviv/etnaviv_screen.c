@@ -37,6 +37,7 @@
 #include "etnaviv_query.h"
 #include "etnaviv_resource.h"
 #include "etnaviv_translate.h"
+#include "etnaviv_yuv.h"
 
 #include "util/hash_table.h"
 #include "util/os_time.h"
@@ -496,6 +497,9 @@ gpu_supports_texture_format(struct etna_screen *screen, uint32_t fmt,
       supported = VIV_FEATURE(screen, ETNA_FEATURE_HALTI2);
 
 
+   if (etna_format_needs_yuv_tiler(format))
+      supported = VIV_FEATURE(screen, ETNA_FEATURE_YUV420_TILER);
+
    if (!supported)
       return false;
 
@@ -578,6 +582,17 @@ gpu_supports_vertex_format(struct etna_screen *screen, enum pipe_format format)
       return VIV_FEATURE(screen, ETNA_FEATURE_HALTI2);
 
    return true;
+}
+
+static enum pipe_format
+etna_screen_get_fallback_format_for(struct pipe_screen *pscreen,
+                                    enum pipe_format format)
+{
+   /* Mark NV12 textures as being YUYV. */
+   if (format == PIPE_FORMAT_NV12)
+      return PIPE_FORMAT_YUYV;
+
+   return PIPE_FORMAT_NONE;
 }
 
 static bool
@@ -1145,6 +1160,7 @@ etna_screen_create(struct etna_device *dev, struct etna_gpu *gpu,
 
    pscreen->get_timestamp = u_default_get_timestamp;
    pscreen->context_create = etna_context_create;
+   pscreen->get_fallback_format_for = etna_screen_get_fallback_format_for;
    pscreen->is_format_supported = etna_screen_is_format_supported;
    pscreen->query_dmabuf_modifiers = etna_screen_query_dmabuf_modifiers;
    pscreen->is_dmabuf_modifier_supported = etna_screen_is_dmabuf_modifier_supported;

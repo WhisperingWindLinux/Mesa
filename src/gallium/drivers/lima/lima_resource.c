@@ -30,6 +30,7 @@
 #include "util/u_debug.h"
 #include "util/u_transfer.h"
 #include "util/u_surface.h"
+#include "util/u_transfer_helper.h"
 #include "util/hash_table.h"
 #include "util/ralloc.h"
 #include "util/u_drm.h"
@@ -96,6 +97,7 @@ setup_miptree(struct lima_resource *res,
    unsigned width = width0;
    unsigned height = height0;
    unsigned depth = pres->depth0;
+   unsigned nr_samples = MAX2(pres->nr_samples, 1);
    uint32_t size = 0;
 
    for (level = 0; level <= pres->last_level; level++) {
@@ -125,18 +127,17 @@ setup_miptree(struct lima_resource *res,
       if (util_format_is_compressed(pres->format))
          res->levels[level].layer_stride /= 4;
 
-      /* The start address of each level except the last level
-       * must be 64-aligned in order to be able to pass the
-       * addresses to the hardware. */
-      if (level != pres->last_level)
-         size += align(actual_level_size, 64);
-      else
-         size += actual_level_size;  /* Save some memory */
+      size += align(actual_level_size, 64);
 
       width = u_minify(width, 1);
       height = u_minify(height, 1);
       depth = u_minify(depth, 1);
    }
+
+   if (nr_samples > 1)
+      res->mrt_pitch = size;
+
+   size *= nr_samples;
 
    return size;
 }
@@ -544,18 +545,6 @@ lima_resource_set_damage_region(struct pipe_screen *pscreen,
    damage->num_region = nrects;
 }
 
-void
-lima_resource_screen_init(struct lima_screen *screen)
-{
-   screen->base.resource_create = lima_resource_create;
-   screen->base.resource_create_with_modifiers = lima_resource_create_with_modifiers;
-   screen->base.resource_from_handle = lima_resource_from_handle;
-   screen->base.resource_destroy = lima_resource_destroy;
-   screen->base.resource_get_handle = lima_resource_get_handle;
-   screen->base.resource_get_param = lima_resource_get_param;
-   screen->base.set_damage_region = lima_resource_set_damage_region;
-}
-
 static struct pipe_surface *
 lima_surface_create(struct pipe_context *pctx,
                     struct pipe_resource *pres,
@@ -578,6 +567,7 @@ lima_surface_create(struct pipe_context *pctx,
    psurf->format = surf_tmpl->format;
    psurf->width = u_minify(pres->width0, level);
    psurf->height = u_minify(pres->height0, level);
+   psurf->nr_samples = surf_tmpl->nr_samples;
    psurf->u.tex.level = level;
    psurf->u.tex.first_layer = surf_tmpl->u.tex.first_layer;
    psurf->u.tex.last_layer = surf_tmpl->u.tex.last_layer;
@@ -713,14 +703,6 @@ lima_transfer_map(struct pipe_context *pctx,
          box->x / util_format_get_blockwidth(pres->format) *
          util_format_get_blocksize(pres->format);
    }
-}
-
-static void
-lima_transfer_flush_region(struct pipe_context *pctx,
-                           struct pipe_transfer *ptrans,
-                           const struct pipe_box *box)
-{
-
 }
 
 static bool
@@ -928,6 +910,30 @@ lima_texture_subdata(struct pipe_context *pctx,
    lima_transfer_unmap_inner(ctx, &t.base);
 }
 
+static const struct u_transfer_vtbl transfer_vtbl = {
+   .resource_create       = lima_resource_create,
+   .resource_destroy      = lima_resource_destroy,
+   .transfer_map          = lima_transfer_map,
+   .transfer_unmap        = lima_transfer_unmap,
+   .transfer_flush_region = u_default_transfer_flush_region,
+};
+
+void
+lima_resource_screen_init(struct lima_screen *screen)
+{
+   screen->base.resource_create = lima_resource_create;
+   screen->base.resource_create_with_modifiers = lima_resource_create_with_modifiers;
+   screen->base.resource_from_handle = lima_resource_from_handle;
+   screen->base.resource_destroy = lima_resource_destroy;
+   screen->base.resource_get_handle = lima_resource_get_handle;
+   screen->base.resource_get_param = lima_resource_get_param;
+   screen->base.set_damage_region = lima_resource_set_damage_region;
+   screen->base.transfer_helper = u_transfer_helper_create(&transfer_vtbl,
+                                                           false, false,
+                                                           false, true,
+                                                           false);
+}
+
 void
 lima_resource_context_init(struct lima_context *ctx)
 {
@@ -944,11 +950,11 @@ lima_resource_context_init(struct lima_context *ctx)
 
    ctx->base.blit = lima_blit;
 
-   ctx->base.buffer_map = lima_transfer_map;
-   ctx->base.texture_map = lima_transfer_map;
-   ctx->base.transfer_flush_region = lima_transfer_flush_region;
-   ctx->base.buffer_unmap = lima_transfer_unmap;
-   ctx->base.texture_unmap = lima_transfer_unmap;
+   ctx->base.buffer_map = u_transfer_helper_transfer_map;
+   ctx->base.texture_map = u_transfer_helper_transfer_map;
+   ctx->base.transfer_flush_region = u_transfer_helper_transfer_flush_region;
+   ctx->base.buffer_unmap = u_transfer_helper_transfer_unmap;
+   ctx->base.texture_unmap = u_transfer_helper_transfer_unmap;
 
    ctx->base.flush_resource = lima_flush_resource;
 }

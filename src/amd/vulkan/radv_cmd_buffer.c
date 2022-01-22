@@ -436,7 +436,8 @@ radv_destroy_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
 
 static VkResult
 radv_create_cmd_buffer(struct radv_device *device, struct radv_cmd_pool *pool,
-                       VkCommandBufferLevel level, VkCommandBuffer *pCommandBuffer)
+                       VkCommandBufferLevel level, VkCommandBuffer *pCommandBuffer,
+                       uint32_t queue_family_index)
 {
    struct radv_cmd_buffer *cmd_buffer;
    unsigned ring;
@@ -456,7 +457,7 @@ radv_create_cmd_buffer(struct radv_device *device, struct radv_cmd_pool *pool,
    cmd_buffer->pool = pool;
 
    list_addtail(&cmd_buffer->pool_link, &pool->cmd_buffers);
-   cmd_buffer->qf = vk_queue_to_radv(device->physical_device, pool->vk.queue_family_index);
+   cmd_buffer->qf = vk_queue_to_radv(device->physical_device, queue_family_index);
 
    ring = radv_queue_family_to_ring(device->physical_device, cmd_buffer->qf);
 
@@ -4506,7 +4507,8 @@ radv_AllocateCommandBuffers(VkDevice _device, const VkCommandBufferAllocateInfo 
 
          pCommandBuffers[i] = radv_cmd_buffer_to_handle(cmd_buffer);
       } else {
-         result = radv_create_cmd_buffer(device, pool, pAllocateInfo->level, &pCommandBuffers[i]);
+         result = radv_create_cmd_buffer(device, pool, pAllocateInfo->level, &pCommandBuffers[i],
+                                         pool->vk.queue_family_index);
       }
       if (result != VK_SUCCESS)
          break;

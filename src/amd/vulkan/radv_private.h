@@ -1540,6 +1540,7 @@ struct radv_cmd_buffer {
 
    struct radv_cmd_pool *pool;
    struct list_head pool_link;
+   bool pool_linked;
 
    VkCommandBufferUsageFlags usage_flags;
    enum radv_cmd_buffer_status status;
@@ -1576,6 +1577,12 @@ struct radv_cmd_buffer {
    uint64_t gfx9_fence_va;
    uint32_t gfx9_fence_idx;
    uint64_t gfx9_eop_bug_va;
+
+   /**
+    * Internal command buffer that is used when some graphics work
+    * also requires a submission to the compute queue.
+    */
+   struct radv_cmd_buffer *ace_internal_cmdbuf;
 
    /**
     * Whether a query pool has been resetted and we have to flush caches.

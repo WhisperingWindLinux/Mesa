@@ -399,7 +399,13 @@ radv_emit_clear_data(struct radv_cmd_buffer *cmd_buffer, unsigned engine_sel, ui
 static void
 radv_destroy_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
 {
-   list_del(&cmd_buffer->pool_link);
+   if (cmd_buffer->ace_internal_cmdbuf) {
+      radv_destroy_cmd_buffer(cmd_buffer->ace_internal_cmdbuf);
+      cmd_buffer->ace_internal_cmdbuf = NULL;
+   }
+
+   if (cmd_buffer->pool_linked)
+      list_del(&cmd_buffer->pool_link);
 
    list_for_each_entry_safe(struct radv_cmd_buffer_upload, up, &cmd_buffer->upload.list, list)
    {
@@ -435,7 +441,7 @@ radv_destroy_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
 }
 
 static VkResult
-radv_create_cmd_buffer(struct radv_device *device, struct radv_cmd_pool *pool,
+radv_create_cmd_buffer(struct radv_device *device, struct radv_cmd_pool *pool, bool link_pool,
                        VkCommandBufferLevel level, VkCommandBuffer *pCommandBuffer,
                        uint32_t queue_family_index)
 {
@@ -456,7 +462,10 @@ radv_create_cmd_buffer(struct radv_device *device, struct radv_cmd_pool *pool,
    cmd_buffer->device = device;
    cmd_buffer->pool = pool;
 
-   list_addtail(&cmd_buffer->pool_link, &pool->cmd_buffers);
+   if (link_pool)
+      list_addtail(&cmd_buffer->pool_link, &pool->cmd_buffers);
+
+   cmd_buffer->pool_linked = link_pool;
    cmd_buffer->qf = vk_queue_to_radv(device->physical_device, queue_family_index);
 
    ring = radv_queue_family_to_ring(device->physical_device, cmd_buffer->qf);
@@ -555,6 +564,9 @@ radv_reset_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
    }
 
    cmd_buffer->status = RADV_CMD_BUFFER_STATUS_INITIAL;
+
+   if (cmd_buffer->ace_internal_cmdbuf)
+      radv_reset_cmd_buffer(cmd_buffer->ace_internal_cmdbuf);
 
    return cmd_buffer->record_result;
 }
@@ -4507,8 +4519,8 @@ radv_AllocateCommandBuffers(VkDevice _device, const VkCommandBufferAllocateInfo 
 
          pCommandBuffers[i] = radv_cmd_buffer_to_handle(cmd_buffer);
       } else {
-         result = radv_create_cmd_buffer(device, pool, pAllocateInfo->level, &pCommandBuffers[i],
-                                         pool->vk.queue_family_index);
+         result = radv_create_cmd_buffer(device, pool, true, pAllocateInfo->level,
+                                         &pCommandBuffers[i], pool->vk.queue_family_index);
       }
       if (result != VK_SUCCESS)
          break;
@@ -4733,6 +4745,10 @@ radv_BeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBegi
    radv_describe_begin_cmd_buffer(cmd_buffer);
 
    cmd_buffer->status = RADV_CMD_BUFFER_STATUS_RECORDING;
+
+   if (cmd_buffer->ace_internal_cmdbuf)
+      radv_BeginCommandBuffer(radv_cmd_buffer_to_handle(cmd_buffer->ace_internal_cmdbuf),
+                              pBeginInfo);
 
    return result;
 }
@@ -5132,6 +5148,13 @@ radv_EndCommandBuffer(VkCommandBuffer commandBuffer)
 
    cmd_buffer->status = RADV_CMD_BUFFER_STATUS_EXECUTABLE;
 
+   if (cmd_buffer->record_result == VK_SUCCESS && cmd_buffer->ace_internal_cmdbuf) {
+      VkCommandBuffer compute_cmdbuf = radv_cmd_buffer_to_handle(cmd_buffer->ace_internal_cmdbuf);
+      VkResult compute_result = radv_EndCommandBuffer(compute_cmdbuf);
+      if (compute_result != VK_SUCCESS)
+         return compute_result;
+   }
+
    return cmd_buffer->record_result;
 }
 
@@ -5167,6 +5190,37 @@ radv_mark_descriptor_sets_dirty(struct radv_cmd_buffer *cmd_buffer, VkPipelineBi
       radv_get_descriptors_state(cmd_buffer, bind_point);
 
    descriptors_state->dirty |= descriptors_state->valid;
+}
+
+static void
+radv_create_ace_internal_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
+{
+   assert(!cmd_buffer->ace_internal_cmdbuf);
+   VkResult result;
+
+   VkCommandBuffer compute_cmdbuf;
+   result =
+      radv_create_cmd_buffer(cmd_buffer->device, cmd_buffer->pool, false,
+                             VK_COMMAND_BUFFER_LEVEL_PRIMARY, &compute_cmdbuf, RADV_QUEUE_COMPUTE);
+
+   if (result != VK_SUCCESS)
+      goto radv_create_ace_internal_cmd_buffer_fail;
+
+   RADV_FROM_HANDLE(radv_cmd_buffer, ace_cmd_buffer, compute_cmdbuf);
+   cmd_buffer->ace_internal_cmdbuf = ace_cmd_buffer;
+
+   VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .pInheritanceInfo = NULL,
+      .flags = cmd_buffer->usage_flags,
+   };
+
+   radv_BeginCommandBuffer(compute_cmdbuf, &begin_info);
+   return;
+
+radv_create_ace_internal_cmd_buffer_fail:
+   cmd_buffer->record_result = result;
+   return;
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -5264,7 +5318,24 @@ radv_CmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipeline
          cmd_buffer->tess_rings_needed = true;
 
       if (radv_pipeline_has_stage(graphics_pipeline, MESA_SHADER_TASK)) {
+         if (!cmd_buffer->ace_internal_cmdbuf)
+            radv_create_ace_internal_cmd_buffer(cmd_buffer);
+
+         if (cmd_buffer->record_result != VK_SUCCESS)
+            break;
+
+         assert(cmd_buffer->ace_internal_cmdbuf);
+         assert(graphics_pipeline->ace_internal_pipeline);
+
+         VkCommandBuffer compute_cmdbuf =
+            radv_cmd_buffer_to_handle(cmd_buffer->ace_internal_cmdbuf);
+         VkPipeline compute_pipeline =
+            radv_pipeline_to_handle(&graphics_pipeline->ace_internal_pipeline->base);
+
+         radv_CmdBindPipeline(compute_cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipeline);
+
          cmd_buffer->task_rings_needed = true;
+         cmd_buffer->record_result = cmd_buffer->ace_internal_cmdbuf->record_result;
       }
       break;
    }

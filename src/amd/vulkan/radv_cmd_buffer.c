@@ -5929,6 +5929,20 @@ radv_CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCou
 
       primary->device->ws->cs_execute_secondary(primary->cs, secondary->cs, allow_ib2);
 
+      if (secondary->ace_internal_cmdbuf) {
+         if (!primary->ace_internal_cmdbuf)
+            radv_create_ace_internal_cmd_buffer(primary);
+
+         if (primary->record_result == VK_SUCCESS) {
+            VkCommandBuffer primary_compute =
+               radv_cmd_buffer_to_handle(primary->ace_internal_cmdbuf);
+            VkCommandBuffer secondary_compute =
+               radv_cmd_buffer_to_handle(secondary->ace_internal_cmdbuf);
+
+            radv_CmdExecuteCommands(primary_compute, 1, &secondary_compute);
+         }
+      }
+
       /* When the secondary command buffer is compute only we don't
        * need to re-emit the current graphics pipeline.
        */

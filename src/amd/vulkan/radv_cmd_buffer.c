@@ -3302,11 +3302,11 @@ radv_shader_loads_push_constants(struct radv_pipeline *pipeline, gl_shader_stage
 }
 
 static void
-radv_flush_constants(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stages,
-                     struct radv_pipeline *pipeline, VkPipelineBindPoint bind_point)
+radv_flush_constants_internal(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stages,
+                              struct radv_pipeline *pipeline, VkPipelineBindPoint bind_point,
+                              struct radv_descriptor_state *descriptors_state,
+                              uint8_t *push_constants)
 {
-   struct radv_descriptor_state *descriptors_state =
-      radv_get_descriptors_state(cmd_buffer, bind_point);
    struct radv_shader *shader, *prev_shader;
    bool need_push_constants = false;
    unsigned offset;
@@ -3350,13 +3350,13 @@ radv_flush_constants(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stag
       if (mask == u_bit_consecutive64(base, util_last_bit64(mask) - base)) {
          /* consecutive inline push constants */
          radv_emit_inline_push_consts(cmd_buffer, pipeline, stage, AC_UD_INLINE_PUSH_CONSTANTS,
-                                      (uint32_t *)cmd_buffer->push_constants + base);
+                                      (uint32_t *)push_constants + base);
       } else {
          /* sparse inline push constants */
          uint32_t consts[AC_MAX_INLINE_PUSH_CONSTS];
          unsigned num_consts = 0;
          u_foreach_bit64 (idx, mask)
-            consts[num_consts++] = ((uint32_t *)cmd_buffer->push_constants)[idx];
+            consts[num_consts++] = ((uint32_t *)push_constants)[idx];
          radv_emit_inline_push_consts(cmd_buffer, pipeline, stage, AC_UD_INLINE_PUSH_CONSTANTS,
                                       consts);
       }
@@ -3368,7 +3368,7 @@ radv_flush_constants(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stag
              &ptr))
          return;
 
-      memcpy(ptr, cmd_buffer->push_constants, pipeline->push_constant_size);
+      memcpy(ptr, push_constants, pipeline->push_constant_size);
       memcpy((char *)ptr + pipeline->push_constant_size, descriptors_state->dynamic_buffers,
              16 * pipeline->dynamic_offset_count);
 
@@ -3393,8 +3393,32 @@ radv_flush_constants(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stag
       assert(cmd_buffer->cs->cdw <= cdw_max);
    }
 
+   if (pipeline->type == RADV_PIPELINE_GRAPHICS) {
+      struct radv_graphics_pipeline *graphics_pipeline = radv_pipeline_to_graphics(pipeline);
+      if (cmd_buffer->ace_internal_cmdbuf && graphics_pipeline->ace_internal_pipeline) {
+         cmd_buffer->ace_internal_cmdbuf->state.flush_bits |= RADV_CMD_FLAG_INV_SCACHE;
+         cmd_buffer->ace_internal_cmdbuf->push_constant_stages |= VK_SHADER_STAGE_COMPUTE_BIT;
+
+         radv_flush_constants_internal(cmd_buffer->ace_internal_cmdbuf, VK_SHADER_STAGE_COMPUTE_BIT,
+                                       &graphics_pipeline->ace_internal_pipeline->base,
+                                       VK_PIPELINE_BIND_POINT_COMPUTE, descriptors_state,
+                                       push_constants);
+      }
+   }
+
    cmd_buffer->push_constant_stages &= ~stages;
    cmd_buffer->push_constant_stages |= dirty_stages;
+}
+
+static void
+radv_flush_constants(struct radv_cmd_buffer *cmd_buffer, VkShaderStageFlags stages,
+                     struct radv_pipeline *pipeline, VkPipelineBindPoint bind_point)
+{
+   struct radv_descriptor_state *descriptors_state =
+      radv_get_descriptors_state(cmd_buffer, bind_point);
+
+   radv_flush_constants_internal(cmd_buffer, stages, pipeline, bind_point, descriptors_state,
+                                 cmd_buffer->push_constants);
 }
 
 enum radv_dst_sel {

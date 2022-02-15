@@ -1552,7 +1552,7 @@ nir_f2b(nir_builder *build, nir_ssa_def *f)
 static inline nir_ssa_def *
 nir_i2b(nir_builder *build, nir_ssa_def *i)
 {
-   return nir_i2b1(build, i);
+   return nir_ine(build, i, nir_imm_intN_t(build, 0, i->bit_size));
 }
 
 static inline nir_ssa_def *

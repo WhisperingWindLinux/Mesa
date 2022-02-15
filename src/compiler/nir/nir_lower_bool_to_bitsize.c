@@ -169,8 +169,7 @@ lower_alu_instr(nir_builder *b, nir_alu_instr *alu)
       break;
 
    case nir_op_i2b1:
-      opcode = bit_size == 8 ? nir_op_i2b8 :
-                               bit_size == 16 ? nir_op_i2b16 : nir_op_i2b32;
+      unreachable("Should have been lowered in opt_algebraic.");
       break;
 
    case nir_op_b2b1:

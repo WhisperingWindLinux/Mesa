@@ -7074,6 +7074,52 @@ radv_before_draw(struct radv_cmd_buffer *cmd_buffer, const struct radv_draw_info
    return true;
 }
 
+ALWAYS_INLINE static bool
+radv_before_taskmesh_draw(struct radv_cmd_buffer *gfx_cmd_buffer, const struct radv_draw_info *info,
+                          uint32_t drawCount)
+{
+   bool result = radv_before_draw(gfx_cmd_buffer, info, drawCount);
+
+   /* If there is no task shader, no need to do anything special. */
+   if (!radv_pipeline_has_stage(gfx_cmd_buffer->state.graphics_pipeline, MESA_SHADER_TASK))
+      return result;
+
+   /* Need to check the count even for indirect draws to work around
+    * an issue with DISPATCH_TASKMESH_INDIRECT_MULTI_ACE.
+    */
+   if (!info->count || !result)
+      return false;
+
+   struct radv_cmd_buffer *ace_cmd_buffer = gfx_cmd_buffer->ace_internal_cmdbuf;
+   assert(ace_cmd_buffer);
+
+   ASSERTED const unsigned ace_cdw_max = radeon_check_space(
+      ace_cmd_buffer->device->ws, ace_cmd_buffer->cs, 4096 + 128 * (drawCount - 1));
+
+   struct radv_compute_pipeline *ace_pipeline = ace_cmd_buffer->state.compute_pipeline;
+   struct radv_shader *task_shader = radv_get_shader(&ace_pipeline->base, MESA_SHADER_COMPUTE);
+   bool need_flush = ace_cmd_buffer->state.flush_bits & RADV_CMD_FLAG_CS_PARTIAL_FLUSH;
+   bool ace_pipeline_is_dirty = ace_pipeline != ace_cmd_buffer->state.emitted_compute_pipeline;
+
+   if (need_flush) {
+      radv_emit_compute_pipeline(ace_cmd_buffer, ace_pipeline);
+      si_emit_cache_flush(ace_cmd_buffer);
+
+      if (ace_pipeline_is_dirty)
+         radv_emit_shader_prefetch(ace_cmd_buffer, task_shader);
+   } else {
+      si_emit_cache_flush(ace_cmd_buffer);
+
+      if (ace_pipeline_is_dirty)
+         radv_emit_shader_prefetch(ace_cmd_buffer, task_shader);
+
+      radv_emit_compute_pipeline(ace_cmd_buffer, ace_pipeline);
+   }
+
+   assert(ace_cmd_buffer->cs->cdw <= ace_cdw_max);
+   return true;
+}
+
 static void
 radv_after_draw(struct radv_cmd_buffer *cmd_buffer)
 {
@@ -7394,7 +7440,7 @@ radv_CmdDrawMeshTasksNV(VkCommandBuffer commandBuffer, uint32_t taskCount, uint3
    info.count_buffer = NULL;
    info.indirect = NULL;
 
-   if (!radv_before_draw(cmd_buffer, &info, 1))
+   if (!radv_before_taskmesh_draw(cmd_buffer, &info, 1))
       return;
 
    radv_emit_direct_mesh_draw_packet(cmd_buffer, taskCount, 1, 1, firstTask);
@@ -7410,9 +7456,6 @@ radv_CmdDrawMeshTasksIndirectNV(VkCommandBuffer commandBuffer, VkBuffer _buffer,
 
    ASSERTED struct radv_graphics_pipeline *pipeline = cmd_buffer->state.graphics_pipeline;
    assert(!pipeline->base.shaders[MESA_SHADER_TASK]);
-
-   if (!drawCount)
-      return;
 
    /* Indirect draw with mesh shader only.
     *
@@ -7438,7 +7481,7 @@ radv_CmdDrawMeshTasksIndirectNV(VkCommandBuffer commandBuffer, VkBuffer _buffer,
    info.indexed = false;
    info.instance_count = 0;
 
-   if (!radv_before_draw(cmd_buffer, &info, drawCount))
+   if (!radv_before_taskmesh_draw(cmd_buffer, &info, drawCount))
       return;
    radv_emit_indirect_draw_packets(cmd_buffer, &info);
    radv_after_draw(cmd_buffer);
@@ -7471,7 +7514,7 @@ radv_CmdDrawMeshTasksIndirectCountNV(VkCommandBuffer commandBuffer, VkBuffer _bu
    info.indexed = false;
    info.instance_count = 0;
 
-   if (!radv_before_draw(cmd_buffer, &info, maxDrawCount))
+   if (!radv_before_taskmesh_draw(cmd_buffer, &info, maxDrawCount))
       return;
    radv_emit_indirect_draw_packets(cmd_buffer, &info);
    radv_after_draw(cmd_buffer);

@@ -4024,10 +4024,11 @@ lower_bit_size_callback(const nir_instr *instr, void *_)
    if (nir_src_bit_size(alu->src[0].src) & (8 | 16)) {
       unsigned bit_size = nir_src_bit_size(alu->src[0].src);
       switch (alu->op) {
+      case nir_op_i2b1:
+         unreachable("Should have been lowered in opt_algebraic.");
       case nir_op_bit_count:
       case nir_op_find_lsb:
       case nir_op_ufind_msb:
-      case nir_op_i2b1:
          return 32;
       case nir_op_ilt:
       case nir_op_ige:

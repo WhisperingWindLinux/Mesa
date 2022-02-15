@@ -1577,7 +1577,7 @@ vec4_visitor::nir_emit_alu(nir_alu_instr *instr)
       break;
 
    case nir_op_i2b32:
-      emit(CMP(dst, op[0], brw_imm_d(0), BRW_CONDITIONAL_NZ));
+      unreachable("not reached: should be handled by opt_algebraic.");
       break;
 
    case nir_op_unpack_half_2x16_split_x:

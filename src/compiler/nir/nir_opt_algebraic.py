@@ -871,6 +871,9 @@ optimizations.extend([
    # This is how SpvOpFOrdNotEqual might be implemented.  If both values are
    # numbers, then it can be replaced with fneu.
    (('ior', ('flt', 'a(is_a_number)', 'b(is_a_number)'), ('flt', b, a)), ('fneu', a, b)),
+
+   (('umin', ('iand', a, '#b(is_pos_power_of_two)'), ('iand', c, '#b(is_pos_power_of_two)')),
+    ('iand', ('iand', a, b), ('iand', c, b))),
 ])
 
 # Float sizes
@@ -1226,6 +1229,8 @@ optimizations.extend([
    (('ior', ('ior', a, b), b), ('ior', a, b)),
    (('iand', ('ior', a, b), b), b),
    (('iand', ('iand', a, b), b), ('iand', a, b)),
+   (('iand', ('iand(is_used_once)', a, b), ('iand(is_used_once)', a, c)),
+    ('iand', a, ('iand', b, c))),
    # DeMorgan's Laws
    (('iand', ('inot', a), ('inot', b)), ('inot', ('ior',  a, b))),
    (('ior',  ('inot', a), ('inot', b)), ('inot', ('iand', a, b))),

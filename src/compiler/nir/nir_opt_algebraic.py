@@ -693,7 +693,6 @@ optimizations.extend([
    (('~bcsel', ('flt', a, b), b, a), ('fmax', a, b)),
    (('~bcsel', ('fge', a, b), b, a), ('fmin', a, b)),
    (('~bcsel', ('fge', b, a), b, a), ('fmax', a, b)),
-   (('bcsel', ('i2b', a), b, c), ('bcsel', ('ine', a, 0), b, c)),
    (('bcsel', ('inot', a), b, c), ('bcsel', a, c, b)),
    (('bcsel', a, ('bcsel', a, b, c), d), ('bcsel', a, b, d)),
    (('bcsel', a, b, ('bcsel', a, c, d)), ('bcsel', a, b, d)),
@@ -1310,9 +1309,9 @@ optimizations.extend([
    (('fsin', a), lowered_sincos(0.5), 'options->lower_sincos'),
    (('fcos', a), lowered_sincos(0.75), 'options->lower_sincos'),
    # Boolean simplifications
-   (('i2b16(is_used_by_if)', a), ('ine16', a, 0)),
-   (('i2b32(is_used_by_if)', a), ('ine32', a, 0)),
-   (('i2b1(is_used_by_if)', a), ('ine', a, 0)),
+   (('i2b16', a), ('ine16', a, 0)),
+   (('i2b32', a), ('ine32', a, 0)),
+   (('i2b1', a), ('ine', a, 0)),
    (('ieq', a, True), a),
    (('ine(is_not_used_by_if)', a, True), ('inot', a)),
    (('ine', a, False), a),
@@ -1373,8 +1372,6 @@ optimizations.extend([
    # Conversions
    (('f2i', ('ftrunc', a)), ('f2i', a)),
    (('f2u', ('ftrunc', a)), ('f2u', a)),
-   (('i2b', ('ineg', a)), ('i2b', a)),
-   (('i2b', ('iabs', a)), ('i2b', a)),
    (('inot', ('f2b1', a)), ('feq', a, 0.0)),
 
    # Conversions from 16 bits to 32 bits and back can always be removed
@@ -1832,8 +1829,8 @@ optimizations.extend([
 
    (('ubfe', a, 0, '#b'), ('iand', a, ('ushr', 0xffffffff, ('ineg', b)))),
 
-   (('b2i32', ('i2b', ('ubfe', a, b, 1))), ('ubfe', a, b, 1)),
-   (('b2i32', ('i2b', ('ibfe', a, b, 1))), ('ubfe', a, b, 1)), # ubfe in the replacement is correct
+   (('b2i32', ('ine', ('ubfe', a, b, 1), 0)), ('ubfe', a, b, 1)),
+   (('b2i32', ('ine', ('ibfe', a, b, 1), 0)), ('ubfe', a, b, 1)), # ubfe in the replacement is correct
    (('ine', ('ibfe(is_used_once)', a, '#b', '#c'), 0), ('ine', ('iand', a, ('ishl', ('ushr', 0xffffffff, ('ineg', c)), b)), 0)),
    (('ieq', ('ibfe(is_used_once)', a, '#b', '#c'), 0), ('ieq', ('iand', a, ('ishl', ('ushr', 0xffffffff, ('ineg', c)), b)), 0)),
    (('ine', ('ubfe(is_used_once)', a, '#b', '#c'), 0), ('ine', ('iand', a, ('ishl', ('ushr', 0xffffffff, ('ineg', c)), b)), 0)),
@@ -2046,14 +2043,6 @@ for left, right in itertools.combinations_with_replacement(invert.keys(), 2):
                          ('iand', (invert[left], a, b), (invert[right], c, d))))
    optimizations.append((('inot', ('iand(is_used_once)', (left, a, b), (right, c, d))),
                          ('ior', (invert[left], a, b), (invert[right], c, d))))
-
-# Optimize x2bN(b2x(x)) -> x
-for size in type_sizes('bool'):
-    aN = 'a@' + str(size)
-    f2bN = 'f2b' + str(size)
-    i2bN = 'i2b' + str(size)
-    optimizations.append(((f2bN, ('b2f', aN)), a))
-    optimizations.append(((i2bN, ('b2i', aN)), a))
 
 # Optimize x2yN(b2x(x)) -> b2y
 for x, y in itertools.product(['f', 'u', 'i'], ['f', 'u', 'i']):

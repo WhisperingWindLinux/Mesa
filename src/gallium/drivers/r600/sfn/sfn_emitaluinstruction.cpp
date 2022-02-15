@@ -152,8 +152,8 @@ bool EmitAluInstruction::do_emit(nir_instr* ir)
    case nir_op_fsqrt: return emit_alu_trans_op1(instr, op1_sqrt_ieee);
    case nir_op_fsub: return emit_alu_op2(instr, op2_add, op2_opt_neg_src1);
    case nir_op_ftrunc: return emit_alu_op1(instr, op1_trunc);
-   case nir_op_i2b1: return emit_alu_i2orf2_b1(instr, op2_setne_int);
-   case nir_op_i2b32: return emit_alu_i2orf2_b1(instr, op2_setne_int);
+   case nir_op_i2b1:
+   case nir_op_i2b32: unreachable("Should have been lowered in opt_algebraic.");
    case nir_op_i2f32: return emit_alu_trans_op1(instr, op1_int_to_flt);
    case nir_op_iadd: return emit_alu_op2_int(instr, op2_add_int);
    case nir_op_iand: return emit_alu_op2_int(instr, op2_and_int);

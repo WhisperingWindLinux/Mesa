@@ -3963,8 +3963,14 @@ radv_emit_draw_registers(struct radv_cmd_buffer *cmd_buffer, const struct radv_d
 }
 
 static void
-radv_stage_flush(struct radv_cmd_buffer *cmd_buffer, VkPipelineStageFlags2 src_stage_mask)
+radv_stage_flush(struct radv_cmd_buffer *cmd_buffer, VkPipelineStageFlags2 src_stage_mask, VkPipelineStageFlags2 dst_stage_mask)
 {
+   /* For simplicity, if the barrier wants to wait for the task shader,
+    * just make it wait for the mesh shader too.
+    */
+   if (src_stage_mask & VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_NV)
+      src_stage_mask |= VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_NV;
+
    if (src_stage_mask & (VK_PIPELINE_STAGE_2_COPY_BIT |
                          VK_PIPELINE_STAGE_2_RESOLVE_BIT |
                          VK_PIPELINE_STAGE_2_BLIT_BIT |
@@ -3997,6 +4003,16 @@ radv_stage_flush(struct radv_cmd_buffer *cmd_buffer, VkPipelineStageFlags2 src_s
                VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT |
                VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT)) {
       cmd_buffer->state.flush_bits |= RADV_CMD_FLAG_VS_PARTIAL_FLUSH;
+   }
+
+   /* Special case for when the barrier wants to block the task shader
+    * or any earlier pipeline stage. When this happens, ACE must wait for GFX.
+    */
+   if (dst_stage_mask & (VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR |
+                         VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+                         VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_NV)) {
+      cmd_buffer->ace_sem.sem++;
+      cmd_buffer->ace_sem.dirty = true;
    }
 }
 
@@ -4238,7 +4254,7 @@ radv_emit_subpass_barrier(struct radv_cmd_buffer *cmd_buffer,
          radv_src_access_flush(cmd_buffer, barrier->src_access_mask, iview->image);
    }
 
-   radv_stage_flush(cmd_buffer, barrier->src_stage_mask);
+   radv_stage_flush(cmd_buffer, barrier->src_stage_mask, barrier->dst_stage_mask);
 
    for (uint32_t i = 0; i < pass->attachment_count; i++) {
       struct radv_image_view *iview = cmd_buffer->state.attachments[i].iview;
@@ -5231,11 +5247,62 @@ radv_mark_descriptor_sets_dirty(struct radv_cmd_buffer *cmd_buffer, VkPipelineBi
    descriptors_state->dirty |= descriptors_state->valid;
 }
 
+static VkResult
+radv_create_ace_sem(struct radv_cmd_buffer *cmd_buffer)
+{
+   uint32_t sem_init = 0;
+   uint32_t va_off;
+   if (!radv_cmd_buffer_upload_data(cmd_buffer, sizeof(uint32_t), &sem_init, &va_off))
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   cmd_buffer->ace_sem.va = radv_buffer_get_va(cmd_buffer->upload.upload_bo) + va_off;
+   return VK_SUCCESS;
+}
+
+ALWAYS_INLINE static inline bool
+radv_gfx_flush_ace_semaphore(struct radv_cmd_buffer *gfx_cmd_buffer, bool write)
+{
+   if (!gfx_cmd_buffer->ace_sem.dirty)
+      return false;
+
+   gfx_cmd_buffer->ace_sem.dirty = false;
+
+   if (!write)
+      return true;
+
+   /* GFX writes a value to the semaphore which ACE can wait for.*/
+   radv_emit_write_data_packet(gfx_cmd_buffer, V_370_ME, gfx_cmd_buffer->ace_sem.va,
+                               1, &gfx_cmd_buffer->ace_sem.sem);
+   return true;
+}
+
+ALWAYS_INLINE static inline void
+radv_ace_wait_gfx(struct radv_cmd_buffer *gfx_cmd_buffer)
+{
+   struct radv_cmd_buffer *ace_cmd_buffer =
+      gfx_cmd_buffer->ace_internal_cmdbuf;
+
+   ASSERTED unsigned cdw_max =
+      radeon_check_space(ace_cmd_buffer->device->ws, ace_cmd_buffer->cs, 7);
+
+   /* ACE waits for the semaphore which GFX wrote. */
+   radv_cp_wait_mem(ace_cmd_buffer->cs, WAIT_REG_MEM_GREATER_OR_EQUAL,
+                    gfx_cmd_buffer->ace_sem.va,
+                    gfx_cmd_buffer->ace_sem.sem,
+                    0xffffffff);
+
+   assert(ace_cmd_buffer->cs->cdw <= cdw_max);
+}
+
 static void
 radv_create_ace_internal_cmd_buffer(struct radv_cmd_buffer *cmd_buffer)
 {
    assert(!cmd_buffer->ace_internal_cmdbuf);
    VkResult result;
+
+   result = radv_create_ace_sem(cmd_buffer);
+   if (result != VK_SUCCESS)
+      goto radv_create_ace_internal_cmd_buffer_fail;
 
    VkCommandBuffer compute_cmdbuf;
    result =
@@ -5927,9 +5994,8 @@ radv_CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCou
          radv_emit_framebuffer_state(primary);
       }
 
-      primary->device->ws->cs_execute_secondary(primary->cs, secondary->cs, allow_ib2);
 
-      if (secondary->ace_internal_cmdbuf) {
+      if (secondary->ace_internal_cmdbuf || secondary->ace_sem.dirty) {
          if (!primary->ace_internal_cmdbuf)
             radv_create_ace_internal_cmd_buffer(primary);
 
@@ -5939,9 +6005,24 @@ radv_CmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCou
             VkCommandBuffer secondary_compute =
                radv_cmd_buffer_to_handle(secondary->ace_internal_cmdbuf);
 
-            radv_CmdExecuteCommands(primary_compute, 1, &secondary_compute);
+            if (primary->ace_sem.dirty) {
+               /* Make ACE wait for GFX, if necessary.
+                * This may occour if the primary or secondary command buffer
+                * has a barrier that isn't followed by a draw call.
+                */
+               primary->ace_sem.sem++;
+               radv_gfx_flush_ace_semaphore(primary, true);
+               radv_ace_wait_gfx(primary);
+            }
+
+            if (secondary_compute)
+               radv_CmdExecuteCommands(primary_compute, 1, &secondary_compute);
+
+            primary->ace_sem.dirty = secondary->ace_sem.dirty;
          }
       }
+
+      primary->device->ws->cs_execute_secondary(primary->cs, secondary->cs, allow_ib2);
 
       /* When the secondary command buffer is compute only we don't
        * need to re-emit the current graphics pipeline.
@@ -7357,6 +7438,7 @@ radv_before_taskmesh_draw(struct radv_cmd_buffer *gfx_cmd_buffer, const struct r
    if (!info->count || !result)
       return false;
 
+   bool need_task_semaphore = radv_gfx_flush_ace_semaphore(gfx_cmd_buffer, true);
    struct radv_cmd_buffer *ace_cmd_buffer = gfx_cmd_buffer->ace_internal_cmdbuf;
    assert(ace_cmd_buffer);
 
@@ -7368,12 +7450,14 @@ radv_before_taskmesh_draw(struct radv_cmd_buffer *gfx_cmd_buffer, const struct r
    bool need_flush = ace_cmd_buffer->state.flush_bits & RADV_CMD_FLAG_CS_PARTIAL_FLUSH;
    bool ace_pipeline_is_dirty = ace_pipeline != ace_cmd_buffer->state.emitted_compute_pipeline;
 
-   if (need_flush) {
+   if (need_flush || need_task_semaphore) {
       radv_emit_compute_pipeline(ace_cmd_buffer, ace_pipeline);
       si_emit_cache_flush(ace_cmd_buffer);
 
       if (ace_pipeline_is_dirty)
          radv_emit_shader_prefetch(ace_cmd_buffer, task_shader);
+      if (need_task_semaphore)
+         radv_ace_wait_gfx(gfx_cmd_buffer);
    } else {
       si_emit_cache_flush(ace_cmd_buffer);
 
@@ -9202,7 +9286,7 @@ radv_barrier(struct radv_cmd_buffer *cmd_buffer, const VkDependencyInfo *dep_inf
     *  will effectively not wait for any prior commands to complete."
     */
    if (dst_stage_mask != VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT)
-      radv_stage_flush(cmd_buffer, src_stage_mask);
+      radv_stage_flush(cmd_buffer, src_stage_mask, dst_stage_mask);
    cmd_buffer->state.flush_bits |= src_flush_bits;
 
    for (uint32_t i = 0; i < dep_info->imageMemoryBarrierCount; i++) {

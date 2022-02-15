@@ -1586,6 +1586,22 @@ struct radv_cmd_buffer {
    struct radv_cmd_buffer *ace_internal_cmdbuf;
 
    /**
+    * For synchronization between the ACE and GFX command buffers,
+    * we allocate a dword in VRAM for a semaphore.
+    * The value of this semaphore is incremented whenever we
+    * encounter a barrier that affects ACE. At sync points,
+    * GFX writes the value to its address, and ACE waits until
+    * it detects that the value has been written.
+    *
+    * NOTE: these variables are only maintained in the GFX cmd buffer.
+    */
+   struct {
+      uint64_t va;  /* Virtual address of the semaphore. */
+      uint32_t sem; /* Current value of the semaphore. */
+      bool dirty;   /* Value needs flush. */
+   } ace_sem;
+
+   /**
     * Whether a query pool has been resetted and we have to flush caches.
     */
    bool pending_reset_query;
@@ -2726,6 +2742,7 @@ struct radv_sampler {
 
 struct radv_subpass_barrier {
    VkPipelineStageFlags2 src_stage_mask;
+   VkPipelineStageFlags2 dst_stage_mask;
    VkAccessFlags2 src_access_mask;
    VkAccessFlags2 dst_access_mask;
 };

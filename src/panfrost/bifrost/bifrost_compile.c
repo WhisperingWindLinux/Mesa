@@ -1752,10 +1752,12 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
                 break;
 
         case nir_intrinsic_load_ssbo_address:
+        case nir_intrinsic_load_xfb_address:
                 bi_load_sysval_nir(b, instr, 2, 0);
                 break;
 
         case nir_intrinsic_load_work_dim:
+        case nir_intrinsic_load_num_vertices:
                 bi_load_sysval_nir(b, instr, 1, 0);
                 break;
 
@@ -1841,6 +1843,14 @@ bi_emit_intrinsic(bi_builder *b, nir_intrinsic_instr *instr)
                         bi_iadd_u32_to(b, dst, bi_vertex_id(b), first, false);
                 }
 
+                break;
+
+        /* Only used in the vertex-like compute shaders used to lower
+         * transform feedback, indicated by the internal flag.
+         */
+        case nir_intrinsic_load_vertex_id_zero_base:
+                assert(b->shader->nir->info.internal);
+                bi_mov_i32_to(b, dst, bi_vertex_id(b));
                 break;
 
         case nir_intrinsic_load_instance_id:

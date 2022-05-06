@@ -220,7 +220,7 @@ extern "C" {
 #endif
 
 const struct nir_shader_compiler_options *
-nv50_ir_nir_shader_compiler_options(int chipset);
+nv50_ir_nir_shader_compiler_options(int chipset, enum pipe_shader_type shader);
 
 extern int nv50_ir_generate_code(struct nv50_ir_prog_info *,
                                  struct nv50_ir_prog_info_out *);

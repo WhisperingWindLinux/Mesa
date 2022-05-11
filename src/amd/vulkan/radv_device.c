@@ -2740,8 +2740,28 @@ radv_queue_state_finish(struct radv_queue_state *queue, struct radeon_winsys *ws
 static void
 radv_queue_finish(struct radv_queue *queue)
 {
+   if (queue->ace_internal_state) {
+      /* Prevent double free */
+      queue->ace_internal_state->task_rings_bo = NULL;
+
+      /* Clean up the internal ACE queue state. */
+      radv_queue_state_finish(queue->ace_internal_state, queue->device->ws);
+      free(queue->ace_internal_state);
+   }
+
    radv_queue_state_finish(&queue->state, queue->device->ws);
    vk_queue_finish(&queue->vk);
+}
+
+static bool
+radv_queue_init_ace_internal_state(struct radv_queue *queue)
+{
+   if (queue->ace_internal_state)
+      return true;
+
+   queue->ace_internal_state = calloc(1, sizeof(struct radv_queue_state));
+   queue->ace_internal_state->qf = RADV_QUEUE_COMPUTE;
+   return queue->ace_internal_state;
 }
 
 static VkResult
@@ -4569,6 +4589,26 @@ radv_update_preambles(struct radv_queue_state *queue, struct radv_device *device
    return radv_update_preamble_cs(queue, device, &needs);
 }
 
+static VkResult
+radv_update_ace_preambles(struct radv_queue *queue, struct vk_command_buffer *const *cmd_buffers,
+                          uint32_t cmd_buffer_count)
+{
+   if (!cmd_buffer_count)
+      return VK_SUCCESS;
+   if (!radv_queue_init_ace_internal_state(queue))
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   /* Copy task rings state.
+    * Task shaders that are submitted on the ACE queue need to share
+    * their ring buffers with the mesh shaders on the GFX queue.
+    */
+   queue->ace_internal_state->ring_info.task_rings = queue->state.ring_info.task_rings;
+   queue->ace_internal_state->task_rings_bo = queue->state.task_rings_bo;
+
+   return radv_update_preambles(queue->ace_internal_state, queue->device, cmd_buffers,
+                                cmd_buffer_count);
+}
+
 struct radv_deferred_queue_submission {
    struct radv_queue *queue;
    VkCommandBuffer *cmd_buffers;
@@ -4646,6 +4686,7 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
    struct radeon_winsys_ctx *ctx = queue->hw_ctx;
    uint32_t max_cs_submission = queue->device->trace_bo ? 1 : RADV_MAX_IBS_PER_SUBMIT;
    bool can_patch = true;
+   uint32_t num_ace_cs = 0;
    uint32_t advance;
    VkResult result;
 
@@ -4657,10 +4698,20 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
    if (queue->device->trace_bo)
       simple_mtx_lock(&queue->device->trace_mtx);
 
-   struct radeon_cmdbuf **cs_array =
-      malloc(sizeof(struct radeon_cmdbuf *) * (submission->command_buffer_count));
-   if (!cs_array)
+   void *all = calloc(4 * submission->command_buffer_count, sizeof(void *));
+   if (!all)
       goto fail;
+
+   struct radeon_cmdbuf **cs_array = all;
+   struct radeon_cmdbuf **ace_cs_array = cs_array + submission->command_buffer_count;
+   struct vk_command_buffer **ace_cmdbuf_array =
+      (struct vk_command_buffer **)(ace_cs_array + submission->command_buffer_count);
+
+   /* Number of ACE command buffers up to and including the API command buffer index.
+    * We need this to ensure that we don't submit any ACE command buffers without
+    * the corresponding GFX command buffer. Otherwise we hang the GPU.
+    */
+   uint32_t *ace_cs_incl_scan = (uint32_t *)(ace_cmdbuf_array + submission->command_buffer_count);
 
    for (uint32_t j = 0; j < submission->command_buffer_count; j++) {
       struct radv_cmd_buffer *cmd_buffer = (struct radv_cmd_buffer *)submission->command_buffers[j];
@@ -4670,6 +4721,16 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
       if ((cmd_buffer->usage_flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT))
          can_patch = false;
 
+      if (j)
+         ace_cs_incl_scan[j] = ace_cs_incl_scan[j - 1];
+
+      if (cmd_buffer->ace_internal_cmdbuf) {
+         ace_cmdbuf_array[num_ace_cs] = &cmd_buffer->ace_internal_cmdbuf->vk;
+         ace_cs_array[num_ace_cs] = cmd_buffer->ace_internal_cmdbuf->cs;
+         ace_cs_incl_scan[j]++;
+         num_ace_cs++;
+      }
+
       cmd_buffer->status = RADV_CMD_BUFFER_STATUS_PENDING;
    }
 
@@ -4677,15 +4738,31 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
     * before starting the next cmdbuffer, so we need to do it here. */
    bool need_wait = submission->wait_count > 0;
 
-   struct radv_winsys_submit_info submit = {
-      .ip_type = radv_queue_ring(queue),
-      .queue_index = queue->vk.index_in_family,
-      .cs_array = cs_array,
-      .cs_count = 0,
-      .initial_preamble_cs =
-         need_wait ? queue->state.initial_full_flush_preamble_cs : queue->state.initial_preamble_cs,
-      .continue_preamble_cs = queue->state.continue_preamble_cs,
-   };
+   struct radv_winsys_submit_info submit[2] = {
+      {
+         .ip_type = AMD_IP_COMPUTE,
+         .cs_array = ace_cs_array,
+      },
+      {
+         .ip_type = radv_queue_ring(queue),
+         .queue_index = queue->vk.index_in_family,
+         .cs_array = cs_array,
+         .cs_count = 0,
+         .initial_preamble_cs = need_wait ? queue->state.initial_full_flush_preamble_cs
+                                          : queue->state.initial_preamble_cs,
+         .continue_preamble_cs = queue->state.continue_preamble_cs,
+      }};
+
+   if (num_ace_cs) {
+      result = radv_update_ace_preambles(queue, ace_cmdbuf_array, num_ace_cs);
+      if (result != VK_SUCCESS)
+         goto fail;
+
+      submit[0].initial_preamble_cs = need_wait
+                                         ? queue->ace_internal_state->initial_full_flush_preamble_cs
+                                         : queue->ace_internal_state->initial_preamble_cs;
+      submit[0].continue_preamble_cs = queue->ace_internal_state->continue_preamble_cs;
+   }
 
    for (uint32_t j = 0; j < submission->command_buffer_count; j += advance) {
       advance = MIN2(max_cs_submission, submission->command_buffer_count - j);
@@ -4694,10 +4771,16 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
       if (queue->device->trace_bo)
          *queue->device->trace_id_ptr = 0;
 
-      submit.cs_count = advance;
+      submit[1].cs_count = advance;
+
+      if (num_ace_cs)
+         submit[0].cs_count = ace_cs_incl_scan[j + advance - 1] - (j ? ace_cs_incl_scan[j - 1] : 0);
+
+      const uint32_t submit_count = 1 + !!submit[0].cs_count;
+      const struct radv_winsys_submit_info *submit_ptr = submit + !submit[0].cs_count;
 
       result = queue->device->ws->cs_submit(
-         ctx, 1, &submit, j == 0 ? submission->wait_count : 0, submission->waits,
+         ctx, submit_count, submit_ptr, j == 0 ? submission->wait_count : 0, submission->waits,
          last_submit ? submission->signal_count : 0, submission->signals, can_patch);
 
       if (result != VK_SUCCESS)
@@ -4711,12 +4794,17 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
          radv_check_trap_handler(queue);
       }
 
-      submit.cs_array += advance;
-      submit.initial_preamble_cs = queue->state.initial_preamble_cs;
+      if (num_ace_cs) {
+         submit[0].cs_array += submit[0].cs_count;
+         submit[0].initial_preamble_cs = queue->ace_internal_state->initial_preamble_cs;
+      }
+
+      submit[1].cs_array += advance;
+      submit[1].initial_preamble_cs = queue->state.initial_preamble_cs;
    }
 
 fail:
-   free(cs_array);
+   free(all);
    if (queue->device->trace_bo)
       simple_mtx_unlock(&queue->device->trace_mtx);
 

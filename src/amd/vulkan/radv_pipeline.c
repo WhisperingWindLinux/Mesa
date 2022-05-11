@@ -7293,18 +7293,16 @@ radv_generate_compute_pipeline_key(struct radv_compute_pipeline *pipeline,
    return key;
 }
 
-VkResult
-radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache,
-                             const VkComputePipelineCreateInfo *pCreateInfo,
-                             const VkAllocationCallbacks *pAllocator, const uint8_t *custom_hash,
-                             struct radv_pipeline_shader_stack_size *rt_stack_sizes,
-                             uint32_t rt_group_count, VkPipeline *pPipeline)
+static VkResult
+radv_compute_pipeline_start_init(struct radv_compute_pipeline **out_pipeline,
+                                 const VkAllocationCallbacks *pAllocator,
+                                 struct radv_device *device,
+                                 struct radv_pipeline_layout *pipeline_layout,
+                                 struct radv_pipeline_shader_stack_size *rt_stack_sizes,
+                                 uint32_t rt_group_count)
 {
-   RADV_FROM_HANDLE(radv_device, device, _device);
-   RADV_FROM_HANDLE(radv_pipeline_cache, cache, _cache);
-   RADV_FROM_HANDLE(radv_pipeline_layout, pipeline_layout, pCreateInfo->layout);
+   *out_pipeline = NULL;
    struct radv_compute_pipeline *pipeline;
-   VkResult result;
 
    pipeline = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
@@ -7317,6 +7315,49 @@ radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache,
 
    pipeline->rt_stack_sizes = rt_stack_sizes;
    pipeline->group_count = rt_group_count;
+   pipeline->base.push_constant_size = pipeline_layout->push_constant_size;
+   pipeline->base.dynamic_offset_count = pipeline_layout->dynamic_offset_count;
+   pipeline->base.user_data_0[MESA_SHADER_COMPUTE] = R_00B900_COMPUTE_USER_DATA_0;
+
+   if (device->physical_device->rad_info.has_cs_regalloc_hang_bug) {
+      struct radv_shader *compute_shader = pipeline->base.shaders[MESA_SHADER_COMPUTE];
+      unsigned *cs_block_size = compute_shader->info.cs.block_size;
+
+      pipeline->cs_regalloc_hang_bug = cs_block_size[0] * cs_block_size[1] * cs_block_size[2] > 256;
+   }
+
+   *out_pipeline = pipeline;
+
+   return VK_SUCCESS;
+}
+
+static void
+radv_compute_pipeline_finish_init(struct radv_compute_pipeline *pipeline,
+                                  struct radv_device *device)
+{
+   pipeline->base.need_indirect_descriptor_sets |=
+      radv_shader_need_indirect_descriptor_sets(&pipeline->base, MESA_SHADER_COMPUTE);
+   radv_pipeline_init_scratch(device, &pipeline->base);
+
+   radv_compute_generate_pm4(pipeline);
+}
+
+VkResult
+radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache,
+                             const VkComputePipelineCreateInfo *pCreateInfo,
+                             const VkAllocationCallbacks *pAllocator, const uint8_t *custom_hash,
+                             struct radv_pipeline_shader_stack_size *rt_stack_sizes,
+                             uint32_t rt_group_count, VkPipeline *pPipeline)
+{
+   RADV_FROM_HANDLE(radv_device, device, _device);
+   RADV_FROM_HANDLE(radv_pipeline_cache, cache, _cache);
+   RADV_FROM_HANDLE(radv_pipeline_layout, pipeline_layout, pCreateInfo->layout);
+   struct radv_compute_pipeline *pipeline;
+
+   VkResult result = radv_compute_pipeline_start_init(
+      &pipeline, pAllocator, device, pipeline_layout, rt_stack_sizes, rt_group_count);
+   if (result != VK_SUCCESS)
+      return result;
 
    const VkPipelineCreationFeedbackCreateInfo *creation_feedback =
       vk_find_struct_const(pCreateInfo->pNext, PIPELINE_CREATION_FEEDBACK_CREATE_INFO);
@@ -7333,22 +7374,7 @@ radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache,
       return result;
    }
 
-   pipeline->base.user_data_0[MESA_SHADER_COMPUTE] = R_00B900_COMPUTE_USER_DATA_0;
-   pipeline->base.need_indirect_descriptor_sets |=
-      radv_shader_need_indirect_descriptor_sets(&pipeline->base, MESA_SHADER_COMPUTE);
-   radv_pipeline_init_scratch(device, &pipeline->base);
-
-   pipeline->base.push_constant_size = pipeline_layout->push_constant_size;
-   pipeline->base.dynamic_offset_count = pipeline_layout->dynamic_offset_count;
-
-   if (device->physical_device->rad_info.has_cs_regalloc_hang_bug) {
-      struct radv_shader *compute_shader = pipeline->base.shaders[MESA_SHADER_COMPUTE];
-      unsigned *cs_block_size = compute_shader->info.cs.block_size;
-
-      pipeline->cs_regalloc_hang_bug = cs_block_size[0] * cs_block_size[1] * cs_block_size[2] > 256;
-   }
-
-   radv_compute_generate_pm4(pipeline);
+   radv_compute_pipeline_finish_init(pipeline, device);
 
    *pPipeline = radv_pipeline_to_handle(&pipeline->base);
 

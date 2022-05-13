@@ -87,7 +87,7 @@ enum {
 bool radv_init_trace(struct radv_device *device);
 void radv_finish_trace(struct radv_device *device);
 
-void radv_check_gpu_hangs(struct radv_queue *queue, struct radeon_cmdbuf *cs);
+void radv_check_gpu_hangs(struct radv_queue *queue, enum amd_ip_type ip_type, struct radeon_cmdbuf *cs);
 
 void radv_print_spirv(const char *data, uint32_t size, FILE *fp);
 

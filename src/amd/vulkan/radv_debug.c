@@ -685,13 +685,10 @@ radv_gpu_hang_occured(struct radv_queue *queue, enum amd_ip_type ring)
 }
 
 void
-radv_check_gpu_hangs(struct radv_queue *queue, struct radeon_cmdbuf *cs)
+radv_check_gpu_hangs(struct radv_queue *queue, enum amd_ip_type ring, struct radeon_cmdbuf *cs)
 {
    struct radv_device *device = queue->device;
-   enum amd_ip_type ring;
    uint64_t addr;
-
-   ring = radv_queue_ring(queue);
 
    bool hang_occurred = radv_gpu_hang_occured(queue, ring);
    bool vm_fault_occurred = false;

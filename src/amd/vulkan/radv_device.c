@@ -4787,7 +4787,9 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
          goto fail;
 
       if (queue->device->trace_bo) {
-         radv_check_gpu_hangs(queue, cs_array[j]);
+         for (unsigned i = 0; i < submit_count; ++i) {
+            radv_check_gpu_hangs(queue, submit_ptr[i].ip_type, submit_ptr[i].cs_array[0]);
+         }
       }
 
       if (queue->device->tma_bo) {

@@ -140,6 +140,8 @@ lima_program_optimize_vs_nir(struct nir_shader *s)
       NIR_PASS(progress, s, nir_opt_loop_unroll);
    } while (progress);
 
+   NIR_PASS(progress, s, nir_lower_undef_to_zero);
+
    NIR_PASS_V(s, nir_lower_int_to_float);
    /* int_to_float pass generates ftrunc, so lower it */
    NIR_PASS(progress, s, lima_nir_lower_ftrunc);

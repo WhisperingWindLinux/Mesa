@@ -7,6 +7,7 @@
 
 #include "vn_device.h"
 #include "vn_physical_device.h"
+#include "vn_queue.h"
 
 /* coherent buffer with bound and mapped memory */
 struct vn_feedback_buffer {
@@ -265,4 +266,54 @@ vn_feedback_pool_free(struct vn_feedback_pool *pool,
    simple_mtx_lock(&pool->mutex);
    list_add(&slot->head, &pool->free_slots);
    simple_mtx_unlock(&pool->mutex);
+}
+
+static void
+vn_feedback_cmd_record_internal(VkCommandBuffer cmd_handle,
+                                struct vn_feedback_slot *slot,
+                                VkPipelineStageFlags stage_mask,
+                                VkResult status)
+{
+   static const VkMemoryBarrier barrier_before = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = NULL,
+      .srcAccessMask =
+         VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+   };
+   static const VkMemoryBarrier barrier_after = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = NULL,
+      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT,
+   };
+
+   static_assert(sizeof(*slot->status) == 4);
+
+   vn_CmdPipelineBarrier(cmd_handle, stage_mask,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1,
+                         &barrier_before, 0, NULL, 0, NULL);
+   vn_CmdFillBuffer(cmd_handle, slot->buffer, slot->offset, 4, status);
+   vn_CmdPipelineBarrier(cmd_handle, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier_after, 0,
+                         NULL, 0, NULL);
+}
+
+void
+vn_feedback_event_cmd_record(VkCommandBuffer cmd_handle,
+                             VkEvent ev_handle,
+                             VkPipelineStageFlags stage_mask,
+                             VkResult status)
+{
+   /* for vkCmdSetEvent and vkCmdResetEvent interception */
+   struct vn_event *ev = vn_event_from_handle(ev_handle);
+
+   if (ev->feedback_slot) {
+      /* TODO use VkBufferMemoryBarrier instead */
+      vn_feedback_cmd_record_internal(cmd_handle, ev->feedback_slot,
+                                      stage_mask |
+                                         VK_PIPELINE_STAGE_HOST_BIT |
+                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      status);
+   }
 }

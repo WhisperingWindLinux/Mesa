@@ -312,6 +312,94 @@ vn_feedback_event_cmd_record(VkCommandBuffer cmd_handle,
                          &barrier_after, 0, NULL);
 }
 
+static VkResult
+vn_feedback_fence_cmd_record(VkCommandBuffer cmd_handle,
+                             struct vn_feedback_slot *slot)
+
+{
+   static const VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .pNext = NULL,
+      .flags = 0,
+      .pInheritanceInfo = NULL,
+   };
+   static const VkMemoryBarrier barrier_before = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = NULL,
+      /* make pending writes available like fence signal operation */
+      .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+   };
+   static const VkMemoryBarrier barrier_after = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .pNext = NULL,
+      .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT,
+   };
+   VkResult result;
+
+   STATIC_ASSERT(sizeof(*slot->status) == 4);
+
+   result = vn_BeginCommandBuffer(cmd_handle, &begin_info);
+   if (result != VK_SUCCESS)
+      return result;
+
+   vn_CmdPipelineBarrier(cmd_handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1,
+                         &barrier_before, 0, NULL, 0, NULL);
+   vn_CmdFillBuffer(cmd_handle, slot->buffer, slot->offset, 4, VK_SUCCESS);
+   vn_CmdPipelineBarrier(cmd_handle, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier_after, 0,
+                         NULL, 0, NULL);
+
+   return vn_EndCommandBuffer(cmd_handle);
+}
+
+VkResult
+vn_feedback_fence_cmd_alloc(VkDevice dev_handle,
+                            struct vn_feedback_cmd_pool *pool,
+                            struct vn_feedback_slot *slot,
+                            VkCommandBuffer *out_cmd_handle)
+{
+   const VkCommandBufferAllocateInfo info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .pNext = NULL,
+      .commandPool = pool->pool,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandBufferCount = 1,
+   };
+   VkCommandBuffer cmd_handle;
+   VkResult result;
+
+   simple_mtx_lock(&pool->mutex);
+   result = vn_AllocateCommandBuffers(dev_handle, &info, &cmd_handle);
+   if (result != VK_SUCCESS)
+      goto out_unlock;
+
+   result = vn_feedback_fence_cmd_record(cmd_handle, slot);
+   if (result != VK_SUCCESS) {
+      vn_FreeCommandBuffers(dev_handle, pool->pool, 1, &cmd_handle);
+      goto out_unlock;
+   }
+
+   *out_cmd_handle = cmd_handle;
+
+out_unlock:
+   simple_mtx_unlock(&pool->mutex);
+
+   return result;
+}
+
+void
+vn_feedback_fence_cmd_free(VkDevice dev_handle,
+                           struct vn_feedback_cmd_pool *pool,
+                           VkCommandBuffer cmd_handle)
+{
+   simple_mtx_lock(&pool->mutex);
+   vn_FreeCommandBuffers(dev_handle, pool->pool, 1, &cmd_handle);
+   simple_mtx_unlock(&pool->mutex);
+}
+
 VkResult
 vn_feedback_cmd_pools_init(struct vn_device *dev)
 {

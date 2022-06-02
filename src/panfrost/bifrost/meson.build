@@ -172,6 +172,7 @@ if with_tests
         'valhall/test/test-validate-fau.cpp',
         'valhall/test/test-insert-flow.cpp',
         'valhall/test/test-lower-isel.cpp',
+        'valhall/test/test-lower-constants.cpp',
         'valhall/test/test-merge-flow.cpp',
         'valhall/test/test-packing.cpp',
       ),

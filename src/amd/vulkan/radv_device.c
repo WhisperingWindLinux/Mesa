@@ -924,6 +924,7 @@ static const struct debug_control radv_debug_options[] = {
    {"nonggc", RADV_DEBUG_NO_NGGC},
    {"prologs", RADV_DEBUG_DUMP_PROLOGS},
    {"nodma", RADV_DEBUG_NO_DMA_BLIT},
+   {"as", RADV_DEBUG_DUMP_AS},
    {NULL, 0}};
 
 const char *
@@ -1070,6 +1071,16 @@ radv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
 
    instance->debug_flags = parse_debug_string(getenv("RADV_DEBUG"), radv_debug_options);
    instance->perftest_flags = parse_debug_string(getenv("RADV_PERFTEST"), radv_perftest_options);
+
+   if (instance->debug_flags & RADV_DEBUG_DUMP_AS) {
+      instance->as_dump_path = getenv("RADV_AS_DUMP_PATH");
+
+      const char* buffer_size = getenv("RADV_AS_BUFFER_SIZE");
+      if (buffer_size)
+         instance->as_buffer_size = strtoull(buffer_size, NULL, 10);
+      else
+         instance->as_buffer_size = 1024 * 1024 * 100;
+   }
 
    if (instance->debug_flags & RADV_DEBUG_STARTUP)
       fprintf(stderr, "radv: info: Created an instance.\n");

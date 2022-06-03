@@ -344,6 +344,9 @@ struct radv_instance {
    uint64_t debug_flags;
    uint64_t perftest_flags;
 
+   const char *as_dump_path;
+   uint64_t as_buffer_size;
+
    bool physical_devices_enumerated;
    struct list_head physical_devices;
 

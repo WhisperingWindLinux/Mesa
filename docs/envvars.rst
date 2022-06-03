@@ -621,6 +621,14 @@ V3D/V3DV driver environment variables
 RADV driver environment variables
 ---------------------------------
 
+:envvar:`RADV_AS_DUMP_PATH`
+   The dump path for acceleration structures. (The current working directory
+   by default)
+
+:envvar:`RADV_AS_BUFFER_SIZE`
+   The size of the read back buffer used for dumping acceleration structures.
+   (100MB by default)
+
 :envvar:`RADV_DEBUG`
    a comma-separated list of named flags, which do various things:
 
@@ -628,6 +636,10 @@ RADV driver environment variables
       enable LLVM compiler backend
    ``allbos``
       force all allocated buffers to be referenced in submissions
+   ``as``
+      Dump acceleration structure binaries int the directory specified
+      by `RADV_AS_DUMP_PATH`. The size of the reaad back buffer can be
+      adjusted with `RADV_AS_BUFFER_SIZE`.
    ``checkir``
       validate the LLVM IR before LLVM compiles the shader
    ``forcecompress``

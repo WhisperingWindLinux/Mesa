@@ -683,6 +683,10 @@ struct radv_meta_state {
 
       struct radix_sort_vk *radix_sort;
       struct radix_sort_vk_sort_devaddr_info radix_sort_info;
+
+      VkBuffer dump_buffer;
+      VkDeviceMemory dump_memory;
+      uint64_t dump_offset;
    } accel_struct_build;
 
    struct {

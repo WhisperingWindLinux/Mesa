@@ -21,6 +21,7 @@
  * IN THE SOFTWARE.
  */
 #include "radv_acceleration_structure.h"
+#include "radv_debug.h"
 #include "radv_private.h"
 
 #include "util/format/format_utils.h"
@@ -1892,6 +1893,11 @@ radv_device_finish_accel_struct_build_state(struct radv_device *device)
    if (state->accel_struct_build.radix_sort)
       radix_sort_vk_destroy(state->accel_struct_build.radix_sort, radv_device_to_handle(device),
                             &state->alloc);
+
+   radv_DestroyBuffer(radv_device_to_handle(device), state->accel_struct_build.dump_buffer,
+                      &state->alloc);
+   radv_FreeMemory(radv_device_to_handle(device), state->accel_struct_build.dump_memory,
+                   &state->alloc);
 }
 
 static VkResult
@@ -2002,6 +2008,64 @@ radv_device_init_accel_struct_build_state(struct radv_device *device)
       radix_sort_info->ext = NULL;
       radix_sort_info->key_bits = 24;
       radix_sort_info->fill_buffer = radix_sort_fill_buffer;
+   }
+
+   if (device->instance->debug_flags & RADV_DEBUG_DUMP_AS) {
+      VkBufferCreateInfo buffer_create_info = {
+         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+         .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+         .size = device->instance->as_buffer_size,
+      };
+
+      result = radv_CreateBuffer(radv_device_to_handle(device), &buffer_create_info,
+                                 &device->meta_state.alloc,
+                                 &device->meta_state.accel_struct_build.dump_buffer);
+      if (result != VK_SUCCESS)
+         return result;
+
+      VkBufferMemoryRequirementsInfo2 info = {
+         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+         .buffer = device->meta_state.accel_struct_build.dump_buffer,
+      };
+      VkMemoryRequirements2 mem_req = {
+         .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+      };
+      radv_GetBufferMemoryRequirements2(radv_device_to_handle(device), &info, &mem_req);
+
+      VkMemoryAllocateInfo alloc_info = {
+         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+         .allocationSize = mem_req.memoryRequirements.size,
+         .memoryTypeIndex = 0,
+      };
+
+      const VkPhysicalDeviceMemoryProperties *mem_props =
+         &device->physical_device->memory_properties;
+
+      for (uint32_t type_index = 0; type_index < mem_props->memoryTypeCount; type_index++) {
+         if (mem_props->memoryTypes[type_index].propertyFlags &
+             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+            alloc_info.memoryTypeIndex = type_index;
+            break;
+         }
+      }
+
+      result =
+         radv_AllocateMemory(radv_device_to_handle(device), &alloc_info, &device->meta_state.alloc,
+                             &device->meta_state.accel_struct_build.dump_memory);
+      if (result != VK_SUCCESS)
+         return result;
+
+      VkBindBufferMemoryInfo bind_info = {
+         .sType = VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO,
+         .buffer = device->meta_state.accel_struct_build.dump_buffer,
+         .memory = device->meta_state.accel_struct_build.dump_memory,
+         .memoryOffset = 0,
+      };
+
+      result = radv_BindBufferMemory2(radv_device_to_handle(device), 1, &bind_info);
+      if (result != VK_SUCCESS)
+         return result;
    }
 
    return result;

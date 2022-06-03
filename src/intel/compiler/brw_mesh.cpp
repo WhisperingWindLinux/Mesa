@@ -90,22 +90,46 @@ shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
    *align = comp_size * (length == 3 ? 4 : length);
 }
 
+static bool
+brw_nir_task_launch_from_first_inv_instr(nir_builder *b, nir_instr *instr, void *data)
+{
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+
+   if (intrin->intrinsic != nir_intrinsic_launch_mesh_workgroups)
+      return false;
+
+   b->cursor = nir_before_instr(&intrin->instr);
+
+   nir_ssa_def *local_invocation_index = nir_build_load_local_invocation_index(b);
+
+   nir_ssa_def *cmp = nir_ieq(b, local_invocation_index,
+                                  nir_imm_int(b, 0));
+   nir_if *if_stmt = nir_push_if(b, cmp);
+   {
+      nir_instr_move(b->cursor, instr);
+   }
+   nir_pop_if(b, if_stmt);
+
+   return true;
+}
+
+static bool
+brw_nir_task_launch_from_first_inv(nir_shader *nir)
+{
+   return nir_shader_instructions_pass(nir,
+                                       brw_nir_task_launch_from_first_inv_instr,
+                                       nir_metadata_block_index |
+                                       nir_metadata_dominance,
+                                       NULL);
+}
+
 static void
 brw_nir_lower_tue_outputs(nir_shader *nir, brw_tue_map *map)
 {
    memset(map, 0, sizeof(*map));
-
-   /* TUE header contains 4 words:
-    *
-    * - Word 0 for Task Count.
-    *
-    * - Words 1-3 used for "Dispatch Dimensions" feature, to allow mapping a
-    *   3D dispatch into the 1D dispatch supported by HW.  Currently not used.
-    */
-   nir_foreach_shader_out_variable(var, nir) {
-      assert(var->data.location == VARYING_SLOT_TASK_COUNT);
-      var->data.driver_location = 0;
-   }
 
    nir_lower_io(nir, nir_var_shader_out, type_size_scalar_dwords,
                 nir_lower_io_lower_64bit_to_32);
@@ -191,7 +215,6 @@ brw_compile_task(const struct brw_compiler *compiler,
    const bool debug_enabled = INTEL_DEBUG(DEBUG_TASK);
 
    prog_data->base.base.stage = MESA_SHADER_TASK;
-   prog_data->base.base.total_shared = nir->info.shared_size;
    prog_data->base.base.total_scratch = 0;
 
    prog_data->base.local_size[0] = nir->info.workgroup_size[0];
@@ -203,6 +226,16 @@ brw_compile_task(const struct brw_compiler *compiler,
 
    NIR_PASS_V(nir, brw_nir_lower_tue_outputs, &prog_data->map);
    NIR_PASS_V(nir, brw_nir_adjust_task_payload_offsets);
+
+   nir_lower_task_shader_options lower_ts_opt = {
+      .payload_to_shared_for_atomics = true,
+   };
+   NIR_PASS_V(nir, nir_lower_task_shader, lower_ts_opt);
+
+   /* nir_lower_task_shader increases nir->info.shared_size */
+   prog_data->base.base.total_shared = nir->info.shared_size;
+
+   NIR_PASS_V(nir, brw_nir_task_launch_from_first_inv);
 
    const unsigned required_dispatch_width =
       brw_required_dispatch_width(&nir->info, key->base.subgroup_size_type);
@@ -1147,6 +1180,35 @@ fs_visitor::nir_emit_task_intrinsic(const fs_builder &bld,
    case nir_intrinsic_load_task_payload:
       emit_task_mesh_load(bld, instr);
       break;
+
+   case nir_intrinsic_launch_mesh_workgroups: {
+      fs_reg src = get_nir_src(instr->src[0]);
+      fs_reg urb_handle = get_mesh_urb_handle(bld, instr->intrinsic);
+
+      fs_builder bld8 = bld.group(8, 0);
+
+      fs_reg launch_count = bld8.vgrf(BRW_REGISTER_TYPE_UD, 1);
+      bld8.MUL(launch_count, quarter(src, 0), quarter(src, 1));
+      bld8.MUL(launch_count, quarter(src, 2), launch_count);
+
+      fs_reg payload_srcs[6];
+
+      unsigned p = 0;
+
+      payload_srcs[p++] = urb_handle;
+      payload_srcs[p++] = brw_imm_ud(0xf << 16);
+      payload_srcs[p++] = launch_count;
+      payload_srcs[p++] = quarter(src, 0);
+      payload_srcs[p++] = quarter(src, 1);
+      payload_srcs[p++] = quarter(src, 2);
+
+      fs_reg payload = bld8.vgrf(BRW_REGISTER_TYPE_UD, p);
+      bld8.LOAD_PAYLOAD(payload, payload_srcs, p, 2);
+
+      fs_inst *inst = bld8.emit(SHADER_OPCODE_URB_WRITE_SIMD8_MASKED, reg_undef, payload);
+      inst->mlen = p;
+      break;
+   }
 
    default:
       nir_emit_task_mesh_intrinsic(bld, instr);

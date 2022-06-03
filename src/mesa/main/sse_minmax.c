@@ -54,8 +54,8 @@ _mesa_uint_array_min_max(const unsigned *ui_indices, unsigned *min_index,
     * find the actual tipping point.
     */
    if (aligned_count >= 8) {
-      unsigned max_arr[4] __attribute__ ((aligned (16)));
-      unsigned min_arr[4] __attribute__ ((aligned (16)));
+      _Alignas(16) unsigned max_arr[4];
+      _Alignas(16) unsigned min_arr[4];
       unsigned vec_count;
       __m128i max_ui4 = _mm_setzero_si128();
       __m128i min_ui4 = _mm_set1_epi32(~0U);

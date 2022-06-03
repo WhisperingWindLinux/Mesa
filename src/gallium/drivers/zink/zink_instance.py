@@ -255,7 +255,7 @@ zink_create_instance(struct zink_screen *screen)
 
    VkResult err = vk_CreateInstance(&ici, NULL, &screen->instance);
    if (err != VK_SUCCESS) {
-      mesa_loge("ZINK: vkCreateInstance failed");
+      mesa_loge("ZINK: vkCreateInstance failed (%d)", err);
       return false;
    }
 

@@ -4464,6 +4464,36 @@ radv_lower_fs_output(nir_shader *nir, const struct radv_pipeline_key *pipeline_k
    return progress;
 }
 
+static bool
+radv_round_even_array(nir_builder *b, nir_instr *instr, UNUSED void *unused)
+{
+   if (instr->type != nir_instr_type_tex)
+      return false;
+
+   nir_tex_instr *tex = nir_instr_as_tex(instr);
+
+   int coord_index = nir_tex_instr_src_index(tex, nir_tex_src_coord);
+   if (!tex->is_array || coord_index < 0 || nir_tex_instr_src_type(tex, coord_index) != nir_type_float)
+      return false;
+
+   nir_src *src = &tex->src[coord_index].src;
+
+   nir_ssa_scalar comps[NIR_MAX_VEC_COMPONENTS];
+   for (unsigned i = 0; i < src->ssa->num_components; i++) {
+      comps[i] = nir_ssa_scalar_resolved(src->ssa, i);
+   }
+
+   b->cursor = nir_before_instr(instr);
+
+   unsigned array_index = src->ssa->num_components - 1;
+   comps[array_index] = nir_get_ssa_scalar(nir_fround_even(b, nir_channel(b, src->ssa, array_index)), 0);
+
+   nir_ssa_def *new_vec = nir_vec_scalars(b, comps, src->ssa->num_components);
+   nir_instr_rewrite_src_ssa(instr, src, new_vec);
+
+   return true;
+}
+
 static void
 radv_pipeline_hash_shader(const unsigned char *spirv_sha1, const uint32_t spirv_sha1_size,
                           const char *entrypoint, gl_shader_stage stage,
@@ -4772,6 +4802,11 @@ radv_create_shaders(struct radv_pipeline *pipeline, struct radv_pipeline_layout 
    for (int i = 0; i < MESA_VULKAN_SHADER_STAGES; ++i) {
       if (stages[i].nir) {
          int64_t stage_start = os_time_get_nano();
+
+         nir_shader_instructions_pass(stages[i].nir,
+                                      radv_round_even_array,
+                                      nir_metadata_block_index | nir_metadata_dominance,
+                                      NULL);
 
          radv_optimize_nir(stages[i].nir, optimize_conservatively, false);
 

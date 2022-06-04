@@ -449,6 +449,16 @@ radv_meta_dst_layout_to_layout(enum radv_meta_dst_layout layout)
                                                  : VK_IMAGE_LAYOUT_GENERAL;
 }
 
+struct radv_as_dump {
+   struct list_head link;
+
+   uint64_t offset;
+   uint64_t size;
+   uint64_t va;
+
+   struct radv_cmd_buffer *cmd_buffer;
+};
+
 struct radv_meta_state {
    VkAllocationCallbacks alloc;
 
@@ -687,6 +697,7 @@ struct radv_meta_state {
       VkBuffer dump_buffer;
       VkDeviceMemory dump_memory;
       uint64_t dump_offset;
+      struct list_head dumps;
    } accel_struct_build;
 
    struct {

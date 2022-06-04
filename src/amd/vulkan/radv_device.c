@@ -4596,6 +4596,57 @@ radv_queue_submit_normal(struct radv_queue *queue, struct vk_queue_submit *submi
       submit.initial_preamble_cs = queue->state.initial_preamble_cs;
    }
 
+   struct list_head *dumps = &queue->device->meta_state.accel_struct_build.dumps;
+   if (!list_is_empty(dumps)) {
+      result = queue->device->vk.dispatch_table.QueueWaitIdle(radv_queue_to_handle(queue));
+      if (result != VK_SUCCESS)
+         return result;
+
+      void *data;
+      result =
+         radv_MapMemory(radv_device_to_handle(queue->device),
+                        queue->device->meta_state.accel_struct_build.dump_memory, 0, 0, 0, &data);
+      if (result != VK_SUCCESS)
+         return result;
+
+      for (uint32_t j = 0; j < submission->command_buffer_count; j++) {
+         struct radv_cmd_buffer *cmd_buffer =
+            (struct radv_cmd_buffer *)submission->command_buffers[j];
+
+         list_for_each_entry_safe(struct radv_as_dump, dump, dumps, link)
+         {
+            if (dump->cmd_buffer != cmd_buffer)
+               continue;
+
+            fprintf(stderr, "radv/dump-as: offset: %lu size: %lu va: %lx\n", dump->offset,
+                    dump->size, dump->va);
+
+            const char *path = queue->device->instance->as_dump_path;
+            /* path + / + va in hex + .bvh + \0 */
+            char *file_path = malloc(strlen(path) + 1 + 16 + 4 + 1);
+            sprintf(file_path, "%s/%lx.bvh", path, dump->va);
+
+            FILE *file = fopen(file_path, "w");
+            if (!file) {
+               fprintf(stderr, "radv/dump-as: Could not open file '%s'!\n", file_path);
+               free(file_path);
+               continue;
+            }
+
+            fwrite((uint8_t *)data + dump->offset, 1, dump->size, file);
+            fclose(file);
+
+            free(file_path);
+
+            list_del(&dump->link);
+            free(dump);
+         }
+      }
+
+      radv_UnmapMemory(radv_device_to_handle(queue->device),
+                       queue->device->meta_state.accel_struct_build.dump_memory);
+   }
+
 fail:
    free(cs_array);
    if (queue->device->trace_bo)

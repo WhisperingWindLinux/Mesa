@@ -2068,6 +2068,8 @@ radv_device_init_accel_struct_build_state(struct radv_device *device)
          return result;
    }
 
+   list_inithead(&device->meta_state.accel_struct_build.dumps);
+
    return result;
 }
 
@@ -2350,6 +2352,48 @@ radv_CmdBuildAccelerationStructuresKHR(
                             radv_buffer_get_va(accel_struct->bo) + accel_struct->mem_offset + base,
                             (const char *)&header + base, sizeof(header) - base);
    }
+
+   if (cmd_buffer->device->instance->debug_flags & RADV_DEBUG_DUMP_AS) {
+      RADV_FROM_HANDLE(radv_buffer, dump_buffer,
+                       cmd_buffer->device->meta_state.accel_struct_build.dump_buffer);
+
+      radv_cs_add_buffer(cmd_buffer->device->ws, cmd_buffer->cs, dump_buffer->bo);
+
+      uint64_t dst_offset = cmd_buffer->device->meta_state.accel_struct_build.dump_offset;
+
+      cmd_buffer->state.flush_bits |= flush_bits;
+
+      for (uint32_t i = 0; i < infoCount; ++i) {
+         RADV_FROM_HANDLE(radv_acceleration_structure, accel_struct,
+                          pInfos[i].dstAccelerationStructure);
+
+         if (dst_offset + accel_struct->size > dump_buffer->vk.size) {
+            fprintf(stderr, "radv/dump-as: Out of read back space!\n");
+            break;
+         }
+
+         uint64_t src_va = radv_accel_struct_get_va(accel_struct);
+         uint64_t dst_va = radv_buffer_get_va(dump_buffer->bo) + dump_buffer->offset + dst_offset;
+
+         struct radv_as_dump *dump = malloc(sizeof(struct radv_as_dump));
+         dump->offset = dst_offset;
+         dump->size = accel_struct->size;
+         dump->va = src_va;
+         dump->cmd_buffer = cmd_buffer;
+         list_inithead(&dump->link);
+
+         list_addtail(&dump->link, &cmd_buffer->device->meta_state.accel_struct_build.dumps);
+
+         si_cp_dma_buffer_copy(cmd_buffer, src_va, dst_va, accel_struct->size);
+
+         dst_offset += accel_struct->size;
+      }
+
+      cmd_buffer->device->meta_state.accel_struct_build.dump_offset = dst_offset;
+
+      si_cp_dma_wait_for_idle(cmd_buffer);
+   }
+
    free(bvh_states);
    radv_meta_restore(&saved_state, cmd_buffer);
 }

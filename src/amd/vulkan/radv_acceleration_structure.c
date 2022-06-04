@@ -2243,6 +2243,11 @@ radv_CmdBuildAccelerationStructuresKHR(
          if (final_iter)
             dst_node_offset = ALIGN(sizeof(struct radv_accel_struct_header), 64);
 
+         if (radv_accel_struct_get_va(accel_struct) & 63) {
+            printf("%lx\n", radv_accel_struct_get_va(accel_struct));
+            exit(0);
+         }
+
          const struct build_internal_constants consts = {
             .node_dst_addr = radv_accel_struct_get_va(accel_struct),
             .scratch_addr = pInfos[i].scratchData.deviceAddress,

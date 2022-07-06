@@ -62,10 +62,19 @@ extern const char *tgsi_swizzle_names[];
 void
 etna_dump_shader(const struct etna_shader_variant *shader)
 {
-   if (shader->stage == MESA_SHADER_VERTEX)
+   switch (shader->stage) {
+   case MESA_SHADER_VERTEX:
       printf("VERT\n");
-   else
+      break;
+   case MESA_SHADER_FRAGMENT:
       printf("FRAG\n");
+      break;
+   case MESA_SHADER_KERNEL:
+      printf("KERNEL\n");
+      break;
+   default:
+      break;
+   }
 
    etna_disasm(shader->code, shader->code_size, PRINT_RAW);
 
@@ -80,32 +89,35 @@ etna_dump_shader(const struct etna_shader_variant *shader)
              shader->uniforms.data[idx],
              shader->uniforms.contents[idx]);
    }
-   printf("inputs:\n");
-   for (int idx = 0; idx < shader->infile.num_reg; ++idx) {
-      printf(" [%i] name=%s comps=%i\n", shader->infile.reg[idx].reg,
-               (shader->stage == MESA_SHADER_VERTEX) ?
-               gl_vert_attrib_name(shader->infile.reg[idx].slot) :
-               gl_varying_slot_name_for_stage(shader->infile.reg[idx].slot, shader->stage),
-               shader->infile.reg[idx].num_components);
+
+   if (shader->stage != MESA_SHADER_KERNEL) {
+      printf("inputs:\n");
+      for (int idx = 0; idx < shader->infile.num_reg; ++idx) {
+         printf(" [%i] name=%s comps=%i\n", shader->infile.reg[idx].reg,
+                  (shader->stage == MESA_SHADER_VERTEX) ?
+                  gl_vert_attrib_name(shader->infile.reg[idx].slot) :
+                  gl_varying_slot_name_for_stage(shader->infile.reg[idx].slot, shader->stage),
+                  shader->infile.reg[idx].num_components);
+      }
+      printf("outputs:\n");
+      for (int idx = 0; idx < shader->outfile.num_reg; ++idx) {
+         printf(" [%i] name=%s comps=%i\n", shader->outfile.reg[idx].reg,
+                  (shader->stage == MESA_SHADER_VERTEX) ?
+                  gl_varying_slot_name_for_stage(shader->outfile.reg[idx].slot, shader->stage) :
+                  gl_frag_result_name(shader->outfile.reg[idx].slot),
+                  shader->outfile.reg[idx].num_components);
+      }
+      printf("special:\n");
+      if (shader->stage == MESA_SHADER_VERTEX) {
+         printf("  vs_pos_out_reg=%i\n", shader->vs_pos_out_reg);
+         printf("  vs_pointsize_out_reg=%i\n", shader->vs_pointsize_out_reg);
+         printf("  vs_load_balancing=0x%08x\n", shader->vs_load_balancing);
+      } else if (shader->stage == MESA_SHADER_FRAGMENT) {
+         printf("  ps_color_out_reg=%i\n", shader->ps_color_out_reg);
+         printf("  ps_depth_out_reg=%i\n", shader->ps_depth_out_reg);
+      }
+      printf("  input_count_unk8=0x%08x\n", shader->input_count_unk8);
    }
-   printf("outputs:\n");
-   for (int idx = 0; idx < shader->outfile.num_reg; ++idx) {
-      printf(" [%i] name=%s comps=%i\n", shader->outfile.reg[idx].reg,
-               (shader->stage == MESA_SHADER_VERTEX) ?
-               gl_varying_slot_name_for_stage(shader->outfile.reg[idx].slot, shader->stage) :
-               gl_frag_result_name(shader->outfile.reg[idx].slot),
-               shader->outfile.reg[idx].num_components);
-   }
-   printf("special:\n");
-   if (shader->stage == MESA_SHADER_VERTEX) {
-      printf("  vs_pos_out_reg=%i\n", shader->vs_pos_out_reg);
-      printf("  vs_pointsize_out_reg=%i\n", shader->vs_pointsize_out_reg);
-      printf("  vs_load_balancing=0x%08x\n", shader->vs_load_balancing);
-   } else {
-      printf("  ps_color_out_reg=%i\n", shader->ps_color_out_reg);
-      printf("  ps_depth_out_reg=%i\n", shader->ps_depth_out_reg);
-   }
-   printf("  input_count_unk8=0x%08x\n", shader->input_count_unk8);
 }
 
 /* Link vs and fs together: fill in shader_state from vs and fs
@@ -370,7 +382,7 @@ etna_shader_stage(struct etna_shader_variant *shader)
    switch (shader->stage) {
    case MESA_SHADER_VERTEX:     return "VERT";
    case MESA_SHADER_FRAGMENT:   return "FRAG";
-   case MESA_SHADER_COMPUTE:    return "CL";
+   case MESA_SHADER_KERNEL:     return "CL";
    default:
       unreachable("invalid type");
       return NULL;

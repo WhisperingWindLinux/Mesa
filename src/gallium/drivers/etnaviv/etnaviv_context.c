@@ -222,6 +222,10 @@ etna_get_cs(struct etna_context *ctx, struct etna_shader_key* const key)
 
    ctx->shader.compute = etna_shader_variant(ctx->shader.bind_compute, key, &ctx->base.debug);
 
+   if (DBG_ENABLED(ETNA_DBG_DUMP_SHADERS)) {
+      etna_dump_shader(ctx->shader.compute);
+   }
+
    if (!ctx->shader.compute)
       return false;
 

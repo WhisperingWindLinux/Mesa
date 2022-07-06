@@ -78,7 +78,8 @@ static inline bool is_sysval(nir_instr *instr)
 
    nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
    return intr->intrinsic == nir_intrinsic_load_front_face ||
-          intr->intrinsic == nir_intrinsic_load_frag_coord;
+          intr->intrinsic == nir_intrinsic_load_frag_coord ||
+          intr->intrinsic == nir_intrinsic_load_global_invocation_id_zero_base;
 }
 
 /* get unique ssa/reg index for nir_src */
@@ -218,7 +219,8 @@ dest_for_instr(nir_instr *instr)
           intr->intrinsic == nir_intrinsic_load_input ||
           intr->intrinsic == nir_intrinsic_load_instance_id ||
           intr->intrinsic == nir_intrinsic_load_texture_rect_scaling ||
-          intr->intrinsic == nir_intrinsic_load_global_2x32_offset)
+          intr->intrinsic == nir_intrinsic_load_global_2x32_offset ||
+          intr->intrinsic == nir_intrinsic_load_global_invocation_id)
          dest = &intr->dest;
    } break;
    case nir_instr_type_deref:

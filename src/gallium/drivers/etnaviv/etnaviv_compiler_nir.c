@@ -404,6 +404,9 @@ get_src(struct etna_compile *c, nir_src *src)
 
          return src_swizzle(const_src(c, values, 2), SWIZZLE(X,Y,X,X));
       }
+      case nir_intrinsic_load_global_invocation_id_zero_base:
+      case nir_intrinsic_load_global_invocation_id:
+         return (hw_src) { .use = 1, .rgroup = INST_RGROUP_TEMP };
       default:
          compile_error(c, "Unhandled NIR intrinsic type: %s\n",
                        nir_intrinsic_infos[intr->intrinsic].name);
@@ -693,6 +696,8 @@ emit_intrinsic(struct etna_compile *c, nir_intrinsic_instr * intr)
    case nir_intrinsic_load_input:
    case nir_intrinsic_load_instance_id:
    case nir_intrinsic_load_texture_rect_scaling:
+   case nir_intrinsic_load_global_invocation_id:
+   case nir_intrinsic_load_global_invocation_id_zero_base:
       break;
    default:
       compile_error(c, "Unhandled NIR intrinsic type: %s\n",

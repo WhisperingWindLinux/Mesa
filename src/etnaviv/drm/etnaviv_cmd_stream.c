@@ -199,12 +199,26 @@ static uint32_t bo2idx(struct etna_cmd_stream *stream, struct etna_bo *bo,
 	return idx;
 }
 
+#define GET_PTR(p) ( (void *) ((uintptr_t) p & ~(uintptr_t) 1) )
+
+static void dump_cmdstream(const char *base, unsigned submit, void *data, unsigned size)
+{
+   char buffer[255];
+
+   snprintf(buffer, sizeof(buffer), "%s_submit_%08u_cmdstream", base, submit);
+   FILE *f = fopen(buffer,"wb");
+
+   fwrite(data, size, sizeof(uint32_t), f);
+   fclose(f);
+}
+
 void etna_cmd_stream_flush(struct etna_cmd_stream *stream, int in_fence_fd,
 		int *out_fence_fd, bool is_noop)
 {
 	struct etna_cmd_stream_priv *priv = etna_cmd_stream_priv(stream);
 	int ret, id = priv->pipe->id;
 	struct etna_gpu *gpu = priv->pipe->gpu;
+	static int idx = 0;
 
 	struct drm_etnaviv_gem_submit req = {
 		.pipe = gpu->core,
@@ -218,6 +232,10 @@ void etna_cmd_stream_flush(struct etna_cmd_stream *stream, int in_fence_fd,
 		.stream = VOID2U64(stream->buffer),
 		.stream_size = stream->offset * 4, /* in bytes */
 	};
+
+	uint32_t *cmd = malloc(req.stream_size);
+	memcpy(cmd, GET_PTR(req.stream), req.stream_size);
+	dump_cmdstream("base", idx++, cmd, req.stream_size / 4);
 
 	if (in_fence_fd != -1) {
 		req.flags |= ETNA_SUBMIT_FENCE_FD_IN | ETNA_SUBMIT_NO_IMPLICIT;

@@ -37,4 +37,6 @@ etna_lower_alu(nir_shader *shader, bool has_new_transcendentals);
 bool
 etna_nir_lower_ubo_to_uniform(nir_shader *shader);
 
+void
+etna_nir_lower_global(nir_shader *shader);
 #endif

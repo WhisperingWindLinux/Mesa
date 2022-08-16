@@ -59,6 +59,7 @@ files_etnaviv = files(
   'etnaviv_format.h',
   'etnaviv_internal.h',
   'etnaviv_nir_lower_ubo_to_uniform.c',
+  'etnaviv_nir_lower_global.c',
   'etnaviv_nir.c',
   'etnaviv_nir.h',
   'etnaviv_perfmon.c',

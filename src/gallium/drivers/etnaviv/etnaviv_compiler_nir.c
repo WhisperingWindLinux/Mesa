@@ -513,7 +513,10 @@ emit_alu(struct etna_compile *c, nir_alu_instr * alu)
       srcs[i] = src;
    }
 
-   etna_emit_alu(c, alu->op, dst, srcs, alu->dest.saturate || (alu->op == nir_op_fsat));
+   unsigned src_bitsize = nir_src_bit_size(alu->src[0].src);
+
+   etna_emit_alu(c, alu->op, dst, srcs, src_bitsize,
+                 alu->dest.saturate || (alu->op == nir_op_fsat));
 }
 
 static void
@@ -548,6 +551,29 @@ emit_tex(struct etna_compile *c, nir_tex_instr * tex)
    etna_emit_tex(c, tex->op, tex->sampler_index, dst_swiz, dst, get_src(c, coord),
                  src1 ? get_src(c, src1) : SRC_DISABLE,
                  src2 ? get_src(c, src2) : SRC_DISABLE);
+}
+
+static unsigned
+inst_type_from_bitsize(struct etna_compile *c, unsigned bitsize)
+{
+   unsigned type;
+
+   switch (bitsize) {
+      case 32:
+         type = INST_TYPE_F32;
+         break;
+      case 16:
+         type = INST_TYPE_U16;
+         break;
+      case 8:
+         type = INST_TYPE_U8;
+         break;
+      default:
+         compile_error(c, "Unhandled bitsize: %u\n", bitsize);
+         break;
+   }
+
+   return type;
 }
 
 static void
@@ -938,7 +964,7 @@ emit_shader(struct etna_compile *c, unsigned *num_temps, unsigned *num_consts)
                value[i] = UNIFORM(intr->dest.ssa.bit_size, base * 4 + (i * 4 * (intr->dest.ssa.bit_size / 8)));
 
             b.cursor = nir_after_instr(instr);
-            nir_ssa_def *def = nir_build_imm(&b, intr->dest.ssa.num_components, 32, value);
+            nir_ssa_def *def = nir_build_imm(&b, intr->dest.ssa.num_components, intr->dest.ssa.bit_size, value);
 
             nir_ssa_def_rewrite_uses(&intr->dest.ssa, def);
             nir_instr_remove(instr);

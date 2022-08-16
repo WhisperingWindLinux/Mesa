@@ -228,6 +228,44 @@ dest_for_instr(nir_instr *instr)
    return real_dest(dest, NULL, NULL);
 }
 
+static inline unsigned
+etna_type_from_nir(nir_alu_type nir_type)
+{
+   unsigned type = INST_TYPE_U32;
+
+   switch (nir_type) {
+      case nir_type_float16:
+         type = INST_TYPE_F16;
+         break;
+      case nir_type_float32:
+         type = INST_TYPE_F32;
+         break;
+      case nir_type_uint8:
+         type = INST_TYPE_U8;
+         break;
+      case nir_type_uint16:
+         type = INST_TYPE_U16;
+         break;
+      case nir_type_uint32:
+         type = INST_TYPE_U32;
+         break;
+      case nir_type_int8:
+         type = INST_TYPE_S8;
+         break;
+      case nir_type_int16:
+         type = INST_TYPE_S16;
+         break;
+      case nir_type_int32:
+         type = INST_TYPE_S32;
+         break;
+      default:
+         assert(false && "Unhandled type");
+         break;
+   }
+
+   return type;
+}
+
 struct live_def {
    nir_instr *instr;
    nir_dest *dest; /* cached dest_for_instr */
@@ -338,7 +376,7 @@ emit_inst(struct etna_compile *c, struct etna_inst *inst)
 
 void
 etna_emit_alu(struct etna_compile *c, nir_op op, struct etna_inst_dst dst,
-              struct etna_inst_src src[3], bool saturate);
+              struct etna_inst_src src[3], unsigned src_bitsize, bool saturate);
 
 void
 etna_emit_tex(struct etna_compile *c, nir_texop op, unsigned texid, unsigned dst_swiz,

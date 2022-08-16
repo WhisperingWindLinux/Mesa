@@ -133,7 +133,7 @@ static const struct etna_op_info etna_ops[] = {
 
 void
 etna_emit_alu(struct etna_compile *c, nir_op op, struct etna_inst_dst dst,
-              struct etna_inst_src src[3], bool saturate)
+              struct etna_inst_src src[3], unsigned src_bitsize, bool saturate)
 {
    struct etna_op_info ei = etna_ops[op];
    unsigned swiz_scalar = INST_SWIZ_BROADCAST(ffs(dst.write_mask) - 1);
@@ -176,6 +176,11 @@ etna_emit_alu(struct etna_compile *c, nir_op op, struct etna_inst_dst dst,
    case nir_op_ineg:
       inst.src[0] = etna_immediate_int(0);
       src[0].neg = 1;
+      break;
+   /* i2f encodes the src bitsize in the instruction type
+    * for sign-extension purposes. */
+   case nir_op_i2f32:
+      inst.type = etna_type_from_nir(nir_type_int | src_bitsize);
       break;
    default:
       break;

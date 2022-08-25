@@ -45,13 +45,13 @@
 #include "util/compiler.h"
 #include "util/half_float.h"
 
-static bool
-etna_alu_to_scalar_filter_cb(const nir_instr *instr, const void *data)
+static uint8_t
+etna_alu_width_filter_cb(const nir_instr *instr, const void *data)
 {
    const struct etna_specs *specs = data;
 
    if (instr->type != nir_instr_type_alu)
-      return false;
+      return 0;
 
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    switch (alu->op) {
@@ -64,7 +64,7 @@ etna_alu_to_scalar_filter_cb(const nir_instr *instr, const void *data)
    case nir_op_fsin:
    case nir_op_fdiv:
    case nir_op_imul:
-      return true;
+      return 1;
    /* TODO: can do better than alu_to_scalar for vector compares */
    case nir_op_b32all_fequal2:
    case nir_op_b32all_fequal3:
@@ -78,16 +78,16 @@ etna_alu_to_scalar_filter_cb(const nir_instr *instr, const void *data)
    case nir_op_b32any_inequal2:
    case nir_op_b32any_inequal3:
    case nir_op_b32any_inequal4:
-      return true;
+      return 1;
    case nir_op_fdot2:
       if (!specs->has_halti2_instructions)
-         return true;
+         return 1;
       break;
    default:
       break;
    }
 
-   return false;
+   return 4;
 }
 
 static void
@@ -1140,6 +1140,23 @@ fill_vs_mystery(struct etna_shader_variant *v)
                              VIVS_VS_LOAD_BALANCING_D(0x0f);
 }
 
+static bool
+mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigned bit_size,
+                       unsigned num_components, nir_intrinsic_instr *low, nir_intrinsic_instr *high,
+                       void *data)
+{
+   if (num_components > 4)
+      return false;
+
+   if (bit_size * num_components > 128)
+      return false;
+
+   if (bit_size > 32)
+      return false;
+
+   return true;
+}
+
 bool
 etna_compile_shader(struct etna_shader_variant *v)
 {
@@ -1211,7 +1228,7 @@ etna_compile_shader(struct etna_shader_variant *v)
                                           v->key.tex_compare_func,
                                           v->key.tex_swizzle);
 
-   NIR_PASS_V(s, nir_lower_alu_to_scalar, etna_alu_to_scalar_filter_cb, specs);
+   NIR_PASS_V(s, nir_lower_alu_width, etna_alu_width_filter_cb, specs);
    nir_lower_idiv_options idiv_options = {
       .allow_fp16 = true,
    };
@@ -1223,6 +1240,21 @@ etna_compile_shader(struct etna_shader_variant *v)
    /* TODO: remove this extra run if nir_opt_peephole_select is able to handle ubo's. */
    if (OPT(s, etna_nir_lower_ubo_to_uniform))
       etna_optimize_loop(s);
+
+   NIR_PASS_V(s, nir_lower_io_to_scalar, nir_var_mem_global);
+   NIR_PASS_V(s, nir_lower_load_const_to_scalar);
+
+   NIR_PASS_V(s, nir_lower_alu_to_scalar, NULL, NULL);
+   NIR_PASS_V(s, nir_lower_bit_size, etna_lower_bit_size, NULL);
+   etna_optimize_loop(s);
+
+   nir_load_store_vectorize_options vectorize_opts = {
+      .modes = nir_var_mem_global,
+      .callback = mem_vectorize_callback,
+      .robust_modes = 0,
+      .has_shared2_amd = 0
+   };
+   while( OPT(s, nir_opt_load_store_vectorize, &vectorize_opts) );
 
    NIR_PASS_V(s, etna_lower_io, v);
    NIR_PASS_V(s, etna_nir_lower_global);
@@ -1245,7 +1277,10 @@ etna_compile_shader(struct etna_shader_variant *v)
    }
 
    while( OPT(s, nir_opt_vectorize, NULL, NULL) );
-   NIR_PASS_V(s, nir_lower_alu_to_scalar, etna_alu_to_scalar_filter_cb, specs);
+   etna_optimize_loop(s);
+
+   NIR_PASS_V(s, nir_lower_alu_width, etna_alu_width_filter_cb, specs);
+   etna_optimize_loop(s);
 
    NIR_PASS_V(s, nir_remove_dead_variables, nir_var_function_temp, NULL);
    NIR_PASS_V(s, nir_opt_algebraic_late);

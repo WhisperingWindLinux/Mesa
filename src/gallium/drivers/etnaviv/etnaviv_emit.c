@@ -251,6 +251,16 @@ etna_emit_compute_state(struct etna_context *ctx, const struct pipe_grid_info *g
    etna_set_state(stream, VIVS_PS_NEWRANGE_LOW, 0x0);
    etna_set_state(stream, VIVS_PS_NEWRANGE_HIGH, ctx->shader.compute->code_size / 4);
    assert(ctx->shader.compute->bo);
+
+   FILE *f = fopen("mesa-shader.bin", "wb");
+   assert(f);
+   fwrite(etna_bo_map(ctx->shader.compute->bo), 4, ctx->shader.compute->code_size, f);
+   if( ferror(f) ) {
+      fprintf(stderr, "Error in writing to file: %s\n", strerror(errno));
+   }
+   fflush(f);
+   fclose(f);
+
    etna_set_state_reloc(stream, VIVS_PS_INST_ADDR, &(struct etna_reloc) {
       .bo = ctx->shader.compute->bo,
       .flags = ETNA_RELOC_READ,

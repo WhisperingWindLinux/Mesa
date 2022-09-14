@@ -90,6 +90,20 @@ etna_alu_width_filter_cb(const nir_instr *instr, const void *data)
    return 4;
 }
 
+static unsigned
+etna_lower_bit_size(const nir_instr *instr, UNUSED void *data)
+{
+   if (instr->type != nir_instr_type_intrinsic)
+      return 0;
+
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+
+   if (intr->intrinsic == nir_intrinsic_load_uniform)
+      return nir_dest_bit_size(intr->dest) > 32 ? 32 : 0;
+
+   return 0;
+}
+
 static void
 etna_emit_block_start(struct etna_compile *c, unsigned block)
 {
@@ -1216,7 +1230,7 @@ etna_compile_shader(struct etna_shader_variant *v)
    }
 
    NIR_PASS_V(s, nir_lower_io, nir_var_shader_in | nir_var_uniform, etna_glsl_type_size,
-            (nir_lower_io_options)0);
+              nir_lower_io_lower_64bit_to_32);
 
    NIR_PASS_V(s, nir_lower_regs_to_ssa);
    NIR_PASS_V(s, nir_lower_vars_to_ssa);
@@ -1243,6 +1257,7 @@ etna_compile_shader(struct etna_shader_variant *v)
 
    NIR_PASS_V(s, nir_lower_io_to_scalar, nir_var_mem_global);
    NIR_PASS_V(s, nir_lower_load_const_to_scalar);
+   NIR_PASS_V(s, nir_lower_bit_size, etna_lower_bit_size, NULL);
 
    NIR_PASS_V(s, nir_lower_alu_to_scalar, NULL, NULL);
    NIR_PASS_V(s, nir_lower_bit_size, etna_lower_bit_size, NULL);
@@ -1258,6 +1273,7 @@ etna_compile_shader(struct etna_shader_variant *v)
 
    NIR_PASS_V(s, etna_lower_io, v);
    NIR_PASS_V(s, etna_nir_lower_global);
+   NIR_PASS_V(s, nir_lower_int64);
 
    etna_optimize_loop(s);
 

@@ -39,4 +39,7 @@ etna_nir_lower_ubo_to_uniform(nir_shader *shader);
 
 void
 etna_nir_lower_global(nir_shader *shader);
+
+bool
+etna_nir_lower_64b_intrinsics(nir_shader *shader);
 #endif

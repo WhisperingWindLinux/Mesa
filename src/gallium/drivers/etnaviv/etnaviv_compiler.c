@@ -66,6 +66,9 @@ etna_compiler_create(const char *renderer, const struct etna_specs *specs)
       .force_indirect_unrolling = nir_var_all,
       .max_unroll_iterations = 32,
       .vectorize_io = true,
+      .lower_find_lsb = true,
+      .lower_ifind_msb = true,
+      .lower_ufind_msb = true,
    };
 
    compiler->regs = etna_ra_setup(compiler);

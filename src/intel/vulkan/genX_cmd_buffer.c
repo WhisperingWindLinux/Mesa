@@ -1882,6 +1882,173 @@ genX(cmd_buffer_apply_pipe_flushes)(struct anv_cmd_buffer *cmd_buffer)
 
 }
 
+#if GFX_VER >= 20
+static void
+anv_resource_barrier_body_for_access_flags(struct anv_cmd_buffer *cmd_buffer,
+                                           struct GENX(RESOURCE_BARRIER_BODY) *body,
+                                           const VkAccessFlags2 flags)
+{
+   u_foreach_bit64(b, flags) {
+      switch ((VkAccessFlags2)BITFIELD64_BIT(b)) {
+      case VK_ACCESS_2_SHADER_WRITE_BIT:
+      case VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT:
+      case VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR:
+         /* We're transitioning a buffer that was previously used as write
+          * destination through the data port. To make its content available
+          * to future operations, flush the hdc pipeline.
+          */
+         body->L1DataportUAVFlush |= true;
+         break;
+      case VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT:
+         /* We're transitioning a buffer that was previously used as render
+          * target. To make its content available to future operations, flush
+          * the render target cache.
+          */
+         body->ColorCache |= true;
+         break;
+      case VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT:
+         /* We're transitioning a buffer that was previously used as depth
+          * buffer. To make its content available to future operations, flush
+          * the depth cache.
+          */
+         body->DepthCache |= true;
+         break;
+      case VK_ACCESS_2_TRANSFER_WRITE_BIT:
+         /* We're transitioning a buffer that was previously used as a
+          * transfer write destination. Generic write operations include color
+          * & depth operations as well as buffer operations like :
+          *     - vkCmdClearColorImage()
+          *     - vkCmdClearDepthStencilImage()
+          *     - vkCmdBlitImage()
+          *     - vkCmdCopy*(), vkCmdUpdate*(), vkCmdFill*()
+          *
+          * Most of these operations are implemented using Blorp which writes
+          * through the render target cache or the depth cache on the graphics
+          * queue. On the compute queue, the writes are done through the data
+          * port.
+          */
+         if (anv_cmd_buffer_is_render_queue(cmd_buffer)) {
+            /* Most operations are done through RT/detph writes */
+            body->DepthCache |= true;
+            body->ColorCache |= true;
+         } else if (anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
+            body->L1DataportUAVFlush |= true;
+         }
+         break;
+      case VK_ACCESS_2_MEMORY_WRITE_BIT:
+         /* We're transitioning a buffer for generic write operations. Flush
+          * all the caches.
+          */
+         body->DepthCache |= true;
+         body->ColorCache |= true;
+         body->L1DataportUAVFlush |= true;
+         break;
+      case VK_ACCESS_2_HOST_WRITE_BIT:
+         /* We're transitioning a buffer for access by CPU,
+          * Invalidate all caches.
+          */
+         body->L1DataportCacheInvalidate |= true;
+         body->TextureRO |= true;
+         body->VFRO |= true;
+         body->ConstantCache |= true;
+         body->StateRO |= true;
+         break;
+      case VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT:
+      case VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT:
+         /* TODO: try to drop this if CS is L3 coherent */
+         body->L1DataportUAVFlush |= true;
+         body->TextureRO |= true;
+         body->VFRO |= true;
+         body->ConstantCache |= true;
+         body->StateRO |= true;
+         break;
+      case VK_ACCESS_2_TRANSFER_READ_BIT:
+      case VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT:
+      case VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT:
+      case VK_ACCESS_2_SHADER_SAMPLED_READ_BIT:
+         /* Transitioning a buffer to be read through the sampler, so
+          * invalidate the texture cache, we don't want any stale data.
+          */
+         body->TextureRO |= true;
+         body->StateRO |= true;
+         break;
+      case VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT:
+         body->L1DataportCacheInvalidate |= true;
+         break;
+      case VK_ACCESS_2_INDEX_READ_BIT:
+      case VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT:
+         /* We transitioning a buffer to be used for as input for vkCmdDraw*
+          * commands, so we invalidate the VF cache to make sure there is no
+          * stale data when we start rendering.
+          */
+         body->VFRO |= true;
+         break;
+      case VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT:
+         /* For CmdDipatchIndirect, we also load gl_NumWorkGroups through a
+          * UBO from the buffer, so we need to invalidate constant cache.
+          */
+         body->ConstantCache |= true;
+         body->L1DataportCacheInvalidate |= true;
+         break;
+      case VK_ACCESS_2_UNIFORM_READ_BIT:
+      case VK_ACCESS_2_SHADER_BINDING_TABLE_READ_BIT_KHR:
+         /* We transitioning a buffer to be used as uniform data. Because
+          * uniform is accessed through the data port & sampler, we need to
+          * invalidate the texture cache (sampler) & constant cache (data
+          * port) to avoid stale data.
+          */
+         body->ConstantCache |= true;
+         body->L1DataportCacheInvalidate |= true;
+         break;
+      case VK_ACCESS_2_SHADER_READ_BIT:
+         /* Same as VK_ACCESS_2_UNIFORM_READ_BIT and
+          * VK_ACCESS_2_SHADER_SAMPLED_READ_BIT cases above
+          */
+         body->ConstantCache |= true;
+         body->TextureRO |= true;
+         body->L1DataportCacheInvalidate |= true;
+         break;
+      case VK_ACCESS_2_MEMORY_READ_BIT:
+         /* Transitioning a buffer for generic read, invalidate all the
+          * caches.
+          */
+         body->L1DataportCacheInvalidate |= true;
+         body->TextureRO |= true;
+         body->VFRO |= true;
+         body->ConstantCache |= true;
+         body->StateRO |= true;
+         break;
+      case VK_ACCESS_2_SHADER_STORAGE_READ_BIT:
+      case VK_ACCESS_2_CONDITIONAL_RENDERING_READ_BIT_EXT:
+      case VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT:
+         /* TODO: try to drop this if CS is L3 coherent */
+         body->L1DataportCacheInvalidate |= true;
+         break;
+      case VK_ACCESS_2_HOST_READ_BIT:
+         /* We're transitioning a buffer that was written by CPU.  Flush
+          * all the caches.
+          */
+         body->DepthCache |= true;
+         body->ColorCache |= true;
+         body->L1DataportUAVFlush |= true;
+         break;
+      case VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR:
+      case VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR:
+         /* TODO: ??? */
+         break;
+      case VK_ACCESS_2_DESCRIPTOR_BUFFER_READ_BIT_EXT:
+         body->StateRO |= true;
+         break;
+      case VK_ACCESS_2_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR:
+         break;
+      default:
+         unreachable("Unhandled access flag");
+         break; /* Nothing to do */
+      }
+   }
+}
+#endif /* GFX_VER >= 20 */
+
 static inline struct anv_state
 emit_dynamic_buffer_binding_table_entry(struct anv_cmd_buffer *cmd_buffer,
                                         struct anv_cmd_pipeline_state *pipe_state,

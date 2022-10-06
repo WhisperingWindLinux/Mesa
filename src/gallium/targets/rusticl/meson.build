@@ -42,6 +42,7 @@ librusticl = shared_library(
     libws_null,
   ],
   dependencies : [
+    driver_etnaviv,
     driver_iris,
     driver_nouveau,
     driver_panfrost,

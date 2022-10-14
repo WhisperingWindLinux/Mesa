@@ -1275,6 +1275,8 @@ etna_compile_shader(struct etna_shader_variant *v)
       .has_shared2_amd = 0
    };
    while( OPT(s, nir_opt_load_store_vectorize, &vectorize_opts) );
+   NIR_PASS_V(s, nir_lower_pack);
+   etna_optimize_loop(s);
 
    NIR_PASS_V(s, nir_lower_uniform_width, 4);
 

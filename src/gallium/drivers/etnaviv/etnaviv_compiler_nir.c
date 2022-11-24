@@ -147,6 +147,11 @@ etna_optimize_loop(nir_shader *s)
       progress = false;
 
       NIR_PASS_V(s, nir_lower_vars_to_ssa);
+      // TODO: make sure store_global works when this limit fails
+      nir_opt_offsets_options options = {
+         .buffer_max = 1 << 20,
+      };
+      progress |= OPT(s, nir_opt_offsets, &options);
       progress |= OPT(s, nir_opt_copy_prop_vars);
       progress |= OPT(s, nir_opt_shrink_stores, true);
       progress |= OPT(s, nir_opt_shrink_vectors);

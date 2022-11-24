@@ -125,6 +125,8 @@ struct etna_specs {
    uint32_t vs_uniforms_offset;
    /* pixel shader uniforms address*/
    uint32_t ps_uniforms_offset;
+   /* compute shader uniforms address*/
+   uint32_t cs_uniforms_offset;
    /* vertex/fragment shader max instructions */
    uint32_t max_instructions;
    /* maximum number of varyings */

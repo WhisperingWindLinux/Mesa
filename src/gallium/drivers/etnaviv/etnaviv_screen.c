@@ -1071,6 +1071,7 @@ etna_get_specs(struct etna_screen *screen)
       screen->specs.has_unified_uniforms = true;
       screen->specs.vs_uniforms_offset = VIVS_SH_HALTI5_UNIFORMS_MIRROR(0);
       screen->specs.ps_uniforms_offset = VIVS_SH_HALTI5_UNIFORMS(screen->specs.max_vs_uniforms*4);
+      screen->specs.cs_uniforms_offset = VIVS_SH_HALTI5_UNIFORMS(0);
    } else if (screen->specs.halti >= 1) {
       /* unified uniform memory on GC3000 - HALTI1 feature bit is just a guess
       */

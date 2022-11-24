@@ -103,6 +103,7 @@ enum etna_uniform_contents {
 struct etna_shader_uniform_info {
    enum etna_uniform_contents *contents;
    uint32_t *data;
+   uint8_t *sizes;
    uint32_t count;
 };
 

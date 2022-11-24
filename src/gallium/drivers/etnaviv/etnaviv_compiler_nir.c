@@ -188,10 +188,12 @@ copy_uniform_state_to_shader(struct etna_shader_variant *sobj, uint64_t *consts,
    uinfo->count = count * 4;
    uinfo->data = MALLOC(uinfo->count * sizeof(*uinfo->data));
    uinfo->contents = MALLOC(uinfo->count * sizeof(*uinfo->contents));
+   uinfo->sizes = MALLOC(uinfo->count * sizeof(*uinfo->sizes));
 
    for (unsigned i = 0; i < uinfo->count; i++) {
       uinfo->data[i] = consts[i];
-      uinfo->contents[i] = consts[i] >> 32;
+      uinfo->contents[i] = consts[i] >> 32 & 0xff;
+      uinfo->sizes[i] = consts[i] >> 40;
    }
 
    etna_set_shader_uniforms_dirty_flags(sobj);
@@ -218,10 +220,10 @@ src_swizzle(hw_src src, unsigned swizzle)
  * 32-bit for the value and 32-bit for the type (imm, uniform, etc)
  */
 
-#define CONST_VAL(a, b) (nir_const_value) {.u64 = (uint64_t)(a) << 32 | (uint64_t)(b)}
-#define CONST(x) CONST_VAL(ETNA_UNIFORM_CONSTANT, x)
-#define UNIFORM(x) CONST_VAL(ETNA_UNIFORM_UNIFORM, x)
-#define TEXSCALE(x, i) CONST_VAL(ETNA_UNIFORM_TEXRECT_SCALE_X + (i), x)
+#define CONST_VAL(a, b, c) (nir_const_value) {.u64 = (uint64_t)(a) << 40 |  (uint64_t)(b) << 32 | (uint64_t)(c)}
+#define CONST(x) CONST_VAL(0, ETNA_UNIFORM_CONSTANT, x)
+#define UNIFORM(x, y) CONST_VAL(x, ETNA_UNIFORM_UNIFORM, y)
+#define TEXSCALE(x, i) CONST_VAL(0, ETNA_UNIFORM_TEXRECT_SCALE_X + (i), x)
 
 static int
 const_add(uint64_t *c, uint64_t value)
@@ -592,7 +594,7 @@ emit_intrinsic(struct etna_compile *c, nir_intrinsic_instr * intr)
          .type = INST_TYPE_U32,
          .dst = ra_dest(c, &intr->dest, &dst_swiz),
          .src[0] = get_src(c, &intr->src[1]),
-         .src[1] = const_src(c, &CONST_VAL(ETNA_UNIFORM_UBO0_ADDR + idx, 0), 1),
+         .src[1] = const_src(c, &CONST_VAL(0, ETNA_UNIFORM_UBO0_ADDR + idx, 0), 1),
       });
    } break;
    case nir_intrinsic_load_front_face:
@@ -933,7 +935,7 @@ emit_shader(struct etna_compile *c, unsigned *num_temps, unsigned *num_consts)
             nir_const_value value[4];
 
             for (unsigned i = 0; i < intr->dest.ssa.num_components; i++)
-               value[i] = UNIFORM(base * 4 + i);
+               value[i] = UNIFORM(intr->dest.ssa.bit_size, base * 4 + (i * 4 * (intr->dest.ssa.bit_size / 8)));
 
             b.cursor = nir_after_instr(instr);
             nir_ssa_def *def = nir_build_imm(&b, intr->dest.ssa.num_components, 32, value);
@@ -950,7 +952,7 @@ emit_shader(struct etna_compile *c, unsigned *num_temps, unsigned *num_consts)
    /* TODO: only emit required indirect uniform ranges */
    if (have_indirect_uniform) {
       for (unsigned i = 0; i < indirect_max * 4; i++)
-         c->consts[i] = UNIFORM(i).u64;
+         c->consts[i] = UNIFORM(0, i).u64;
       c->const_count = indirect_max;
    }
 

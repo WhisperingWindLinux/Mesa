@@ -149,6 +149,18 @@ etna_emit_alu(struct etna_compile *c, nir_op op, struct etna_inst_dst dst,
       .sat = saturate,
    };
 
+   // TODO: test whether this makes any difference in CI anymore
+   if (nir_op_infos[op].is_conversion) {
+      nir_rounding_mode rmode =
+         nir_get_rounding_mode_from_float_controls(
+               c->nir->info.float_controls_execution_mode,
+               nir_op_infos[op].output_type);
+      if (rmode == nir_rounding_mode_rtz)
+         inst.tex.amode = 0x4 + INST_ROUND_MODE_RTZ;
+      else /*if (rmode == nir_rounding_mode_rtne)*/
+         inst.tex.amode = 0x4 + INST_ROUND_MODE_RTNE;
+   }
+
    switch (op) {
    case nir_op_fdiv:
    case nir_op_flog2:

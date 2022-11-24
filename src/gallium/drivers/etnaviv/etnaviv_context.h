@@ -86,8 +86,8 @@ struct etna_vertexbuf_state {
 };
 
 struct etna_shader_state {
-   void *bind_vs, *bind_fs;
-   struct etna_shader_variant *vs, *fs;
+   void *bind_vs, *bind_fs, *bind_compute;
+   struct etna_shader_variant *vs, *fs, *compute;
 };
 
 enum etna_uniform_contents {
@@ -104,6 +104,12 @@ struct etna_shader_uniform_info {
    enum etna_uniform_contents *contents;
    uint32_t *data;
    uint32_t count;
+};
+
+#define MAX_GLOBAL_BUFFERS 16
+struct etna_global_bindings_state {
+   struct pipe_resource *buf[MAX_GLOBAL_BUFFERS];
+   uint32_t enabled_mask;
 };
 
 struct etna_context {
@@ -146,6 +152,7 @@ struct etna_context {
    struct slab_child_pool transfer_pool;
    struct u_suballocator tex_desc_allocator;
    struct blitter_context *blitter;
+   bool opencl;
 
    /* compiled bindable state */
    unsigned sample_mask;
@@ -173,6 +180,7 @@ struct etna_context {
    struct etna_vertexbuf_state vertex_buffer;
    struct etna_index_buffer index_buffer;
    struct etna_shader_state shader;
+   struct etna_global_bindings_state global_bindings;
 
    /* saved parameter-like state. these are mainly kept around for the blitter */
    struct pipe_framebuffer_state framebuffer_s;
@@ -219,5 +227,8 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags);
 void
 etna_context_add_flush_resource(struct etna_context *ctx,
                                 struct pipe_resource *rsc);
+
+void
+etna_compute_context_init(struct pipe_context *pctx);
 
 #endif

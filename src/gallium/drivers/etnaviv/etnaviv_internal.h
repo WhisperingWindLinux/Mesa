@@ -135,6 +135,8 @@ struct etna_specs {
    unsigned max_vs_uniforms;
    /* maximum pixel uniforms */
    unsigned max_ps_uniforms;
+   /* maximum compute uniforms */
+   unsigned max_cs_uniforms;
    /* maximum texture size */
    unsigned max_texture_size;
    /* maximum texture size */

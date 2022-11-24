@@ -58,6 +58,9 @@ etna_bind_sampler_states(struct pipe_context *pctx, enum pipe_shader_type shader
    case PIPE_SHADER_VERTEX:
       offset = screen->specs.vertex_sampler_offset;
       break;
+   case PIPE_SHADER_COMPUTE:
+      offset = 0;
+      break;
    default:
       assert(!"Invalid shader");
       return;

@@ -213,6 +213,22 @@ etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
    return true;
 }
 
+static bool
+etna_get_cs(struct etna_context *ctx, struct etna_shader_key* const key)
+{
+   const struct etna_shader_variant *old = ctx->shader.compute;
+
+   ctx->shader.compute = etna_shader_variant(ctx->shader.bind_compute, key, &ctx->base.debug);
+
+   if (!ctx->shader.compute)
+      return false;
+
+   if (old != ctx->shader.compute)
+      ctx->dirty |= ETNA_DIRTY_SHADER;
+
+   return true;
+}
+
 static void
 etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
               unsigned drawid_offset,
@@ -422,11 +438,39 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
 }
 
 static void
+etna_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *grid)
+{
+   struct etna_context *ctx = etna_context(pctx);
+   struct etna_shader_key key = {};
+
+   if (!etna_get_cs(ctx, &key)) {
+      BUG("compiled compute shader is not okay");
+      return;
+   }
+
+   if (!etna_shader_icache_upload(ctx, ctx->shader.compute)) {
+      assert(0);
+      return;
+   }
+
+   etna_emit_compute_state(ctx, grid);
+
+   if (DBG_ENABLED(ETNA_DBG_FLUSH_ALL))
+      pctx->flush(pctx, NULL, 0);
+}
+
+static void
 etna_reset_gpu_state(struct etna_context *ctx)
 {
    struct etna_cmd_stream *stream = ctx->stream;
    struct etna_screen *screen = ctx->screen;
    uint32_t dummy_attribs[VIVS_NFE_GENERIC_ATTRIB__LEN] = { 0 };
+
+   ctx->dirty = ~0L;
+   ctx->dirty_sampler_views = ~0L;
+
+   if (ctx->opencl)
+      return;
 
    etna_set_state(stream, VIVS_GL_API_MODE, VIVS_GL_API_MODE_OPENGL);
    etna_set_state(stream, VIVS_PA_W_CLIP_LIMIT, 0x34000001);
@@ -499,9 +543,6 @@ etna_reset_gpu_state(struct etna_context *ctx)
       etna_set_state_multi(stream, VIVS_FE_VERTEX_ELEMENT_CONFIG(0),
                            screen->specs.halti >= 0 ? 16 : 12, dummy_attribs);
    }
-
-   ctx->dirty = ~0L;
-   ctx->dirty_sampler_views = ~0L;
 }
 
 static void
@@ -570,6 +611,16 @@ etna_set_debug_callback(struct pipe_context *pctx,
    u_default_set_debug_callback(pctx, cb);
 }
 
+static void
+etna_set_shader_images(struct pipe_context *pctx, enum pipe_shader_type shader,
+                       unsigned start, unsigned count,
+                       unsigned unbind_num_trailing_slots,
+                       const struct pipe_image_view *images)
+{
+   assert(count == 0 && "error: shader images not supported on etnaviv");
+   /* TODO */
+}
+
 struct pipe_context *
 etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 {
@@ -608,6 +659,8 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    /* need some sane default in case gallium frontends don't set some state: */
    ctx->sample_mask = 0xffff;
 
+   ctx->opencl = flags & PIPE_CONTEXT_COMPUTE_ONLY;
+
    /*  Set sensible defaults for state */
    etna_reset_gpu_state(ctx);
 
@@ -615,8 +668,10 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
 
    pctx->destroy = etna_context_destroy;
    pctx->draw_vbo = etna_draw_vbo;
+   pctx->launch_grid = etna_launch_grid;
    pctx->flush = etna_flush;
    pctx->set_debug_callback = etna_set_debug_callback;
+   pctx->set_shader_images = etna_set_shader_images;
    pctx->create_fence_fd = etna_create_fence_fd;
    pctx->fence_server_sync = etna_fence_server_sync;
    pctx->emit_string_marker = etna_emit_string_marker;
@@ -634,6 +689,7 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    etna_shader_init(pctx);
    etna_texture_init(pctx);
    etna_transfer_init(pctx);
+   etna_compute_context_init(pctx);
 
    ctx->blitter = util_blitter_create(pctx);
    if (!ctx->blitter)

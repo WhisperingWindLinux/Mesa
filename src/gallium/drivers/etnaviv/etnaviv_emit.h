@@ -220,4 +220,7 @@ etna_coalsence_emit_reloc(struct etna_cmd_stream *stream,
 void
 etna_emit_state(struct etna_context *ctx);
 
+void
+etna_emit_compute_state(struct etna_context *ctx, const struct pipe_grid_info *grid);
+
 #endif

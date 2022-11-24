@@ -84,6 +84,9 @@ struct etna_shader {
    const struct etna_specs *specs;
    struct etna_compiler *compiler;
 
+   uint32_t kernel_input_size;
+   uint32_t kernel_shared_size;
+
    struct etna_shader_variant *variants;
 
    cache_key cache_key;     /* shader disk-cache key */
@@ -111,5 +114,8 @@ etna_shader_screen_init(struct pipe_screen *pscreen);
 
 void
 etna_shader_screen_fini(struct pipe_screen *pscreen);
+
+bool
+etna_shader_icache_upload(struct etna_context *ctx, struct etna_shader_variant *v);
 
 #endif

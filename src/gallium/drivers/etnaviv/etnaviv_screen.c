@@ -75,6 +75,7 @@ static const struct debug_named_value etna_debug_options[] = {
    {"linear_pe",      ETNA_DBG_LINEAR_PE, "Enable linear PE"},
    {"msaa",           ETNA_DBG_MSAA, "Enable MSAA support"},
    {"shared_ts",      ETNA_DBG_SHARED_TS, "Enable TS sharing"},
+   {"compute",        ETNA_DBG_COMPUTE, "Enable compute"},
    DEBUG_NAMED_VALUE_END
 };
 
@@ -162,6 +163,9 @@ etna_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_STRING_MARKER:
    case PIPE_CAP_FRONTEND_NOOP:
       return 1;
+   case PIPE_CAP_COMPUTE:
+      return DBG_ENABLED(ETNA_DBG_COMPUTE) &&
+         etnaviv_device_softpin_capable(screen->dev);
    case PIPE_CAP_NATIVE_FENCE_FD:
       return screen->drm_version >= ETNA_DRM_VERSION_FENCE_FD;
    case PIPE_CAP_FS_POSITION_IS_SYSVAL:
@@ -351,8 +355,8 @@ etna_screen_get_shader_param(struct pipe_screen *pscreen,
    switch (shader) {
    case PIPE_SHADER_FRAGMENT:
    case PIPE_SHADER_VERTEX:
-      break;
    case PIPE_SHADER_COMPUTE:
+      break;
    case PIPE_SHADER_GEOMETRY:
    case PIPE_SHADER_TESS_CTRL:
    case PIPE_SHADER_TESS_EVAL:
@@ -413,9 +417,16 @@ etna_screen_get_shader_param(struct pipe_screen *pscreen,
    case PIPE_SHADER_CAP_MAX_CONST_BUFFER0_SIZE:
       if (ubo_enable)
          return 16384; /* 16384 so state tracker enables UBOs */
-      return shader == PIPE_SHADER_FRAGMENT
-                ? screen->specs.max_ps_uniforms * sizeof(float[4])
-                : screen->specs.max_vs_uniforms * sizeof(float[4]);
+      switch (shader) {
+         case PIPE_SHADER_FRAGMENT:
+            return screen->specs.max_ps_uniforms * sizeof(float[4]);
+         case PIPE_SHADER_VERTEX:
+            return screen->specs.max_vs_uniforms * sizeof(float[4]);
+         case PIPE_SHADER_COMPUTE:
+            return screen->specs.max_cs_uniforms * sizeof(float[4]);
+         default:
+            return 0;
+      }
    case PIPE_SHADER_CAP_DROUND_SUPPORTED:
    case PIPE_SHADER_CAP_DFRACEXP_DLDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_LDEXP_SUPPORTED:
@@ -432,6 +443,73 @@ etna_screen_get_shader_param(struct pipe_screen *pscreen,
    }
 
    debug_printf("unknown shader param %d", param);
+   return 0;
+}
+
+static int
+etna_screen_get_compute_param(struct pipe_screen *pscreen, enum pipe_shader_ir ir_type,
+                              enum pipe_compute_cap param, void *ret)
+{
+   const char * const ir = "etnaviv";
+
+#define RET(x) do {                  \
+   if (ret)                          \
+      memcpy(ret, x, sizeof(x));     \
+   return sizeof(x);                 \
+} while (0)
+
+   switch (param) {
+   case PIPE_COMPUTE_CAP_ADDRESS_BITS:
+      RET((uint32_t []){ 32 });
+
+   case PIPE_COMPUTE_CAP_IR_TARGET:
+      if (ret)
+         sprintf(ret, "%s", ir);
+      return strlen(ir) * sizeof(char);
+
+   case PIPE_COMPUTE_CAP_GRID_DIMENSION:
+      RET((uint64_t []) { 3 });
+
+   case PIPE_COMPUTE_CAP_MAX_GRID_SIZE:
+      RET(((uint64_t []) { 65535, 65535, 65535 }));
+
+   case PIPE_COMPUTE_CAP_MAX_BLOCK_SIZE:
+      RET(((uint64_t []) { 256, 256, 256 }));
+
+   case PIPE_COMPUTE_CAP_MAX_THREADS_PER_BLOCK:
+      RET((uint64_t []) { 256 });
+
+   case PIPE_COMPUTE_CAP_MAX_GLOBAL_SIZE:
+      RET((uint64_t []) { 1024*1024*512 /* Maybe get memory */ });
+
+   case PIPE_COMPUTE_CAP_MAX_LOCAL_SIZE:
+      RET((uint64_t []) { 32768 });
+
+   case PIPE_COMPUTE_CAP_MAX_PRIVATE_SIZE:
+   case PIPE_COMPUTE_CAP_MAX_INPUT_SIZE:
+      RET((uint64_t []) { 4096 });
+
+   case PIPE_COMPUTE_CAP_MAX_MEM_ALLOC_SIZE:
+      RET((uint64_t []) { 1024*1024*512 /* Maybe get memory */ });
+
+   case PIPE_COMPUTE_CAP_MAX_CLOCK_FREQUENCY:
+      RET((uint32_t []) { 800 /* MHz -- TODO */ });
+
+   case PIPE_COMPUTE_CAP_MAX_COMPUTE_UNITS:
+      RET((uint32_t []) { 9999 });  // TODO
+
+   // TODO: change once we cherry-pick the images patch
+   case PIPE_COMPUTE_CAP_IMAGES_SUPPORTED:
+      RET((uint32_t []) { 0 });
+
+   case PIPE_COMPUTE_CAP_SUBGROUP_SIZE:
+      RET((uint32_t []) { 4 });
+
+   case PIPE_COMPUTE_CAP_MAX_VARIABLE_THREADS_PER_BLOCK:
+      RET((uint64_t []) { 1024 }); // TODO
+   }
+#undef RET
+
    return 0;
 }
 
@@ -804,6 +882,7 @@ etna_determine_uniform_limits(struct etna_screen *screen)
       screen->specs.max_vs_uniforms = 168;
       screen->specs.max_ps_uniforms = 64;
    }
+   screen->specs.max_cs_uniforms = 256;
 }
 
 static void
@@ -1228,6 +1307,7 @@ etna_screen_create(struct etna_device *dev, struct etna_gpu *gpu,
    pscreen->get_param = etna_screen_get_param;
    pscreen->get_paramf = etna_screen_get_paramf;
    pscreen->get_shader_param = etna_screen_get_shader_param;
+   pscreen->get_compute_param = etna_screen_get_compute_param;
    pscreen->get_compiler_options = etna_get_compiler_options;
    pscreen->get_disk_shader_cache = etna_get_disk_shader_cache;
 

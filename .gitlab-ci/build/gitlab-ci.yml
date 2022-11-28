@@ -434,12 +434,15 @@ debian-arm64:
     - .ci-deqp-artifacts
   variables:
     VULKAN_DRIVERS: "freedreno,broadcom,panfrost,imagination-experimental"
+    GALLIUM_ST: >
+      -D gallium-rusticl=true
+      -D opencl-spirv=true
     EXTRA_OPTION: >
-      -D llvm=disabled
       -D valgrind=disabled
       -D imagination-srv=true
       -D perfetto=true
     MINIO_ARTIFACT_NAME: mesa-arm64
+    LLVM_VERSION: "13"
   script:
     - .gitlab-ci/meson/build.sh
     - .gitlab-ci/prepare-artifacts.sh
@@ -449,7 +452,6 @@ debian-arm64-asan:
     - debian-arm64
   variables:
     EXTRA_OPTION: >
-      -D llvm=disabled
       -D b_sanitize=address
       -D valgrind=disabled
       -D tools=dlclose-skip

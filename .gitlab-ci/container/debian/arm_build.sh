@@ -23,6 +23,8 @@ apt-get -y install \
 	bc \
 	bison \
 	ccache \
+	clang \
+	clang-13 \
 	cmake \
 	curl \
 	debootstrap \
@@ -33,6 +35,8 @@ apt-get -y install \
 	glslang-tools \
 	kmod \
 	libasan6 \
+	libclang-cpp13-dev \
+	libclang-13-dev \
 	libdrm-dev \
 	libelf-dev \
 	libexpat1-dev \
@@ -52,8 +56,9 @@ apt-get -y install \
 	libxshmfence-dev \
 	libxxf86vm-dev \
 	libwayland-dev \
-	llvm-11-dev \
 	ninja-build \
+	llvm-13-dev \
+	meson \
 	pkg-config \
 	python3-mako \
 	python3-pil \
@@ -86,6 +91,21 @@ EXTRA_MESON_ARGS=
 . .gitlab-ci/container/build-libdrm.sh
 
 . .gitlab-ci/container/build-wayland.sh
+
+. .gitlab-ci/container/build-llvm-spirv.sh
+
+. .gitlab-ci/container/build-libclc.sh
+
+# We need at least 0.61.4 for proper Rust
+pip3 install meson==0.61.5
+
+. .gitlab-ci/container/build-rust.sh
+
+# install bindgen
+RUSTFLAGS='-L native=/usr/local/lib' cargo install \
+  bindgen --version 0.59.2 \
+  -j ${FDO_CI_CONCURRENT:-4} \
+  --root /usr/local
 
 apt-get purge -y $STABLE_EPHEMERAL
 

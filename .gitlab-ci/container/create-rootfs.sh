@@ -66,6 +66,8 @@ apt-get -y install --no-install-recommends \
     initramfs-tools \
     jq \
     libasan6 \
+    libclang-common-13-dev \
+    libclang-cpp13 \
     libexpat1 \
     libpng16-16 \
     libpython3.9 \
@@ -90,6 +92,7 @@ apt-get -y install --no-install-recommends \
     libxshmfence1 \
     libxxf86vm1 \
     netcat-openbsd \
+    ocl-icd-libopencl1 \
     python3 \
     python3-lxml \
     python3-mako \
@@ -101,6 +104,7 @@ apt-get -y install --no-install-recommends \
     python3-simplejson \
     python3-yaml \
     sntp \
+    spirv-tools \
     strace \
     waffle-utils \
     weston \

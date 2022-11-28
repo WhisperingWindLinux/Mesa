@@ -91,11 +91,13 @@ apt-get install -y --no-remove \
                    automake \
                    bc \
                    clang \
+                   clang-13 \
                    cmake \
 		   curl \
                    debootstrap \
                    git \
                    glslang-tools \
+                   libclang-cpp13-dev \
                    libdrm-dev \
                    libegl1-mesa-dev \
                    libxext-dev \
@@ -115,7 +117,9 @@ apt-get install -y --no-remove \
                    libxcb-dri2-0-dev \
                    libxkbcommon-dev \
                    libwayland-dev \
+                   llvm-13-dev \
                    ninja-build \
+                   ocl-icd-opencl-dev \
                    patch \
                    protobuf-compiler \
                    python-is-python3 \
@@ -188,8 +192,9 @@ if [[ "$DEBIAN_ARCH" = "arm64" ]] \
     mv /skqp /lava-files/rootfs-${DEBIAN_ARCH}/.
 fi
 
+
 ############### Build piglit
-PIGLIT_OPTS="-DPIGLIT_BUILD_DMA_BUF_TESTS=ON -DPIGLIT_BUILD_GLX_TESTS=ON" . .gitlab-ci/container/build-piglit.sh
+PIGLIT_OPTS="-DPIGLIT_BUILD_CL_TESTS=ON -DPIGLIT_BUILD_DMA_BUF_TESTS=ON -DPIGLIT_BUILD_GLX_TESTS=ON" . .gitlab-ci/container/build-piglit.sh
 mv /piglit /lava-files/rootfs-${DEBIAN_ARCH}/.
 
 ############### Build libva tests
@@ -262,6 +267,10 @@ rm -rf /libdrm
 
 
 if [ ${DEBIAN_ARCH} = arm64 ]; then
+    # Let's use the libclc we built in the debian/arm_build container image
+    cp -rf /usr/lib/clc /lava-files/rootfs-${DEBIAN_ARCH}/usr/lib/.
+    cp -rf /usr/share/clc /lava-files/rootfs-${DEBIAN_ARCH}/usr/share/.
+
     # Make a gzipped copy of the Image for db410c.
     gzip -k /lava-files/Image
     KERNEL_IMAGE_NAME+=" Image.gz"

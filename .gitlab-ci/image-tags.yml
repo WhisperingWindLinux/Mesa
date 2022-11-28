@@ -1,6 +1,6 @@
 variables:
    DEBIAN_X86_BUILD_BASE_IMAGE: "debian/x86_build-base"
-   DEBIAN_BASE_TAG: "2023-03-16-clang-format"
+   DEBIAN_BASE_TAG: "2023-03-17-etnaviv-opencl-3"
 
    DEBIAN_X86_BUILD_IMAGE_PATH: "debian/x86_build"
    DEBIAN_BUILD_TAG: "2023-03-02-rusticl-arm64"
@@ -20,8 +20,8 @@ variables:
    DEBIAN_X86_TEST_VK_TAG: "2023-03-20-piglit-60e7f058"
 
    ALPINE_X86_BUILD_TAG: "2023-02-26-add-bash-coreutils"
-   FEDORA_X86_BUILD_TAG: "2023-03-13-procps-ng"
-   KERNEL_ROOTFS_TAG: "2023-03-20-piglit-60e7f058"
+   FEDORA_X86_BUILD_TAG: "2023-03-21-etnaviv-opencl-3"
+   KERNEL_ROOTFS_TAG: "2023-03-21-etnaviv-opencl-3"
 
    WINDOWS_X64_VS_PATH: "windows/x64_vs"
    WINDOWS_X64_VS_TAG: "2022-10-20-upgrade-zlib"

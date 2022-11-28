@@ -65,3 +65,18 @@ gc7000_gles2:
   variables:
     HWCI_TEST_SCRIPT: "/install/deqp-runner.sh"
     DEQP_VER: gles2
+
+vipnanoqi_piglit_rusticl:
+  extends:
+    - .lava-test:arm64
+    - .etnaviv-rusticl-rules
+  variables:
+    RUSTICL_ENABLE: "etnaviv"
+    ETNA_MESA_DEBUG: "compute"
+    DEQP_SUITE: etnaviv-rusticl
+    GPU_VERSION: etnaviv-rusticl
+    PIGLIT_PROFILES: cl
+    DEVICE_TYPE: meson-g12b-a311d-khadas-vim3
+    DTB: $DEVICE_TYPE
+    RUNNER_TAG: mesa-ci-x86-64-lava-meson-g12b-a311d-khadas-vim3
+    LAVA_TAGS: "dell-charger" # The other VIM3 boards have power reliability issues with a different USB PD adapter

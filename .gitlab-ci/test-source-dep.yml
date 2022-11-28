@@ -872,6 +872,14 @@
         *etnaviv_file_list
       when: manual
 
+.etnaviv-rusticl-rules:
+  stage: etnaviv
+  rules:
+    - !reference [.etnaviv-rules, rules]
+    - changes:
+      - src/gallium/frontends/rusticl/**/*
+      when: on_success
+
 # Rules for unusual architectures that only build a subset of drivers
 .ppc64el-rules:
    rules:

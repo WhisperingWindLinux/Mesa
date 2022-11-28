@@ -1,0 +1,152 @@
+custom@buffer flags@in-0x0-out-0x0
+program@execute@builtin@builtin-char-rotate-1.0.generated@rotate char1
+program@execute@builtin@builtin-char-upsample-1.0.generated@upsample char1
+program@execute@builtin@builtin-char-upsample-1.0.generated@upsample char2
+program@execute@builtin@builtin-char-upsample-1.0.generated@upsample char4
+program@execute@builtin@builtin-char-upsample-1.0.generated@upsample char8
+program@execute@builtin@builtin-float-atanh-1.0.generated@atanh float1
+program@execute@builtin@builtin-float-atanh-1.0.generated@atanh float2
+program@execute@builtin@builtin-float-atanh-1.0.generated@atanh float4
+program@execute@builtin@builtin-float-atanh-1.0.generated@atanh float8
+program@execute@builtin@builtin-float-hypot-1.0.generated@hypot float1
+program@execute@builtin@builtin-short-rotate-1.0.generated@rotate short1
+program@execute@builtin@builtin-short-upsample-1.0.generated@upsample short1
+program@execute@builtin@builtin-short-upsample-1.0.generated@upsample short2
+program@execute@builtin@builtin-short-upsample-1.0.generated@upsample short4
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char16 uchar2
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char16 uchar4
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char2 uchar16
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char2 uchar2
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char2 uchar4
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char2 uchar8
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char4 uchar2
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char4 uchar4
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char8 uchar2
+program@execute@builtin@builtin-shuffle-char-uchar@shuffle char8 uchar4
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short16 ushort2
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short16 ushort4
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short2 ushort2
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short2 ushort4
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short2 ushort8
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short4 ushort2
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short4 ushort4
+program@execute@builtin@builtin-shuffle-short-ushort@shuffle short4 ushort8
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar16 uchar2
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar16 uchar4
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar2 uchar16
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar2 uchar2
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar2 uchar4
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar2 uchar8
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar4 uchar2
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar4 uchar4
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar8 uchar2
+program@execute@builtin@builtin-shuffle-uchar-uchar@shuffle uchar8 uchar4
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort16 ushort2
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort2 ushort2
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort2 ushort4
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort2 ushort8
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort4 ushort2
+program@execute@builtin@builtin-shuffle-ushort-ushort@shuffle ushort4 ushort4
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char16 uchar2
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char16 uchar4
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char2 uchar16
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char2 uchar2
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char2 uchar4
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char2 uchar8
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char4 uchar2
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char4 uchar4
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char8 uchar2
+program@execute@builtin@builtin-shuffle2-char-uchar@shuffle2 char8 uchar4
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short16 ushort2
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short2 ushort2
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short2 ushort4
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short4 ushort2
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short4 ushort4
+program@execute@builtin@builtin-shuffle2-short-ushort@shuffle2 short4 ushort8
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar16 uchar2
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar16 uchar4
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar2 uchar16
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar2 uchar2
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar2 uchar4
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar2 uchar8
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar4 uchar2
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar4 uchar4
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar8 uchar2
+program@execute@builtin@builtin-shuffle2-uchar-uchar@shuffle2 uchar8 uchar4
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort16 ushort2
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort16 ushort4
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort2 ushort2
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort2 ushort4
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort2 ushort8
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort4 ushort2
+program@execute@builtin@builtin-shuffle2-ushort-ushort@shuffle2 ushort4 ushort4
+program@execute@builtin@builtin-uchar-mad_hi-1.0.generated@mad_hi uchar1
+program@execute@builtin@builtin-uchar-mad_hi-1.0.generated@mad_hi uchar2
+program@execute@builtin@builtin-uchar-mad_hi-1.0.generated@mad_hi uchar4
+program@execute@builtin@builtin-uchar-mad_hi-1.0.generated@mad_hi uchar8
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar16
+program@execute@builtin@builtin-uchar-min-1.1.generated@min uchar1
+program@execute@builtin@builtin-uchar-min-1.1.generated@min uchar2
+program@execute@builtin@builtin-uchar-min-1.1.generated@min uchar4
+program@execute@builtin@builtin-uchar-min-1.1.generated@min uchar8
+program@execute@builtin@builtin-uchar-min-1.1.generated@tss_min uchar16
+program@execute@builtin@builtin-uchar-min-1.1.generated@tss_min uchar2
+program@execute@builtin@builtin-uchar-min-1.1.generated@tss_min uchar4
+program@execute@builtin@builtin-uchar-min-1.1.generated@tss_min uchar8
+program@execute@builtin@builtin-uchar-mul_hi-1.0.generated@mul_hi uchar1
+program@execute@builtin@builtin-uchar-mul_hi-1.0.generated@mul_hi uchar2
+program@execute@builtin@builtin-uchar-mul_hi-1.0.generated@mul_hi uchar4
+program@execute@builtin@builtin-uchar-rotate-1.0.generated@rotate uchar1
+program@execute@builtin@builtin-uchar-upsample-1.0.generated@upsample uchar1
+program@execute@builtin@builtin-uchar-upsample-1.0.generated@upsample uchar2
+program@execute@builtin@builtin-uchar-upsample-1.0.generated@upsample uchar4
+program@execute@builtin@builtin-uchar-upsample-1.0.generated@upsample uchar8
+program@execute@builtin@builtin-ushort-abs_diff-1.0.generated@abs_diff ushort1
+program@execute@builtin@builtin-ushort-abs_diff-1.0.generated@abs_diff ushort2
+program@execute@builtin@builtin-ushort-abs_diff-1.0.generated@abs_diff ushort4
+program@execute@builtin@builtin-ushort-mad_hi-1.0.generated@mad_hi ushort1
+program@execute@builtin@builtin-ushort-mad_hi-1.0.generated@mad_hi ushort4
+program@execute@builtin@builtin-ushort-max-1.1.generated@max ushort1
+program@execute@builtin@builtin-ushort-max-1.1.generated@max ushort2
+program@execute@builtin@builtin-ushort-max-1.1.generated@max ushort4
+program@execute@builtin@builtin-ushort-max-1.1.generated@tss_max ushort16
+program@execute@builtin@builtin-ushort-max-1.1.generated@tss_max ushort2
+program@execute@builtin@builtin-ushort-max-1.1.generated@tss_max ushort4
+program@execute@builtin@builtin-ushort-max-1.1.generated@tss_max ushort8
+program@execute@builtin@builtin-ushort-min-1.1.generated@min ushort1
+program@execute@builtin@builtin-ushort-min-1.1.generated@min ushort2
+program@execute@builtin@builtin-ushort-min-1.1.generated@min ushort4
+program@execute@builtin@builtin-ushort-min-1.1.generated@tss_min ushort16
+program@execute@builtin@builtin-ushort-min-1.1.generated@tss_min ushort2
+program@execute@builtin@builtin-ushort-min-1.1.generated@tss_min ushort4
+program@execute@builtin@builtin-ushort-mul_hi-1.0.generated@mul_hi ushort1
+program@execute@builtin@builtin-ushort-mul_hi-1.0.generated@mul_hi ushort2
+program@execute@builtin@builtin-ushort-rotate-1.0.generated@rotate ushort1
+program@execute@calls-large-struct@sret struct
+program@execute@calls-struct@struct_smallregs struct
+program@execute@calls-workitem-id@Callee function use get_global_id(0)
+program@execute@get-global-id@1D- global_size 4 0 0- local_size 1 0 0
+program@execute@get-global-id@1D- global_size 4 0 0- local_size 2 0 0
+program@execute@get-global-size@1D- global_size 4 0 0
+program@execute@get-group-id@1D 64 (8)
+program@execute@get-local-id@1D- global_size 4 0 0- local_size 1 0 0
+program@execute@get-local-id@2D- global_size 4 4 0- local_size 1 1 0
+program@execute@get-local-id@3D- global_size 4 4 4- local_size 1 1 1
+program@execute@get-local-size@1D 4 (2)
+program@execute@global-offset@1D- global_size 4 0 0- global_offset 9 0 0
+program@execute@global-offset@1D- global_size 4 0 0- global_offset 9 8 0
+program@execute@global-offset@1D- global_size 4 0 0- global_offset 9 8 7
+program@execute@program-scope-arrays@given-constant
+program@execute@program-scope-arrays@given-constant-2
+program@execute@program-scope-arrays@given-constant-char
+program@execute@program-scope-arrays@given-constant-struct
+program@execute@program-scope-arrays@indirection
+program@execute@program-scope-arrays@indirection-2
+program@execute@program-scope-arrays@indirection-char
+program@execute@program-scope-arrays@indirection-struct
+program@execute@program-scope-arrays@simple-constant-2
+program@execute@program-scope-arrays@simple-gid
+program@execute@program-scope-arrays@simple-gid-2
+program@execute@program-scope-arrays@simple-gid-char
+program@execute@program-scope-arrays@simple-gid-struct
+program@execute@store@store-ulong16-global@global address space work items

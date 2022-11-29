@@ -255,6 +255,12 @@ rusticl_mesa_bindings_rs = rust.bindgen(
     '--bitfield-enum', 'gl_access_qualifier',
     '--allowlist-type', 'cl_sampler_.*_mode',
     '--constified-enum-module', 'cl_sampler_.*_mode',
+# The functions below aren't used but cause compilation problems on aarch64 due to va_list
+    '--blocklist-function', 'ralloc_vasprintf',
+    '--blocklist-function', 'ralloc_vasprintf_rewrite_tail',
+    '--blocklist-function', 'ralloc_vasprintf_append',
+    '--blocklist-function', 'mesa_log_v',
+    '--blocklist-function', 'u_printf_length',
   ],
 )
 

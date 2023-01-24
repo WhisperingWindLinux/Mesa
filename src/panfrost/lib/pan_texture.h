@@ -128,7 +128,12 @@ struct pan_image_view {
    unsigned first_level, last_level;
    unsigned first_layer, last_layer;
    unsigned char swizzle[4];
+
+   /* plane 0 */
    const struct pan_image *image;
+
+   /* plane 1 if the image is multiplanar, NULL otherwise */
+   const struct pan_image *image1;
 
    /* If EXT_multisampled_render_to_texture is used, this may be
     * greater than image->layout.nr_samples. */

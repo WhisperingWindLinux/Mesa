@@ -1655,6 +1655,12 @@ panfrost_create_sampler_view_bo(struct panfrost_sampler_view *so,
       assert(!first_layer && !last_layer);
    }
 
+   struct pan_image *image1 = NULL;
+   if (texture->next) {
+      struct panfrost_resource *plane1 =
+         (struct panfrost_resource *)texture->next;
+      image1 = &plane1->image;
+   }
    struct pan_image_view iview = {
       .format = format,
       .dim = type,
@@ -1670,6 +1676,7 @@ panfrost_create_sampler_view_bo(struct panfrost_sampler_view *so,
             so->base.swizzle_a,
          },
       .image = &prsrc->image,
+      .image1 = image1,
 
       .buf.offset = buf_offset,
       .buf.size = buf_size,

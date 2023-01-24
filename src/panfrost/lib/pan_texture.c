@@ -176,6 +176,8 @@ GENX(panfrost_estimate_texture_payload_size)(const struct pan_image_view *iview)
 {
 #if PAN_ARCH >= 9
    size_t element_size = pan_size(PLANE);
+#elif PAN_ARCH == 7
+   size_t element_size = pan_size(SURFACE_YUV);
 #else
    /* Assume worst case. Overestimates on Midgard, but that's ok. */
    size_t element_size = pan_size(SURFACE_WITH_STRIDE);
@@ -454,6 +456,15 @@ panfrost_emit_plane(const struct pan_image_layout *layout,
 }
 #endif
 
+static bool
+needs_yuv_descriptor(enum util_format_layout layout)
+{
+   /* Mesa's subsampled RGB formats are considered YUV formats on Mali */
+   return layout == UTIL_FORMAT_LAYOUT_SUBSAMPLED ||
+          layout == UTIL_FORMAT_LAYOUT_PLANAR2 ||
+          layout == UTIL_FORMAT_LAYOUT_PLANAR3;
+}
+
 static void
 panfrost_emit_texture_payload(const struct pan_image_view *iview,
                               enum pipe_format format, void *payload)
@@ -506,6 +517,36 @@ panfrost_emit_texture_payload(const struct pan_image_view *iview,
 #if PAN_ARCH >= 9
       panfrost_emit_plane(layout, format, pointer, iter.level, payload);
       payload += pan_size(PLANE);
+#elif PAN_ARCH == 7
+      if (needs_yuv_descriptor(desc->layout)) {
+         uint64_t plane_1_ptr = 0;
+         int32_t plane_1_row_stride = 0;
+         if (iview->image1) {
+            const struct pan_image_layout *plane_1_layout =
+               &iview->image1->layout;
+            plane_1_ptr = panfrost_get_surface_pointer(
+               plane_1_layout, iview->dim, base, iter.level, iter.layer,
+               iter.face, iter.sample);
+            plane_1_row_stride = plane_1_layout->slices[iter.level].row_stride;
+         }
+
+         pan_pack(payload, SURFACE_YUV, cfg) {
+            cfg.plane_0_pointer = pointer;
+            cfg.plane_0_row_stride = layout->slices[iter.level].row_stride;
+            // TODO: assert shared stride for planes 1 and 2
+            cfg.plane_1_2_row_stride = plane_1_row_stride;
+            cfg.plane_1_pointer = plane_1_ptr;
+            cfg.plane_2_pointer = 0;
+         }
+         payload += pan_size(SURFACE_YUV);
+      } else {
+         pan_pack(payload, SURFACE_WITH_STRIDE, cfg) {
+            cfg.pointer = pointer;
+            panfrost_get_surface_strides(layout, iter.level, &cfg.row_stride,
+                                         &cfg.surface_stride);
+         }
+         payload += pan_size(SURFACE_WITH_STRIDE);
+      }
 #else
       pan_pack(payload, SURFACE_WITH_STRIDE, cfg) {
          cfg.pointer = pointer;
@@ -567,16 +608,28 @@ GENX(panfrost_new_texture)(const struct panfrost_device *dev,
       util_format_compose_swizzles(replicate_x, iview->swizzle, swizzle);
    } else if (PAN_ARCH == 7) {
 #if PAN_ARCH == 7
-      /* v7 (only) restricts component orders when AFBC is in use.
-       * Rather than restrict AFBC, we use an allowed component order
-       * with an invertible swizzle composed.
-       */
-      enum mali_rgb_component_order orig = mali_format & BITFIELD_MASK(12);
-      struct pan_decomposed_swizzle decomposed =
-         GENX(pan_decompose_swizzle)(orig);
+      ASSERTED const struct util_format_description *desc =
+         util_format_description(format);
 
-      /* Apply the new component order */
-      mali_format = (mali_format & ~orig) | decomposed.pre;
+      struct pan_decomposed_swizzle decomposed;
+
+      if (needs_yuv_descriptor(desc->layout)) {
+         enum mali_yuv_swizzle orig = mali_format & BITFIELD_MASK(3);
+         decomposed = GENX(pan_decompose_swizzle_yuv)(orig);
+
+         /* Apply the new component order */
+         mali_format = (mali_format & ~orig) | decomposed.pre_yuv;
+      } else {
+         /* v7 (only) restricts component orders when AFBC is in use.
+          * Rather than restrict AFBC, we use an allowed component order
+          * with an invertible swizzle composed.
+          */
+         enum mali_rgb_component_order orig = mali_format & BITFIELD_MASK(12);
+         decomposed = GENX(pan_decompose_swizzle)(orig);
+
+         /* Apply the new component order */
+         mali_format = (mali_format & ~orig) | decomposed.pre_rgb;
+      }
 
       /* Compose the new swizzle */
       util_format_compose_swizzles(decomposed.post, iview->swizzle, swizzle);

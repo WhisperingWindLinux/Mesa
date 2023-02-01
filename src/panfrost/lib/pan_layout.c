@@ -184,6 +184,24 @@ pan_afbc_body_align(uint64_t modifier)
    return (modifier & AFBC_FORMAT_MOD_TILED) ? 4096 : 64;
 }
 
+static inline unsigned
+format_minimum_alignment(enum pipe_format format)
+{
+#if PAN_ARCH != 7
+   return 63;
+#else
+   switch (format) {
+   /* For Bifrost, NV12 and NV21 have a looser alignment requiremnt of 16
+    * bytes */
+   case PIPE_FORMAT_R8_G8B8_420_UNORM:
+   case PIPE_FORMAT_G8_B8R8_420_UNORM:
+      return 15;
+   default:
+      return 63;
+   }
+#endif
+}
+
 /* Computes sizes for checksumming, which is 8 bytes per 16x16 tile.
  * Checksumming is believed to be a CRC variant (CRC64 based on the size?).
  * This feature is also known as "transaction elimination". */
@@ -275,8 +293,25 @@ pan_image_layout_init(struct pan_image_layout *layout,
       return false;
 
    /* Mandate 64 byte alignement */
-   if (explicit_layout && (explicit_layout->offset & 63))
-      return false;
+   if (explicit_layout) {
+      bool rejected = false;
+
+      int align_req = format_minimum_alignment(layout->format);
+
+#if PAN_ARCH == 7
+      rejected = ((explicit_layout->offset & align_req) ||
+                  (explicit_layout->row_stride & align_req));
+#else
+      rejected = (explicit_layout->offset & align_req);
+#endif
+
+      if (rejected) {
+         mesa_loge(
+            "panfrost: rejecting image due to unsupported offset or stride "
+            "alignment.\n");
+         return false;
+      }
+   }
 
    unsigned fmt_blocksize = util_format_get_blocksize(layout->format);
 
@@ -325,8 +360,10 @@ pan_image_layout_init(struct pan_image_layout *layout,
 
       if (explicit_layout && !afbc) {
          /* Make sure the explicit stride is valid */
-         if (explicit_layout->row_stride < row_stride)
+         if (explicit_layout->row_stride < row_stride) {
+            mesa_loge("panfrost: rejecting image due to invalid row stride.\n");
             return false;
+         }
 
          row_stride = explicit_layout->row_stride;
       } else if (linear) {
@@ -345,8 +382,11 @@ pan_image_layout_init(struct pan_image_layout *layout,
             ALIGN_POT(slice->row_stride * (effective_height / align_h),
                       pan_afbc_body_align(layout->modifier));
 
-         if (explicit_layout && explicit_layout->row_stride < slice->row_stride)
+         if (explicit_layout &&
+             explicit_layout->row_stride < slice->row_stride) {
+            mesa_loge("panfrost: rejecting image due to invalid row stride.\n");
             return false;
+         }
 
          /* AFBC body size */
          slice->afbc.body_size = slice_one_size;

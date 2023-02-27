@@ -696,10 +696,11 @@ static bool
 want_hiz_wt_for_image(const struct intel_device_info *devinfo,
                       const struct anv_image *image)
 {
-   /* Gen12 only supports single-sampled while Gen20+ supports
-    * multi-sampled images.
+   /* Gen12+ supports multi-sampled images, DG1 is the only exception to this
+    * rule and only supports single-sampled.
     */
-   if (devinfo->ver < 20 && image->vk.samples > 1)
+   if ((devinfo->ver < 12 || devinfo->platform == INTEL_PLATFORM_DG1) &&
+       image->vk.samples > 1)
       return false;
 
    if ((image->vk.usage & (VK_IMAGE_USAGE_SAMPLED_BIT |

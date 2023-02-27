@@ -677,10 +677,11 @@ static bool
 want_hiz_wt_for_res(const struct intel_device_info *devinfo,
                     const struct iris_resource *res)
 {
-   /* Gen12 only supports single-sampled while Gen20+ supports
-    * multi-sampled images.
+   /* Gen12+ supports multi-sampled images, DG1 is the only exception to this
+    * rule and only supports single-sampled.
     */
-   if (devinfo->ver < 20 && res->surf.samples > 1)
+   if ((devinfo->ver < 12 || devinfo->platform == INTEL_PLATFORM_DG1) &&
+       res->surf.samples > 1)
       return false;
 
    if (!(res->surf.usage & ISL_SURF_USAGE_TEXTURE_BIT))

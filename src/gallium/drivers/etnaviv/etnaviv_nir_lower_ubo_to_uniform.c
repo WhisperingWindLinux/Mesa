@@ -51,22 +51,34 @@ is_const_ubo(const nir_instr *instr, const void *_data)
 }
 
 static nir_ssa_def *
-lower_ubo_to_uniform(nir_builder *b, nir_instr *instr, void *_data)
+lower_ubo_to_uniform(nir_builder *b, nir_instr *instr, void *data)
 {
+   bool is_kernel = *((bool *)data);
+
    nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
    b->cursor = nir_before_instr(instr);
 
-   /* Undo the operations done in nir_lower_uniforms_to_ubo. */
+   /* Undo the operations done in nir_lower_uniforms_to_ubo and rusticl_lower_inputs. */
    nir_ssa_def *ubo_offset = nir_ssa_for_src(b, intr->src[1], 1);
    nir_ssa_def *range_base = nir_imm_int(b, nir_intrinsic_range_base(intr));
 
-   nir_ssa_def *uniform_offset =
-      nir_ushr(b, nir_isub(b, ubo_offset, range_base), nir_imm_int(b, 4));
+   /* glsl_to_nir's nir_lower_uniforms_to_ubo assumes uniforms are given in increments
+    * of vec4s for etnaviv, while rusticl_lower_inputs does not. */
+   nir_ssa_def *uniform_offset;
+   unsigned stride;
+   if (is_kernel) {
+      stride = 1;
+      uniform_offset = nir_isub(b, ubo_offset, range_base);
+   } else {
+      stride = 16;
+      uniform_offset =
+         nir_ushr(b, nir_isub(b, ubo_offset, range_base), nir_imm_int(b, stride / 4));
+   }
 
    nir_ssa_def *uniform =
       nir_load_uniform(b, intr->num_components, intr->dest.ssa.bit_size, uniform_offset,
-                       .base = nir_intrinsic_range_base(intr) / 16,
-                       .range = nir_intrinsic_range(intr) / 16,
+                       .base = nir_intrinsic_range_base(intr) / stride,
+                       .range = nir_intrinsic_range(intr) / stride,
                        .dest_type = nir_type_float32);
 
 	nir_ssa_def_rewrite_uses(&intr->dest.ssa, uniform);
@@ -77,9 +89,11 @@ lower_ubo_to_uniform(nir_builder *b, nir_instr *instr, void *_data)
 bool
 etna_nir_lower_ubo_to_uniform(nir_shader *shader)
 {
+   bool is_kernel = shader->info.stage == MESA_SHADER_KERNEL;
+
    return nir_shader_lower_instructions(shader,
                                         is_const_ubo,
                                         lower_ubo_to_uniform,
-                                        NULL);
+                                        &is_kernel);
 
 }

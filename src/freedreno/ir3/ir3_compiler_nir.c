@@ -2075,11 +2075,11 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       end->barrier_conflict = IR3_BARRIER_EVERYTHING;
       break;
 
-   case nir_intrinsic_store_global_ir3:
-      ctx->funcs->emit_intrinsic_store_global_ir3(ctx, intr);
+   case nir_intrinsic_store_global_2x32_offset:
+      ctx->funcs->emit_intrinsic_store_global_2x32_offset(ctx, intr);
       break;
-   case nir_intrinsic_load_global_ir3:
-      ctx->funcs->emit_intrinsic_load_global_ir3(ctx, intr, dst);
+   case nir_intrinsic_load_global_2x32_offset:
+      ctx->funcs->emit_intrinsic_load_global_2x32_offset(ctx, intr, dst);
       break;
 
    case nir_intrinsic_load_ubo:

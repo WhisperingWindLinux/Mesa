@@ -365,7 +365,7 @@ emit_intrinsic_image_size(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 }
 
 static void
-emit_intrinsic_load_global_ir3(struct ir3_context *ctx,
+emit_intrinsic_load_global_2x32_offset(struct ir3_context *ctx,
                                nir_intrinsic_instr *intr,
                                struct ir3_instruction **dst)
 {
@@ -402,7 +402,7 @@ emit_intrinsic_load_global_ir3(struct ir3_context *ctx,
 }
 
 static void
-emit_intrinsic_store_global_ir3(struct ir3_context *ctx,
+emit_intrinsic_store_global_2x32_offset(struct ir3_context *ctx,
                                 nir_intrinsic_instr *intr)
 {
    struct ir3_block *b = ctx->block;
@@ -516,7 +516,7 @@ const struct ir3_context_funcs ir3_a6xx_funcs = {
    .emit_intrinsic_store_image = emit_intrinsic_store_image,
    .emit_intrinsic_atomic_image = emit_intrinsic_atomic_image,
    .emit_intrinsic_image_size = emit_intrinsic_image_size,
-   .emit_intrinsic_load_global_ir3 = emit_intrinsic_load_global_ir3,
-   .emit_intrinsic_store_global_ir3 = emit_intrinsic_store_global_ir3,
+   .emit_intrinsic_load_global_2x32_offset = emit_intrinsic_load_global_2x32_offset,
+   .emit_intrinsic_store_global_2x32_offset = emit_intrinsic_store_global_2x32_offset,
    .emit_intrinsic_atomic_global = emit_intrinsic_atomic_global,
 };

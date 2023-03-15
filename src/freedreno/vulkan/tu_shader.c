@@ -665,9 +665,9 @@ lower_inline_ubo(nir_builder *b, nir_instr *instr, void *cb_data)
    if (use_load) {
       nir_ssa_def *base_addr =
          nir_load_uniform(b, 2, 32, nir_imm_int(b, 0), .base = base);
-      val = nir_load_global_ir3(b, intrin->num_components,
-                                intrin->dest.ssa.bit_size,
-                                base_addr, nir_ishr_imm(b, offset, 2));
+      val = nir_load_global_2x32_offset(b, intrin->num_components,
+                                        intrin->dest.ssa.bit_size,
+                                        base_addr, nir_ishr_imm(b, offset, 2));
    } else {
       val = nir_load_uniform(b, intrin->num_components,
                              intrin->dest.ssa.bit_size,

@@ -68,7 +68,7 @@ lower_64b_intrinsics(nir_builder *b, nir_instr *instr, void *unused)
       unsigned offset_src_idx;
       switch (intr->intrinsic) {
       case nir_intrinsic_store_ssbo:
-      case nir_intrinsic_store_global_ir3:
+      case nir_intrinsic_store_global_2x32_offset:
          offset_src_idx = 2;
          break;
       default:
@@ -131,7 +131,7 @@ lower_64b_intrinsics(nir_builder *b, nir_instr *instr, void *unused)
       switch(intr->intrinsic) {
       case nir_intrinsic_load_ssbo:
       case nir_intrinsic_load_ubo:
-      case nir_intrinsic_load_global_ir3:
+      case nir_intrinsic_load_global_2x32_offset:
          offset_src_idx = 1;
          break;
       default:
@@ -296,7 +296,7 @@ lower_64b_global(nir_builder *b, nir_instr *instr, void *unused)
       nir_ssa_def *components[num_comp];
       for (unsigned off = 0; off < num_comp;) {
          unsigned c = MIN2(num_comp - off, 4);
-         nir_ssa_def *val = nir_build_load_global_ir3(
+         nir_ssa_def *val = nir_build_load_global_2x32_offset(
                b, c, nir_dest_bit_size(intr->dest),
                addr, nir_imm_int(b, off));
          for (unsigned i = 0; i < c; i++) {
@@ -310,7 +310,7 @@ lower_64b_global(nir_builder *b, nir_instr *instr, void *unused)
       for (unsigned off = 0; off < num_comp; off += 4) {
          unsigned c = MIN2(num_comp - off, 4);
          nir_ssa_def *v = nir_channels(b, value, BITFIELD_MASK(c) << off);
-         nir_build_store_global_ir3(b, v, addr, nir_imm_int(b, off));
+         nir_build_store_global_2x32_offset(b, v, addr, nir_imm_int(b, off));
       }
       return NIR_LOWER_INSTR_PROGRESS_REPLACE;
    }

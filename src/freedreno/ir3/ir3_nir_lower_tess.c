@@ -417,7 +417,7 @@ build_per_vertex_offset(nir_builder *b, struct state *state,
       offset = nir_imm_int(b, 0);
    } else {
       /* Offset is in vec4's, but we need it in unit of components for the
-       * load/store_global_ir3 offset.
+       * load/store_global_2x32_offset offset.
        */
       offset = nir_ishl(b, offset, nir_imm_int(b, 2));
    }
@@ -532,8 +532,8 @@ lower_tess_ctrl_block(nir_block *block, nir_builder *b, struct state *state)
             nir_intrinsic_io_semantics(intr).location,
             nir_intrinsic_component(intr), intr->src[1].ssa);
 
-         replace_intrinsic(b, intr, nir_intrinsic_load_global_ir3, address,
-                           offset, NULL);
+         replace_intrinsic(b, intr, nir_intrinsic_load_global_2x32_offset,
+                           address, offset, NULL);
          break;
       }
 
@@ -553,8 +553,8 @@ lower_tess_ctrl_block(nir_block *block, nir_builder *b, struct state *state)
             nir_intrinsic_io_semantics(intr).location,
             nir_intrinsic_component(intr), intr->src[2].ssa);
 
-         replace_intrinsic(b, intr, nir_intrinsic_store_global_ir3, value,
-                           address, offset);
+         replace_intrinsic(b, intr, nir_intrinsic_store_global_2x32_offset,
+                           value, address, offset);
 
          break;
       }
@@ -584,7 +584,7 @@ lower_tess_ctrl_block(nir_block *block, nir_builder *b, struct state *state)
                                         intr->src[0].ssa);
          }
 
-         replace_intrinsic(b, intr, nir_intrinsic_load_global_ir3, address,
+         replace_intrinsic(b, intr, nir_intrinsic_load_global_2x32_offset, address,
                            offset, NULL);
          break;
       }
@@ -627,7 +627,7 @@ lower_tess_ctrl_block(nir_block *block, nir_builder *b, struct state *state)
             nir_ssa_def *offset = build_tessfactor_base(
                b, location, nir_intrinsic_component(intr), state);
 
-            replace_intrinsic(b, intr, nir_intrinsic_store_global_ir3,
+            replace_intrinsic(b, intr, nir_intrinsic_store_global_2x32_offset,
                               intr->src[0].ssa,
                               nir_load_tess_factor_base_ir3(b),
                               nir_iadd(b, intr->src[1].ssa, offset));
@@ -641,7 +641,7 @@ lower_tess_ctrl_block(nir_block *block, nir_builder *b, struct state *state)
                b, state, location, nir_intrinsic_component(intr),
                intr->src[1].ssa);
 
-            replace_intrinsic(b, intr, nir_intrinsic_store_global_ir3,
+            replace_intrinsic(b, intr, nir_intrinsic_store_global_2x32_offset,
                               intr->src[0].ssa, address, offset);
          }
          break;
@@ -781,8 +781,8 @@ lower_tess_eval_block(nir_block *block, nir_builder *b, struct state *state)
             nir_intrinsic_io_semantics(intr).location,
             nir_intrinsic_component(intr), intr->src[1].ssa);
 
-         replace_intrinsic(b, intr, nir_intrinsic_load_global_ir3, address,
-                           offset, NULL);
+         replace_intrinsic(b, intr, nir_intrinsic_load_global_2x32_offset,
+                           address, offset, NULL);
          break;
       }
 
@@ -811,8 +811,8 @@ lower_tess_eval_block(nir_block *block, nir_builder *b, struct state *state)
                                         intr->src[0].ssa);
          }
 
-         replace_intrinsic(b, intr, nir_intrinsic_load_global_ir3, address,
-                           offset, NULL);
+         replace_intrinsic(b, intr, nir_intrinsic_load_global_2x32_offset,
+                           address, offset, NULL);
          break;
       }
 

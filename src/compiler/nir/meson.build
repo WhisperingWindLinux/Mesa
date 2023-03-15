@@ -222,6 +222,7 @@ files_libnir = files(
   'nir_lower_wrmasks.c',
   'nir_lower_bit_size.c',
   'nir_lower_ubo_vec4.c',
+  'nir_lower_uniform_width.c',
   'nir_lower_uniforms_to_ubo.c',
   'nir_lower_sysvals_to_varyings.c',
   'nir_metadata.c',

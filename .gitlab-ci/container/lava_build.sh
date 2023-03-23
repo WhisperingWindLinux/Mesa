@@ -143,7 +143,8 @@ if [[ "$DEBIAN_ARCH" = "armhf" ]]; then
                        libwaffle-dev:armhf \
                        libwayland-dev:armhf \
                        libx11-xcb-dev:armhf \
-                       libxkbcommon-dev:armhf
+                       libxkbcommon-dev:armhf \
+                       ocl-icd-opencl-dev:armhf
 fi
 
 mkdir -p "/lava-files/rootfs-${DEBIAN_ARCH}"

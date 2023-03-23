@@ -417,8 +417,10 @@ debian-armhf:
     - .ci-deqp-artifacts
   variables:
     CROSS: armhf
+    GALLIUM_ST: >
+      -D gallium-rusticl=true
+      -D opencl-spirv=true
     EXTRA_OPTION: >
-      -D llvm=disabled
       -D valgrind=disabled
     MINIO_ARTIFACT_NAME: mesa-armhf
     # The strip command segfaults, failing to strip the binary and leaving

@@ -349,7 +349,7 @@ static void amdgpu_ctx_destroy(struct radeon_winsys_ctx *rwctx)
 
 static enum pipe_reset_status
 amdgpu_ctx_query_reset_status(struct radeon_winsys_ctx *rwctx, bool full_reset_only,
-                              bool *needs_reset)
+                              bool *needs_reset, bool *reset_completed)
 {
    struct amdgpu_ctx *ctx = (struct amdgpu_ctx*)rwctx;
    int r;
@@ -376,6 +376,9 @@ amdgpu_ctx_query_reset_status(struct radeon_winsys_ctx *rwctx, bool full_reset_o
       }
 
       if (flags & AMDGPU_CTX_QUERY2_FLAGS_RESET) {
+         /* There was a reset but the GPU is now ready to accept new commands. */
+         if (!(flags & AMDGPU_CTX_QUERY2_FLAGS_RESET_IN_PROGRESS) && reset_completed)
+            *reset_completed = true;
          if (needs_reset)
                *needs_reset = flags & AMDGPU_CTX_QUERY2_FLAGS_VRAMLOST;
          if (flags & AMDGPU_CTX_QUERY2_FLAGS_GUILTY)

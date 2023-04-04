@@ -26,6 +26,7 @@
 #include "si_pipe.h"
 
 #include "driver_ddebug/dd_util.h"
+#include "pipe/p_defines.h"
 #include "radeon_uvd.h"
 #include "si_compute.h"
 #include "si_public.h"
@@ -380,18 +381,44 @@ static void si_destroy_context(struct pipe_context *context)
 static enum pipe_reset_status si_get_reset_status(struct pipe_context *ctx)
 {
    struct si_context *sctx = (struct si_context *)ctx;
-   if (sctx->context_flags & SI_CONTEXT_FLAG_AUX)
+
+   if (sctx->context_flags & SI_CONTEXT_FLAG_AUX ||
+       (sctx->reset_detection_timestamp > 0 &&
+        (os_time_get_nano() - sctx->reset_detection_timestamp) >= ONE_SECOND_IN_NS * 3))
       return PIPE_NO_RESET;
 
-   bool needs_reset;
-   enum pipe_reset_status status = sctx->ws->ctx_query_reset_status(sctx->ctx, false, &needs_reset);
+   bool needs_reset, reset_completed;
+   enum pipe_reset_status status = sctx->ws->ctx_query_reset_status(sctx->ctx, false,
+                                                                    &needs_reset, &reset_completed);
 
-   if (status != PIPE_NO_RESET && needs_reset && !(sctx->context_flags & SI_CONTEXT_FLAG_AUX)) {
-      /* Call the gallium frontend to set a no-op API dispatch. */
-      if (sctx->device_reset_callback.reset) {
-         sctx->device_reset_callback.reset(sctx->device_reset_callback.data, status);
+   if (status != PIPE_NO_RESET) {
+      if (sctx->has_reset_been_notified && reset_completed)
+         return PIPE_NO_RESET;
+
+      sctx->has_reset_been_notified = true;
+
+      if (!(sctx->context_flags & SI_CONTEXT_FLAG_AUX)) {
+         if (needs_reset && sctx->device_reset_callback.reset) {
+            /* Call the gallium frontend to set a no-op API dispatch. */
+            sctx->device_reset_callback.reset(sctx->device_reset_callback.data, status);
+         }
+         /* The EXT_robustness spec says:
+          *
+          *  RESOLVED: For this extension, the application is expected to query
+          *  the reset status until NO_ERROR is returned. If a reset is encountered,
+          *  at least one *RESET* status will be returned. Once NO_ERROR is again
+          *  encountered, the application can safely destroy the old context and
+          *  create a new one.
+          *
+          * Starting with drm_minor >= 53 amdgpu reports if the reset is complete,
+          * so don't do anything special. On older kernels, report reset during 3 seconds
+          * and then switch back to NO_RESET.
+          */
+         if (sctx->screen->info.is_amdgpu && sctx->screen->info.drm_minor < 53)
+            sctx->reset_detection_timestamp = os_time_get_nano();
       }
    }
+
    return status;
 }
 
@@ -816,7 +843,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
       struct si_context *saux = si_get_aux_context(sscreen);
 
       enum pipe_reset_status status = sctx->ws->ctx_query_reset_status(
-         saux->ctx, true, NULL);
+         saux->ctx, true, NULL, NULL);
       if (status != PIPE_NO_RESET) {
          /* We lost the aux_context, create a new one */
          struct u_log_context *aux_log = (saux)->log;

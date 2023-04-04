@@ -89,7 +89,7 @@ static void radeon_drm_ctx_destroy(struct radeon_winsys_ctx *ctx)
 
 static enum pipe_reset_status
 radeon_drm_ctx_query_reset_status(struct radeon_winsys_ctx *rctx, bool full_reset_only,
-                                  bool *needs_reset)
+                                  bool *needs_reset, bool *reset_completed)
 {
    struct radeon_ctx *ctx = (struct radeon_ctx*)rctx;
 

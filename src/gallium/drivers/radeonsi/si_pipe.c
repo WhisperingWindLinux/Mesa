@@ -382,9 +382,7 @@ static enum pipe_reset_status si_get_reset_status(struct pipe_context *ctx)
 {
    struct si_context *sctx = (struct si_context *)ctx;
 
-   if (sctx->context_flags & SI_CONTEXT_FLAG_AUX ||
-       (sctx->reset_detection_timestamp > 0 &&
-        (os_time_get_nano() - sctx->reset_detection_timestamp) >= ONE_SECOND_IN_NS * 3))
+   if (sctx->context_flags & SI_CONTEXT_FLAG_AUX)
       return PIPE_NO_RESET;
 
    bool needs_reset, reset_completed;
@@ -402,20 +400,6 @@ static enum pipe_reset_status si_get_reset_status(struct pipe_context *ctx)
             /* Call the gallium frontend to set a no-op API dispatch. */
             sctx->device_reset_callback.reset(sctx->device_reset_callback.data, status);
          }
-         /* The EXT_robustness spec says:
-          *
-          *  RESOLVED: For this extension, the application is expected to query
-          *  the reset status until NO_ERROR is returned. If a reset is encountered,
-          *  at least one *RESET* status will be returned. Once NO_ERROR is again
-          *  encountered, the application can safely destroy the old context and
-          *  create a new one.
-          *
-          * Starting with drm_minor >= 53 amdgpu reports if the reset is complete,
-          * so don't do anything special. On older kernels, report reset during 3 seconds
-          * and then switch back to NO_RESET.
-          */
-         if (sctx->screen->info.is_amdgpu && sctx->screen->info.drm_minor < 53)
-            sctx->reset_detection_timestamp = os_time_get_nano();
       }
    }
 

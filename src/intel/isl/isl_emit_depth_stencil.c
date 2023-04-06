@@ -355,12 +355,13 @@ isl_genX(emit_depth_stencil_hiz_s)(const struct isl_device *dev, void *batch,
       hiz.HierarchicalDepthBufferWriteThruEnable =
          info->hiz_usage == ISL_AUX_USAGE_HIZ_CCS_WT;
 
-#if GFX_VER == 12
+#if GFX_VERx10 == 120
       /* The bspec docs up to GFX 12 for this bit are fairly unclear about
        * exactly what is and isn't supported with HiZ write-through.  It's
        * fairly clear that you can't sample from a multisampled depth buffer
-       * with CCS.  This limitation isn't called out explicitly but the docs
-       * for the CCS_E value of RENDER_SURFACE_STATE::AuxiliarySurfaceMode say:
+       * with CCS on DG1.  This limitation isn't called out explicitly but the
+       * docs for the CCS_E value of RENDER_SURFACE_STATE::AuxiliarySurfaceMode
+       * say:
        *
        *    "If Number of multisamples > 1, programming this value means MSAA
        *    compression is enabled for that surface. Auxiliary surface is MSC
@@ -385,9 +386,10 @@ isl_genX(emit_depth_stencil_hiz_s)(const struct isl_device *dev, void *batch,
        * shouldn't try to use it.  Treat it as if it's disallowed even if the
        * BSpec doesn't explicitly document that.
        */
-      if (hiz.HierarchicalDepthBufferWriteThruEnable)
+      if (hiz.HierarchicalDepthBufferWriteThruEnable &&
+          dev->info->platform == INTEL_PLATFORM_DG1)
          assert(info->depth_surf->samples == 1);
-#endif /* #if GFX_VER == 12 */
+#endif /* #if GFX_VERx10 == 120 */
 #endif /* #if GFX_VER >= 12 */
 
 #if GFX_VER >= 8

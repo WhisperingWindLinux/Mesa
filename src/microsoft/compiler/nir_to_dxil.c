@@ -6727,6 +6727,9 @@ nir_to_dxil(struct nir_shader *s, const struct nir_to_dxil_options *opts,
    NIR_PASS_V(s, dxil_nir_lower_sysval_to_load_input, ctx->system_value);
    NIR_PASS_V(s, nir_opt_dce);
 
+   /* This needs to be after any copy prop is done to prevent these movs from being erased */
+   NIR_PASS_V(s, dxil_nir_split_phis_and_const_srcs);
+
    if (debug_dxil & DXIL_DEBUG_VERBOSE)
       nir_print_shader(s, stderr);
 

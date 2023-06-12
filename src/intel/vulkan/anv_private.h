@@ -5311,6 +5311,8 @@ struct anv_image {
       struct anv_address address;
       struct anv_sparse_binding_data sparse_data;
       void *host_map;
+      uint64_t map_delta;
+      uint64_t map_size;
    } bindings[ANV_IMAGE_MEMORY_BINDING_END];
 
    /**

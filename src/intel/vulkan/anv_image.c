@@ -35,6 +35,7 @@
 #include "vk_util.h"
 #include "util/u_math.h"
 
+#include "vk_enum_to_str.h"
 #include "vk_format.h"
 
 #define ANV_OFFSET_IMPLICIT UINT64_MAX
@@ -245,6 +246,12 @@ anv_image_choose_isl_surf_usage(struct anv_physical_device *device,
        vk_usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR ||
        vk_usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR)
       isl_usage |= ISL_SURF_USAGE_VIDEO_DECODE_BIT;
+
+   /* We disable aux surfaces for host read/write images so that we can update
+    * the main surface without caring about the auxiliary surface.
+    */
+   if (vk_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)
+      isl_usage |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
 
    if (vk_create_flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT)
       isl_usage |= ISL_SURF_USAGE_CUBE_BIT;
@@ -1853,7 +1860,7 @@ anv_image_finish(struct anv_image *image)
          anv_device_unmap_bo(device,
                              image->bindings[b].address.bo,
                              image->bindings[b].host_map,
-                             image->bindings[b].memory_range.size,
+                             image->bindings[b].map_size,
                              false /* replace */);
       }
    }
@@ -2482,18 +2489,32 @@ anv_image_bind_address(struct anv_device *device,
    image->bindings[binding].address = address;
 
    /* Map bindings for images with host transfer usage, so that we don't have
-    * to map/unmap things at every host operation.
+    * to map/unmap things at every host operation. We map cached, that means
+    * that the copy operations need to cflush on platforms that have no
+    * host_cache+host_coherent memory types.
     */
    if (image->vk.usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) {
+      uint64_t offset = image->bindings[binding].address.offset +
+                        image->bindings[binding].memory_range.offset;
+      /* GEM will fail to map if the offset isn't 4k-aligned.  Round down. */
+      uint64_t map_offset;
+      if (!device->physical->info.has_mmap_offset)
+         map_offset = offset & ~4095ull;
+      else
+         map_offset = 0;
+      assert(offset >= map_offset);
+      uint64_t map_size = (offset + image->bindings[binding].memory_range.size) - map_offset;
+
       VkResult result = anv_device_map_bo(device,
                                           image->bindings[binding].address.bo,
-                                          image->bindings[binding].address.offset +
-                                          image->bindings[binding].memory_range.offset,
-                                          image->bindings[binding].memory_range.size,
+                                          map_offset, map_size,
                                           NULL /* placed_addr */,
                                           &image->bindings[binding].host_map);
       if (result != VK_SUCCESS)
          return result;
+
+      image->bindings[binding].map_delta = (offset - map_offset);
+      image->bindings[binding].map_size = map_size;
    }
 
    ANV_RMV(image_bind, device, image, binding);
@@ -2797,6 +2818,9 @@ anv_get_image_subresource_layout(struct anv_device *device,
       layout->subresourceLayout.arrayPitch =
          isl_surf_get_array_pitch(isl_surf);
 
+      VkSubresourceHostMemcpySizeEXT *host_memcpy_size =
+         vk_find_struct(layout->pNext, SUBRESOURCE_HOST_MEMCPY_SIZE_EXT);
+
       const uint32_t level = subresource->imageSubresource.mipLevel;
       const uint32_t layer = subresource->imageSubresource.arrayLayer;
       if (level > 0 || layer > 0) {
@@ -2823,8 +2847,20 @@ anv_get_image_subresource_layout(struct anv_device *device,
          layout->subresourceLayout.arrayPitch = isl_surf_get_array_pitch(&sub_surf);
          layout->subresourceLayout.depthPitch = isl_surf_get_array_pitch(&sub_surf);
 #endif
+         if (host_memcpy_size) {
+            host_memcpy_size->size = sub_surf.row_pitch_B *
+                                     sub_surf.logical_level0_px.h *
+                                     sub_surf.logical_level0_px.d *
+                                     sub_surf.logical_level0_px.a;
+         }
       } else {
          layout->subresourceLayout.size = mem_range->size;
+         if (host_memcpy_size) {
+            host_memcpy_size->size = isl_surf->row_pitch_B *
+                                     isl_surf->logical_level0_px.h *
+                                     isl_surf->logical_level0_px.d *
+                                     isl_surf->logical_level0_px.a;
+         }
       }
    }
 

@@ -631,8 +631,30 @@ GENX(panfrost_new_texture)(const struct panfrost_device *dev,
          mali_format = (mali_format & ~orig) | decomposed.pre_rgb;
       }
 
-      /* Compose the new swizzle */
-      util_format_compose_swizzles(decomposed.post, iview->swizzle, swizzle);
+      if ((dev->debug & PAN_DBG_YUV) && needs_yuv_descriptor(desc->layout)) {
+         unsigned char debug_swizzle[4] = {
+            iview->swizzle[0],
+            iview->swizzle[1],
+            iview->swizzle[2],
+            iview->swizzle[3],
+         };
+
+         if (desc->layout == UTIL_FORMAT_LAYOUT_SUBSAMPLED) {
+            fprintf(stderr, "subsampled\n");
+            debug_swizzle[2] = PIPE_SWIZZLE_1;
+         } else if (desc->layout == UTIL_FORMAT_LAYOUT_PLANAR2) {
+            fprintf(stderr, "planar2\n");
+            debug_swizzle[1] = PIPE_SWIZZLE_0;
+            debug_swizzle[2] = PIPE_SWIZZLE_0;
+         }
+
+         /* Compose the new swizzle */
+         util_format_compose_swizzles(decomposed.post, debug_swizzle, swizzle);
+      } else {
+         /* Compose the new swizzle */
+         util_format_compose_swizzles(decomposed.post, iview->swizzle, swizzle);
+      }
+
 #endif
    } else {
       STATIC_ASSERT(sizeof(swizzle) == sizeof(iview->swizzle));

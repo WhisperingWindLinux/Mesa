@@ -101,4 +101,16 @@ struct pan_decomposed_swizzle
    GENX(pan_decompose_swizzle)(enum mali_rgb_component_order order);
 #endif
 
+static inline bool
+panfrost_is_yuv_format(enum mali_format packed)
+{
+#if PAN_ARCH == 7
+   enum mali_format mali_fmt = packed >> 12;
+   return mali_fmt >= MALI_YUV8 && mali_fmt <= MALI_CUSTOM_YUV_5;
+#else
+   /* Currently only supported by panfrost on v7 */
+   return false;
+#endif
+}
+
 #endif

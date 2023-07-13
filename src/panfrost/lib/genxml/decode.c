@@ -38,6 +38,7 @@
 #include "compiler/valhall/disassemble.h"
 #include "midgard/disassemble.h"
 #include "util/set.h"
+#include "pan_format.h"
 
 #if PAN_ARCH <= 5
 /* Midgard's tiler descriptor is embedded within the
@@ -218,8 +219,8 @@ GENX(pandecode_blend)(void *descs, int rt_no, mali_ptr frag_shader)
 #if PAN_ARCH <= 7
 static void
 pandecode_texture_payload(mali_ptr payload, enum mali_texture_dimension dim,
-                          int surface_type, uint8_t levels, uint16_t nr_samples,
-                          uint16_t array_size)
+                          int surface_type, bool is_yuv, uint8_t levels,
+                          uint16_t nr_samples, uint16_t array_size)
 {
    /* A bunch of bitmap pointers follow.
     * We work out the correct number,
@@ -266,8 +267,16 @@ pandecode_texture_payload(mali_ptr payload, enum mali_texture_dimension dim,
               surface_type);
       break;
    }
-#else
+#elif PAN_ARCH == 6
    PANDECODE_EMIT_TEX_PAYLOAD_DESC(SURFACE_WITH_STRIDE, "Surface With Stride");
+#else
+   STATIC_ASSERT(PAN_ARCH == 7);
+   if (is_yuv) {
+      PANDECODE_EMIT_TEX_PAYLOAD_DESC(SURFACE_YUV, "Surface YUV");
+   } else {
+      PANDECODE_EMIT_TEX_PAYLOAD_DESC(SURFACE_WITH_STRIDE,
+                                      "Surface With Stride");
+   }
 #endif
 
 #undef PANDECODE_EMIT_TEX_PAYLOAD_DESC
@@ -287,7 +296,7 @@ GENX(pandecode_texture)(mali_ptr u, unsigned tex)
    unsigned nr_samples =
       temp.dimension == MALI_TEXTURE_DIMENSION_3D ? 1 : temp.sample_count;
    pandecode_texture_payload(u + pan_size(TEXTURE), temp.dimension,
-                             temp.surface_type, temp.levels, nr_samples,
+                             temp.surface_type, false, temp.levels, nr_samples,
                              temp.array_size);
    pandecode_indent--;
 }
@@ -313,8 +322,10 @@ GENX(pandecode_texture)(const void *cl, unsigned tex)
    unsigned nr_samples =
       temp.dimension == MALI_TEXTURE_DIMENSION_3D ? 1 : temp.sample_count;
 
-   pandecode_texture_payload(temp.surfaces, temp.dimension, 3, temp.levels,
-                             nr_samples, temp.array_size);
+   bool is_yuv = panfrost_is_yuv_format(temp.format);
+
+   pandecode_texture_payload(temp.surfaces, temp.dimension, 3, is_yuv,
+                             temp.levels, nr_samples, temp.array_size);
 #endif
    pandecode_indent--;
 }

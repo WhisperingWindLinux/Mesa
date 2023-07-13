@@ -130,6 +130,9 @@ struct panfrost_device {
 
    int fd;
 
+   /* For pandecode */
+   int decode_idx;
+
    /* Properties of the GPU in use */
    unsigned arch;
    unsigned gpu_id;

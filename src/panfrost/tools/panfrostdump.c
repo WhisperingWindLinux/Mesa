@@ -374,7 +374,7 @@ main(int argc, char *argv[])
 
                fclose(bodump);
 
-               pandecode_inject_mmap(doh.bomap.iova, bos[j], doh.file_size,
+               pandecode_inject_mmap(0, doh.bomap.iova, bos[j], doh.file_size,
                                      NULL);
 
             } else {
@@ -397,8 +397,8 @@ main(int argc, char *argv[])
    if (doh.type != PANFROSTDUMP_BUF_TRAILER)
       fprintf(stderr, "Trailing header isn't right\n");
 
-   pandecode_jc(jc, gpu_id);
-   pandecode_close();
+   pandecode_jc(0, jc, gpu_id);
+   pandecode_close(0);
 
    fclose(data_fp);
    fclose(hdr_fp);

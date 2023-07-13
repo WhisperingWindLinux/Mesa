@@ -83,8 +83,9 @@ pandecode_attributes(mali_ptr addr, int count, bool varying,
       case MALI_ATTRIBUTE_TYPE_1D_NPOT_DIVISOR: {
          pan_unpack(cl + (i + 1) * pan_size(ATTRIBUTE_BUFFER),
                     ATTRIBUTE_BUFFER_CONTINUATION_NPOT, temp2);
-         pan_print(pandecode_dump_stream, ATTRIBUTE_BUFFER_CONTINUATION_NPOT,
-                   temp2, (pandecode_indent + 1) * 2);
+         pan_print(pandecode_dump_stream[pandecode_idx],
+                   ATTRIBUTE_BUFFER_CONTINUATION_NPOT, temp2,
+                   (pandecode_indent + 1) * 2);
          i++;
          break;
       }
@@ -92,8 +93,9 @@ pandecode_attributes(mali_ptr addr, int count, bool varying,
       case MALI_ATTRIBUTE_TYPE_3D_INTERLEAVED: {
          pan_unpack(cl + (i + 1) * pan_size(ATTRIBUTE_BUFFER_CONTINUATION_3D),
                     ATTRIBUTE_BUFFER_CONTINUATION_3D, temp2);
-         pan_print(pandecode_dump_stream, ATTRIBUTE_BUFFER_CONTINUATION_3D,
-                   temp2, (pandecode_indent + 1) * 2);
+         pan_print(pandecode_dump_stream[pandecode_idx],
+                   ATTRIBUTE_BUFFER_CONTINUATION_3D, temp2,
+                   (pandecode_indent + 1) * 2);
          i++;
          break;
       }
@@ -268,7 +270,7 @@ GENX(pandecode_dcd)(const struct MALI_DRAW *p, enum mali_job_type job_type,
       if (!ptr.type || ptr.zs_crc_extension_present ||
           ptr.render_target_count != 1) {
 
-         fprintf(pandecode_dump_stream,
+         fprintf(pandecode_dump_stream[pandecode_idx],
                  "Unexpected framebuffer pointer settings");
       }
 
@@ -651,7 +653,7 @@ GENX(pandecode_jc)(mali_ptr jc_gpu_va, unsigned gpu_id)
 
    _mesa_set_destroy(va_set, NULL);
 
-   fflush(pandecode_dump_stream);
+   fflush(pandecode_dump_stream[pandecode_idx]);
    pandecode_map_read_write();
 }
 

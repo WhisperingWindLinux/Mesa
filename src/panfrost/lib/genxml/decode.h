@@ -31,8 +31,9 @@
 
 #include "wrap.h"
 
-extern FILE *pandecode_dump_stream;
+extern FILE *pandecode_dump_stream[PANDECODE_MAX_DEVICES];
 extern unsigned pandecode_indent;
+extern int pandecode_idx;
 
 void pandecode_dump_file_open(void);
 
@@ -109,7 +110,7 @@ static void
 pandecode_make_indent(void)
 {
    for (unsigned i = 0; i < pandecode_indent; ++i)
-      fprintf(pandecode_dump_stream, "  ");
+      fprintf(pandecode_dump_stream[pandecode_idx], "  ");
 }
 
 static void PRINTFLIKE(1, 2) pandecode_log(const char *format, ...)
@@ -118,7 +119,7 @@ static void PRINTFLIKE(1, 2) pandecode_log(const char *format, ...)
 
    pandecode_make_indent();
    va_start(ap, format);
-   vfprintf(pandecode_dump_stream, format, ap);
+   vfprintf(pandecode_dump_stream[pandecode_idx], format, ap);
    va_end(ap);
 }
 
@@ -128,7 +129,7 @@ pandecode_log_cont(const char *format, ...)
    va_list ap;
 
    va_start(ap, format);
-   vfprintf(pandecode_dump_stream, format, ap);
+   vfprintf(pandecode_dump_stream[pandecode_idx], format, ap);
    va_end(ap);
 }
 
@@ -136,7 +137,8 @@ pandecode_log_cont(const char *format, ...)
 #define DUMP_UNPACKED(T, var, ...)                                             \
    {                                                                           \
       pandecode_log(__VA_ARGS__);                                              \
-      pan_print(pandecode_dump_stream, T, var, (pandecode_indent + 1) * 2);    \
+      pan_print(pandecode_dump_stream[pandecode_idx], T, var,                  \
+                (pandecode_indent + 1) * 2);                                   \
    }
 
 #define DUMP_CL(T, cl, ...)                                                    \
@@ -149,7 +151,7 @@ pandecode_log_cont(const char *format, ...)
    {                                                                           \
       pan_section_unpack(cl, A, S, temp);                                      \
       pandecode_log(__VA_ARGS__);                                              \
-      pan_section_print(pandecode_dump_stream, A, S, temp,                     \
+      pan_section_print(pandecode_dump_stream[pandecode_idx], A, S, temp,      \
                         (pandecode_indent + 1) * 2);                           \
    }
 

@@ -41,15 +41,18 @@
 #include "compiler/valhall/disassemble.h"
 #include "midgard/disassemble.h"
 
-FILE *pandecode_dump_stream;
+FILE *pandecode_dump_stream[PANDECODE_MAX_DEVICES];
 
 unsigned pandecode_indent;
 
+int pandecode_idx = 0;
+
 /* Memory handling */
 
-static struct rb_tree mmap_tree;
+static int num_trees = 0;
+static struct rb_tree mmap_tree[PANDECODE_MAX_DEVICES];
 
-static struct util_dynarray ro_mappings;
+static struct util_dynarray ro_mappings[PANDECODE_MAX_DEVICES];
 
 static simple_mtx_t pandecode_lock = SIMPLE_MTX_INITIALIZER;
 
@@ -84,7 +87,8 @@ pandecode_find_mapped_gpu_mem_containing_rw(uint64_t addr)
 {
    simple_mtx_assert_locked(&pandecode_lock);
 
-   struct rb_node *node = rb_tree_search(&mmap_tree, &addr, pandecode_cmp_key);
+   struct rb_node *node =
+      rb_tree_search(&mmap_tree[pandecode_idx], &addr, pandecode_cmp_key);
 
    return to_mapped_memory(node);
 }
@@ -100,7 +104,8 @@ pandecode_find_mapped_gpu_mem_containing(uint64_t addr)
    if (mem && mem->addr && !mem->ro) {
       mprotect(mem->addr, mem->length, PROT_READ);
       mem->ro = true;
-      util_dynarray_append(&ro_mappings, struct pandecode_mapped_memory *, mem);
+      util_dynarray_append(&ro_mappings[pandecode_idx],
+                           struct pandecode_mapped_memory *, mem);
    }
 
    return mem;
@@ -148,11 +153,12 @@ pandecode_map_read_write(void)
 {
    simple_mtx_assert_locked(&pandecode_lock);
 
-   util_dynarray_foreach(&ro_mappings, struct pandecode_mapped_memory *, mem) {
+   util_dynarray_foreach(&ro_mappings[pandecode_idx],
+                         struct pandecode_mapped_memory *, mem) {
       (*mem)->ro = false;
       mprotect((*mem)->addr, (*mem)->length, PROT_READ | PROT_WRITE);
    }
-   util_dynarray_clear(&ro_mappings);
+   util_dynarray_clear(&ro_mappings[pandecode_idx]);
 }
 
 static void
@@ -172,9 +178,12 @@ pandecode_add_name(struct pandecode_mapped_memory *mem, uint64_t gpu_va,
 }
 
 void
-pandecode_inject_mmap(uint64_t gpu_va, void *cpu, unsigned sz, const char *name)
+pandecode_inject_mmap(int idx, uint64_t gpu_va, void *cpu, unsigned sz,
+                      const char *name)
 {
    simple_mtx_lock(&pandecode_lock);
+
+   pandecode_idx = idx;
 
    /* First, search if we already mapped this and are just updating an address */
 
@@ -196,16 +205,19 @@ pandecode_inject_mmap(uint64_t gpu_va, void *cpu, unsigned sz, const char *name)
       pandecode_add_name(mapped_mem, gpu_va, name);
 
       /* Add it to the tree */
-      rb_tree_insert(&mmap_tree, &mapped_mem->node, pandecode_cmp);
+      rb_tree_insert(&mmap_tree[pandecode_idx], &mapped_mem->node,
+                     pandecode_cmp);
    }
 
    simple_mtx_unlock(&pandecode_lock);
 }
 
 void
-pandecode_inject_free(uint64_t gpu_va, unsigned sz)
+pandecode_inject_free(int idx, uint64_t gpu_va, unsigned sz)
 {
    simple_mtx_lock(&pandecode_lock);
+
+   pandecode_idx = idx;
 
    struct pandecode_mapped_memory *mem =
       pandecode_find_mapped_gpu_mem_containing_rw(gpu_va);
@@ -214,7 +226,7 @@ pandecode_inject_free(uint64_t gpu_va, unsigned sz)
       assert(mem->gpu_va == gpu_va);
       assert(mem->length == sz);
 
-      rb_tree_remove(&mmap_tree, &mem->node);
+      rb_tree_remove(&mmap_tree[pandecode_idx], &mem->node);
       free(mem);
    }
 
@@ -244,7 +256,7 @@ pointer_as_memory_reference(uint64_t ptr)
    return out;
 }
 
-static int pandecode_dump_frame_count = 0;
+static int pandecode_dump_frame_count[PANDECODE_MAX_DEVICES];
 
 static bool force_stderr = false;
 
@@ -253,7 +265,7 @@ pandecode_dump_file_open(void)
 {
    simple_mtx_assert_locked(&pandecode_lock);
 
-   if (pandecode_dump_stream)
+   if (pandecode_dump_stream[pandecode_idx])
       return;
 
    /* This does a getenv every frame, so it is possible to use
@@ -262,14 +274,14 @@ pandecode_dump_file_open(void)
    const char *dump_file_base =
       debug_get_option("PANDECODE_DUMP_FILE", "pandecode.dump");
    if (force_stderr || !strcmp(dump_file_base, "stderr"))
-      pandecode_dump_stream = stdout; // stderr;
+      pandecode_dump_stream[pandecode_idx] = stdout; // stderr;
    else {
       char buffer[1024];
-      snprintf(buffer, sizeof(buffer), "%s.%04d", dump_file_base,
-               pandecode_dump_frame_count);
+      snprintf(buffer, sizeof(buffer), "%d-%s.%04d", pandecode_idx,
+               dump_file_base, pandecode_dump_frame_count[pandecode_idx]);
       printf("pandecode: dump command stream to file %s\n", buffer);
-      pandecode_dump_stream = fopen(buffer, "w");
-      if (!pandecode_dump_stream)
+      pandecode_dump_stream[pandecode_idx] = fopen(buffer, "w");
+      if (!pandecode_dump_stream[pandecode_idx])
          fprintf(stderr,
                  "pandecode: failed to open command stream log file %s\n",
                  buffer);
@@ -281,44 +293,52 @@ pandecode_dump_file_close(void)
 {
    simple_mtx_assert_locked(&pandecode_lock);
 
-   if (pandecode_dump_stream && pandecode_dump_stream != stderr) {
-      if (fclose(pandecode_dump_stream))
+   if (pandecode_dump_stream[pandecode_idx] &&
+       pandecode_dump_stream[pandecode_idx] != stderr) {
+      if (fclose(pandecode_dump_stream[pandecode_idx]))
          perror("pandecode: dump file");
 
-      pandecode_dump_stream = NULL;
+      pandecode_dump_stream[pandecode_idx] = NULL;
    }
 }
 
-void
+int
 pandecode_initialize(bool to_stderr)
 {
    force_stderr = to_stderr;
-   rb_tree_init(&mmap_tree);
-   util_dynarray_init(&ro_mappings, NULL);
+   rb_tree_init(&mmap_tree[num_trees]);
+   util_dynarray_init(&ro_mappings[num_trees], NULL);
+
+   return num_trees++;
 }
 
 void
-pandecode_next_frame(void)
+pandecode_next_frame(int idx)
 {
    simple_mtx_lock(&pandecode_lock);
 
+   pandecode_idx = idx;
+
    pandecode_dump_file_close();
-   pandecode_dump_frame_count++;
+   pandecode_dump_frame_count[pandecode_idx]++;
 
    simple_mtx_unlock(&pandecode_lock);
 }
 
 void
-pandecode_close(void)
+pandecode_close(int idx)
 {
    simple_mtx_lock(&pandecode_lock);
 
-   rb_tree_foreach_safe(struct pandecode_mapped_memory, it, &mmap_tree, node) {
-      rb_tree_remove(&mmap_tree, &it->node);
+   pandecode_idx = idx;
+
+   rb_tree_foreach_safe(struct pandecode_mapped_memory, it,
+                        &mmap_tree[pandecode_idx], node) {
+      rb_tree_remove(&mmap_tree[pandecode_idx], &it->node);
       free(it);
    }
 
-   util_dynarray_fini(&ro_mappings);
+   util_dynarray_fini(&ro_mappings[pandecode_idx]);
    pandecode_dump_file_close();
 
    simple_mtx_unlock(&pandecode_lock);
@@ -331,25 +351,29 @@ pandecode_dump_mappings(void)
 
    pandecode_dump_file_open();
 
-   rb_tree_foreach(struct pandecode_mapped_memory, it, &mmap_tree, node) {
+   rb_tree_foreach(struct pandecode_mapped_memory, it,
+                   &mmap_tree[pandecode_idx], node) {
       if (!it->addr || !it->length)
          continue;
 
-      fprintf(pandecode_dump_stream, "Buffer: %s gpu %" PRIx64 "\n\n", it->name,
-              it->gpu_va);
+      fprintf(pandecode_dump_stream[pandecode_idx],
+              "Buffer: %s gpu %" PRIx64 "\n\n", it->name, it->gpu_va);
 
-      u_hexdump(pandecode_dump_stream, it->addr, it->length, false);
-      fprintf(pandecode_dump_stream, "\n");
+      u_hexdump(pandecode_dump_stream[pandecode_idx], it->addr, it->length,
+                false);
+      fprintf(pandecode_dump_stream[pandecode_idx], "\n");
    }
 
-   fflush(pandecode_dump_stream);
+   fflush(pandecode_dump_stream[pandecode_idx]);
    simple_mtx_unlock(&pandecode_lock);
 }
 
 void
-pandecode_abort_on_fault(mali_ptr jc_gpu_va, unsigned gpu_id)
+pandecode_abort_on_fault(int idx, mali_ptr jc_gpu_va, unsigned gpu_id)
 {
    simple_mtx_lock(&pandecode_lock);
+
+   pandecode_idx = idx;
 
    switch (pan_arch(gpu_id)) {
    case 4:
@@ -375,9 +399,11 @@ pandecode_abort_on_fault(mali_ptr jc_gpu_va, unsigned gpu_id)
 }
 
 void
-pandecode_jc(mali_ptr jc_gpu_va, unsigned gpu_id)
+pandecode_jc(int idx, mali_ptr jc_gpu_va, unsigned gpu_id)
 {
    simple_mtx_lock(&pandecode_lock);
+
+   pandecode_idx = idx;
 
    switch (pan_arch(gpu_id)) {
    case 4:
@@ -403,10 +429,12 @@ pandecode_jc(mali_ptr jc_gpu_va, unsigned gpu_id)
 }
 
 void
-pandecode_cs(mali_ptr queue_gpu_va, uint32_t size, unsigned gpu_id,
+pandecode_cs(int idx, mali_ptr queue_gpu_va, uint32_t size, unsigned gpu_id,
              uint32_t *regs)
 {
    simple_mtx_lock(&pandecode_lock);
+
+   pandecode_idx = idx;
 
    switch (pan_arch(gpu_id)) {
    case 10:
@@ -436,12 +464,14 @@ pandecode_shader_disassemble(mali_ptr shader_ptr, unsigned gpu_id)
                       shader_ptr, sz);
 
    if (pan_arch(gpu_id) >= 9) {
-      disassemble_valhall(pandecode_dump_stream, (const uint64_t *)code, sz,
-                          true);
+      disassemble_valhall(pandecode_dump_stream[pandecode_idx],
+                          (const uint64_t *)code, sz, true);
    } else if (pan_arch(gpu_id) >= 6)
-      disassemble_bifrost(pandecode_dump_stream, code, sz, false);
+      disassemble_bifrost(pandecode_dump_stream[pandecode_idx], code, sz,
+                          false);
    else
-      disassemble_midgard(pandecode_dump_stream, code, sz, gpu_id, true);
+      disassemble_midgard(pandecode_dump_stream[pandecode_idx], code, sz,
+                          gpu_id, true);
 
    pandecode_log_cont("\n\n");
 }

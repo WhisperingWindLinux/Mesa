@@ -263,8 +263,8 @@ pandecode_texture_payload(mali_ptr payload, enum mali_texture_dimension dim,
                                       "Surface With Stride");
       break;
    default:
-      fprintf(pandecode_dump_stream, "Unknown surface descriptor type %X\n",
-              surface_type);
+      fprintf(pandecode_dump_stream[pandecode_idx],
+              "Unknown surface descriptor type %X\n", surface_type);
       break;
    }
 #elif PAN_ARCH == 6
@@ -357,12 +357,13 @@ GENX(pandecode_fau)(mali_ptr addr, unsigned count, const char *name)
 
    pandecode_validate_buffer(addr, count * 8);
 
-   fprintf(pandecode_dump_stream, "%s @%" PRIx64 ":\n", name, addr);
+   fprintf(pandecode_dump_stream[pandecode_idx], "%s @%" PRIx64 ":\n", name,
+           addr);
    for (unsigned i = 0; i < count; ++i) {
-      fprintf(pandecode_dump_stream, "  %08X %08X\n", raw[2 * i],
+      fprintf(pandecode_dump_stream[pandecode_idx], "  %08X %08X\n", raw[2 * i],
               raw[2 * i + 1]);
    }
-   fprintf(pandecode_dump_stream, "\n");
+   fprintf(pandecode_dump_stream[pandecode_idx], "\n");
 }
 
 mali_ptr
@@ -403,7 +404,8 @@ pandecode_resources(mali_ptr addr, unsigned size)
          DUMP_CL(BUFFER, cl + i, "Buffer @%" PRIx64 ":\n", addr + i);
          break;
       default:
-         fprintf(pandecode_dump_stream, "Unknown descriptor type %X\n", type);
+         fprintf(pandecode_dump_stream[pandecode_idx],
+                 "Unknown descriptor type %X\n", type);
          break;
       }
    }
@@ -465,8 +467,8 @@ GENX(pandecode_blend_descs)(mali_ptr blend, unsigned count,
       mali_ptr blend_shader =
          GENX(pandecode_blend)(blend_descs, i, frag_shader);
       if (blend_shader) {
-         fprintf(pandecode_dump_stream, "Blend shader %u @%" PRIx64 "", i,
-                 blend_shader);
+         fprintf(pandecode_dump_stream[pandecode_idx],
+                 "Blend shader %u @%" PRIx64 "", i, blend_shader);
          pandecode_shader_disassemble(blend_shader, gpu_id);
       }
    }

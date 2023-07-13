@@ -58,7 +58,8 @@ static void
 dump_cshwif_registers(struct queue_ctx *ctx)
 {
    for (unsigned i = 0; i < ctx->nr_regs; ++i)
-      fprintf(pandecode_dump_stream, "r%u: %X\n", i, ctx->regs[i]);
+      fprintf(pandecode_dump_stream[pandecode_idx], "r%u: %X\n", i,
+              ctx->regs[i]);
 }
 
 static uint32_t
@@ -754,11 +755,11 @@ GENX(pandecode_cs)(mali_ptr queue, uint32_t size, unsigned gpu_id,
    if (size) {
       do {
          disassemble_ceu_instr(*(ctx.ip), 1 + ctx.call_stack_depth, true,
-                               pandecode_dump_stream, &ctx);
+                               pandecode_dump_stream[pandecode_idx], &ctx);
       } while (interpret_ceu_instr(&ctx));
    }
 
-   fflush(pandecode_dump_stream);
+   fflush(pandecode_dump_stream[pandecode_idx]);
    pandecode_map_read_write();
 }
 #endif

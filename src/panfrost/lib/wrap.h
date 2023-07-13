@@ -42,22 +42,26 @@
  * included in-tree.
  */
 
-void pandecode_initialize(bool to_stderr);
+// TODO: update panwrap
 
-void pandecode_next_frame(void);
+#define PANDECODE_MAX_DEVICES 8
 
-void pandecode_close(void);
+int pandecode_initialize(bool to_stderr);
 
-void pandecode_inject_mmap(uint64_t gpu_va, void *cpu, unsigned sz,
+void pandecode_next_frame(int idx);
+
+void pandecode_close(int idx);
+
+void pandecode_inject_mmap(int idx, uint64_t gpu_va, void *cpu, unsigned sz,
                            const char *name);
 
-void pandecode_inject_free(uint64_t gpu_va, unsigned sz);
+void pandecode_inject_free(int idx, uint64_t gpu_va, unsigned sz);
 
-void pandecode_jc(uint64_t jc_gpu_va, unsigned gpu_id);
+void pandecode_jc(int idx, uint64_t jc_gpu_va, unsigned gpu_id);
 
-void pandecode_cs(mali_ptr queue_gpu_va, uint32_t size, unsigned gpu_id,
-                  uint32_t *regs);
+void pandecode_cs(int idx, mali_ptr queue_gpu_va, uint32_t size,
+                  unsigned gpu_id, uint32_t *regs);
 
-void pandecode_abort_on_fault(uint64_t jc_gpu_va, unsigned gpu_id);
+void pandecode_abort_on_fault(int idx, uint64_t jc_gpu_va, unsigned gpu_id);
 
 #endif /* __MMAP_TRACE_H__ */

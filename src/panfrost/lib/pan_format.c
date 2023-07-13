@@ -629,13 +629,14 @@ GENX(pan_decompose_swizzle)(enum mali_rgb_component_order order)
 #define CASE(case_, pre_, R_, G_, B_, A_)                                      \
    case MALI_RGB_COMPONENT_ORDER_##case_:                                      \
       return (struct pan_decomposed_swizzle){                                  \
-         MALI_RGB_COMPONENT_ORDER_##pre_,                                      \
-         {                                                                     \
-            PIPE_SWIZZLE_##R_,                                                 \
-            PIPE_SWIZZLE_##G_,                                                 \
-            PIPE_SWIZZLE_##B_,                                                 \
-            PIPE_SWIZZLE_##A_,                                                 \
-         },                                                                    \
+         .pre_rgb = MALI_RGB_COMPONENT_ORDER_##pre_,                           \
+         .post =                                                               \
+            {                                                                  \
+               PIPE_SWIZZLE_##R_,                                              \
+               PIPE_SWIZZLE_##G_,                                              \
+               PIPE_SWIZZLE_##B_,                                              \
+               PIPE_SWIZZLE_##A_,                                              \
+            },                                                                 \
       };
 
    switch (order) {
@@ -662,5 +663,37 @@ GENX(pan_decompose_swizzle)(enum mali_rgb_component_order order)
    }
 
 #undef CASE
+}
+
+struct pan_decomposed_swizzle
+GENX(pan_decompose_swizzle_yuv)(enum mali_yuv_swizzle order)
+{
+#define CASE_YUV(case_, pre_, Y_, U_, V_, A_)                                  \
+   case MALI_YUV_SWIZZLE_##case_:                                              \
+      return (struct pan_decomposed_swizzle){                                  \
+         .pre_yuv = MALI_YUV_SWIZZLE_##pre_,                                   \
+         .post =                                                               \
+            {                                                                  \
+               PIPE_SWIZZLE_##Y_,                                              \
+               PIPE_SWIZZLE_##U_,                                              \
+               PIPE_SWIZZLE_##V_,                                              \
+               PIPE_SWIZZLE_##A_,                                              \
+            },                                                                 \
+      };
+
+   switch (order) {
+      CASE_YUV(YUVA, YUVA, X, Y, Z, W);
+      CASE_YUV(YVUA, YUVA, X, Z, Y, W);
+      CASE_YUV(UYVA, YUVA, Y, X, Z, W);
+      CASE_YUV(UVYA, YUVA, Y, Z, X, W);
+      CASE_YUV(VUYA, YUVA, Z, Y, X, W);
+      CASE_YUV(VYUA, YUVA, Z, X, Y, W);
+      CASE_YUV(Y00A, Y00A, X, Y, Z, W);
+      CASE_YUV(YXXA, YXXA, X, Y, Z, W);
+   default:
+      unreachable("Invalid case for texturing");
+   }
+
+#undef CASE_YUV
 }
 #endif

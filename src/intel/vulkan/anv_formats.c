@@ -1361,6 +1361,10 @@ anv_get_image_format_properties(
       if (isl_mod_info == NULL)
          goto unsupported;
 
+      if ((info->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) &&
+          isl_drm_modifier_has_aux(modifier_info->drmFormatModifier))
+         goto unsupported;
+
       /* only allow Y-tiling/Tile4 for video decode. */
       if (info->usage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR) {
          if (isl_mod_info->tiling != ISL_TILING_Y0 && isl_mod_info->tiling != ISL_TILING_4)

@@ -1,0 +1,17 @@
+# segfaults
+dEQP-VK.video.decode.h264_decode_encode_interleaved,Crash
+dEQP-VK.video.decode.h264_h265_interleaved,Crash
+dEQP-VK.video.decode.h264_i_p_b_13_not_matching_order,Crash
+dEQP-VK.video.decode.h264_i_p_b_13,Crash
+dEQP-VK.video.decode.h264_i_p_not_matching_order,Crash
+dEQP-VK.video.decode.h264_i_p,Crash
+dEQP-VK.video.decode.h264_i,Crash
+dEQP-VK.video.decode.h264_interleaved,Crash
+dEQP-VK.video.decode.h264_query_with_status,Crash
+dEQP-VK.video.decode.h264_resolution_change_dpb,Crash
+dEQP-VK.video.decode.h264_resolution_change,Crash
+dEQP-VK.video.decode.h265_i_p_b_13_not_matching_order,Crash
+dEQP-VK.video.decode.h265_i_p_b_13,Crash
+dEQP-VK.video.decode.h265_i_p_not_matching_order,Crash
+dEQP-VK.video.decode.h265_i_p,Crash
+dEQP-VK.video.decode.h265_i,Crash

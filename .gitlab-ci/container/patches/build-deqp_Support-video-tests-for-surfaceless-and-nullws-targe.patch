@@ -1,0 +1,135 @@
+From 3491fac3c387dc03d3d7b8b488d830c0d4e5d287 Mon Sep 17 00:00:00 2001
+From: Charlie Turner <cturner@igalia.com>
+Date: Wed, 27 Sep 2023 12:42:32 +0100
+Subject: [PATCH] Support video tests for surfaceless and nullws targets.
+
+No reason why they shouldn't run there, but the blob library required
+some extra plumbing for these extra target.
+
+This was required by the Mesa CI.
+
+Change-Id: I368964bf8bf7a916fe930aed53e1be0f5a582060
+---
+ .../modules/vulkan/video/CMakeLists.txt       |  2 +-
+ framework/delibs/debase/deDefs.h              |  2 +-
+ .../platform/nullws/tcuNullWSPlatform.hpp     | 32 ++++++++++++++++++
+ .../surfaceless/tcuSurfacelessPlatform.cpp    | 33 +++++++++++++++++++
+ 4 files changed, 67 insertions(+), 2 deletions(-)
+
+diff --git a/framework/delibs/debase/deDefs.h b/framework/delibs/debase/deDefs.h
+index e4fcfed30..91db4ad4e 100644
+--- a/framework/delibs/debase/deDefs.h
++++ b/framework/delibs/debase/deDefs.h
+@@ -101,7 +101,7 @@
+ #	error Unknown operating system.
+ #endif
+ 
+-#if ((DE_OS == DE_OS_WIN32) || (DE_OS == DE_OS_UNIX)) && !defined(DEQP_SURFACELESS) && !defined(NULLWS)
++#if (DE_OS == DE_OS_WIN32) || (DE_OS == DE_OS_UNIX)
+ #	define DE_PLATFORM_USE_LIBRARY_TYPE 1
+ #else
+ #	undef DE_PLATFORM_USE_LIBRARY_TYPE
+diff --git a/framework/platform/nullws/tcuNullWSPlatform.hpp b/framework/platform/nullws/tcuNullWSPlatform.hpp
+index 6e65f20c4..963da32d1 100644
+--- a/framework/platform/nullws/tcuNullWSPlatform.hpp
++++ b/framework/platform/nullws/tcuNullWSPlatform.hpp
+@@ -59,6 +59,27 @@ private:
+ };
+ 
+ 
++class VulkanVideoDecodeParserLibrary : public vk::Library
++{
++public:
++	VulkanVideoDecodeParserLibrary(void)
++		: m_library("./libnvidia-vkvideo-parser.so")
++	{
++	}
++
++	const vk::PlatformInterface& getPlatformInterface(void) const
++	{
++		TCU_THROW(InternalError, "getPlatformInterface is not possible for VulkanVideoDecodeParserLibrary");
++	}
++	const tcu::FunctionLibrary& getFunctionLibrary(void) const
++	{
++		return m_library;
++	}
++
++private:
++	const tcu::DynamicFunctionLibrary	m_library;
++};
++
+ class Platform: public tcu::Platform, private glu::Platform, private eglu::Platform, private vk::Platform
+ {
+ public:
+@@ -69,6 +90,17 @@ public:
+ 	virtual const eglu::Platform&	getEGLPlatform	()	const { return static_cast<const eglu::Platform&>(*this); }
+   virtual const vk::Platform&   getVulkanPlatform() const { return static_cast<const vk::Platform&>(*this); }
+ 
++	vk::Library* createLibrary (LibraryType libraryType, const char* libraryPath) const
++	{
++		switch(libraryType)
++		{
++		case LIBRARY_TYPE_VULKAN:						return new VulkanLibrary(libraryPath);
++		case LIBRARY_TYPE_VULKAN_VIDEO_DECODE_PARSER:	return new VulkanVideoDecodeParserLibrary();
++
++		default: TCU_THROW(InternalError, "Unknown library type requested");
++		}
++	}
++
+ 	vk::Library* createLibrary (const char* libraryPath) const
+ 	{
+ 		return new VulkanLibrary(libraryPath);
+diff --git a/framework/platform/surfaceless/tcuSurfacelessPlatform.cpp b/framework/platform/surfaceless/tcuSurfacelessPlatform.cpp
+index 068dd293d..c037b8b9e 100644
+--- a/framework/platform/surfaceless/tcuSurfacelessPlatform.cpp
++++ b/framework/platform/surfaceless/tcuSurfacelessPlatform.cpp
+@@ -115,6 +115,28 @@ private:
+ 	const vk::PlatformDriver			m_driver;
+ };
+ 
++class VulkanVideoDecodeParserLibrary : public vk::Library
++{
++public:
++	VulkanVideoDecodeParserLibrary(void)
++		: m_library("./libnvidia-vkvideo-parser.so")
++	{
++	}
++
++	const vk::PlatformInterface& getPlatformInterface(void) const
++	{
++		TCU_THROW(InternalError, "getPlatformInterface is not possible for VulkanVideoDecodeParserLibrary");
++	}
++	const tcu::FunctionLibrary& getFunctionLibrary(void) const
++	{
++		return m_library;
++	}
++
++private:
++	const tcu::DynamicFunctionLibrary	m_library;
++};
++
++
+ // Copied from tcuX11Platform.cpp
+ class VulkanPlatform : public vk::Platform
+ {
+@@ -124,6 +146,17 @@ public:
+ 		return new VulkanLibrary(libraryPath);
+ 	}
+ 
++	vk::Library* createLibrary (LibraryType libraryType, const char* libraryPath) const
++	{
++		switch(libraryType)
++		{
++		case LIBRARY_TYPE_VULKAN:						return new VulkanLibrary(libraryPath);
++		case LIBRARY_TYPE_VULKAN_VIDEO_DECODE_PARSER:	return new VulkanVideoDecodeParserLibrary();
++
++		default: TCU_THROW(InternalError, "Unknown library type requested");
++		}
++	}
++
+ 	void describePlatform (std::ostream& dst) const
+ 	{
+ 		utsname		sysInfo;
+-- 
+2.37.2
+

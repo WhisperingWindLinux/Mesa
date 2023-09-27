@@ -47,6 +47,10 @@ cts_commits_to_backport=(
 
         # Don't attempt to test linear-filtered depth border clamping on ES.
         3b3c101a06f1e4fc6acd3d6b40c813cd1bdc25ef
+
+        # Backports for vulkan video
+        8a0010e00012ad4eb95389f78b9a2209c01abd3a
+        6d6c3c7aa865ce592d14b368da5fce0c55c12e76
 )
 
 for commit in "${cts_commits_to_backport[@]}"
@@ -61,6 +65,7 @@ cts_patch_files=(
   # Android specific patches.
   build-deqp_Allow-running-on-Android-from-the-command-line.patch
   build-deqp_Android-prints-to-stdout-instead-of-logcat.patch
+  build-deqp_Support-video-tests-for-surfaceless-and-nullws-targe.patch
 )
 
 for patch in "${cts_patch_files[@]}"

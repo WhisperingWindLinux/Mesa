@@ -123,6 +123,8 @@ struct tu_physical_device
    bool has_cached_non_coherent_memory;
    uintptr_t level1_dcache_size;
 
+   struct fdl_ubwc_config ubwc_config;
+
    struct {
       uint32_t type_count;
       VkMemoryPropertyFlags types[VK_MAX_MEMORY_TYPES];

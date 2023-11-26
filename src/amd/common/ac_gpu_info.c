@@ -1707,6 +1707,13 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
       info->fw_based_mcbp.csa_alignment = device_info.csa_alignment;
    }
 
+   if (debug_get_bool_option("AMD_USERQ", false)) {
+      info->is_userq_enabled = true;
+      info->ip[AMD_IP_GFX].has_userq = true;
+      info->ip[AMD_IP_COMPUTE].has_userq = true;
+      info->ip[AMD_IP_SDMA].has_userq = true;
+   }
+
    /* WARNING: Register shadowing decreases performance by up to 50% on GFX11 with current FW. */
    info->register_shadowing_required = device_info.ids_flags & AMDGPU_IDS_FLAGS_PREEMPTION &&
                                        info->gfx_level < GFX11;

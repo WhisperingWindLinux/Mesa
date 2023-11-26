@@ -29,6 +29,7 @@ struct amd_ip_info {
    uint8_t num_instances;
    uint32_t ib_alignment;
    uint32_t ib_pad_dw_mask;
+   bool has_userq;
 };
 
 struct radeon_info {
@@ -303,6 +304,12 @@ struct radeon_info {
    /* AMD_CU_MASK environment variable or ~0. */
    bool spi_cu_en_has_effect;
    uint32_t spi_cu_en;
+
+   /* If any one of the queue is userq then this variable is true. This is used in bo VM
+    * operations to pass input fences and output timeline syncobj. This will keep
+    * legacy code flow same when userq is disabled.
+    */
+   bool is_userq_enabled;
 
    struct {
       uint32_t shadow_size;

@@ -128,10 +128,37 @@ uint8_t *linear_to_tileX_swizzle(const uint8_t * base_addr, uint32_t x_B, uint32
    return (uint8_t *) (base_addr + tiled_off);
 }
 
+uint8_t *linear_to_tileW_swizzle(const uint8_t * base_addr, uint32_t x_B, uint32_t y_px, uint32_t pitch)
+{
+   const uint32_t cu = 6, cv = 6;
+   const uint32_t tile_id = (y_px >> cv) * (pitch >> cu) + (x_B >> cu);
+
+   /* The table below represents the mapping from coordinate (x_B, y_px) to
+    * byte offset in a 64x64px 1Bpp image:
+    *
+    *    Bit ind : 11 10  9  8  7  6  5  4  3  2  1  0
+    *     Tile-W : u5 u4 u3 v5 v4 v3 v2 u2 v1 u1 v0 u0
+    */
+   uint32_t tiled_off;
+
+   tiled_off = tile_id * 4096 |
+               swizzle_bitops(x_B,  1, 0, 0) |
+               swizzle_bitops(y_px, 1, 0, 1) |
+               swizzle_bitops(x_B,  1, 1, 2) |
+               swizzle_bitops(y_px, 1, 1, 3) |
+               swizzle_bitops(x_B,  1, 2, 4) |
+               swizzle_bitops(y_px, 1, 2, 5) |
+               swizzle_bitops(y_px, 3, 3, 6) |
+               swizzle_bitops(x_B,  3, 3, 9);
+
+   return (uint8_t *) (base_addr + tiled_off);
+}
+
 struct tile_swizzle_ops swizzle_opers[] = {
    {ISL_TILING_Y0, linear_to_tileY_swizzle},
    {ISL_TILING_4, linear_to_tile4_swizzle},
    {ISL_TILING_X, linear_to_tileX_swizzle},
+   {ISL_TILING_W, linear_to_tileW_swizzle},
 };
 
 class tileTFixture: public ::testing::Test {
@@ -176,6 +203,11 @@ class tileXFixture : public tileTFixture,
                                                                      int, int>>
 {};
 
+class tileWFixture : public tileTFixture,
+                     public ::testing::WithParamInterface<std::tuple<int, int,
+                                                                     int, int>>
+{};
+
 void tileTFixture::test_setup(TILE_CONV convert,
                          enum isl_tiling tiling_fmt,
                          enum isl_format format,
@@ -192,10 +224,19 @@ void tileTFixture::test_setup(TILE_CONV convert,
    isl_tiling_get_info(tiling_fmt, ISL_SURF_DIM_2D, ISL_MSAA_LAYOUT_NONE,
 		       fmtl->bpb, 1 , &tile_info);
 
+   /* TileW is a special case with doubled physical tile width due to HW
+    * programming requirements (see isl_tiling_get_info() in
+    * src/intel/isl/isl.c)
+    */
+   uint32_t tile_phys_width = tiling_fmt == ISL_TILING_W ?
+      tile_info.phys_extent_B.w / 2 : tile_info.phys_extent_B.w;
+   uint32_t tile_phys_height = tiling_fmt == ISL_TILING_W ?
+      tile_info.phys_extent_B.h * 2 : tile_info.phys_extent_B.h;
+
    tile_width = DIV_ROUND_UP(max_width, tile_info.logical_extent_el.w) *
-                tile_info.phys_extent_B.w;
+                tile_phys_width;
    tile_height = DIV_ROUND_UP(max_height, tile_info.logical_extent_el.h) *
-                 tile_info.phys_extent_B.h;
+                 tile_phys_height;
    tile_sz = tile_width * tile_height;
 
    buf_src = (uint8_t *) calloc(tile_sz, sizeof(uint8_t));
@@ -372,7 +413,26 @@ TEST_P(tileXFixture, tiletolin)
     run_test(x1, x2, y1, y2);
 }
 
+TEST_P(tileWFixture, lintotile)
+{
+    auto [x1, x2, y1, y2] = GetParam();
+    test_setup(LIN_TO_TILE, ISL_TILING_W, TILEW_IMAGE_FORMAT, x2, y2);
+    if (print_results)
+       printf("Coordinates: x1=%d x2=%d y1=%d y2=%d \n", x1, x2, y1, y2);
+    run_test(x1, x2, y1, y2);
+}
+
+TEST_P(tileWFixture, tiletolin)
+{
+    auto [x1, x2, y1, y2] = GetParam();
+    test_setup(TILE_TO_LIN, ISL_TILING_W, TILEW_IMAGE_FORMAT, x2, y2);
+    if (print_results)
+       printf("Coordinates: x1=%d x2=%d y1=%d y2=%d \n", x1, x2, y1, y2);
+    run_test(x1, x2, y1, y2);
+}
+
 
 INSTANTIATE_TEST_SUITE_P(tileY, tileYFixture, testing::Values(TILE_COORDINATES));
 INSTANTIATE_TEST_SUITE_P(tile4, tile4Fixture, testing::Values(TILE_COORDINATES));
 INSTANTIATE_TEST_SUITE_P(tileX, tileXFixture, testing::Values(TILE_COORDINATES));
+INSTANTIATE_TEST_SUITE_P(tileW, tileWFixture, testing::Values(TILE_COORDINATES));

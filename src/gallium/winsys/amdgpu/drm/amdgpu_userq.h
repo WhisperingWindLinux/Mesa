@@ -75,6 +75,8 @@ struct amdgpu_userq {
    uint32_t init_once;
    simple_mtx_t lock;
 
+   uint64_t vm_timeline_seq_num_prev;
+
    union {
       struct amdgpu_userq_gfx_data gfx_data;
       struct amdgpu_userq_compute_data compute_data;

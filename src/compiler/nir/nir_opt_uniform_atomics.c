@@ -88,26 +88,26 @@ parse_atomic_op(nir_intrinsic_instr *intr, unsigned *offset_src,
       *offset_src = 1;
       *data_src = 2;
       *offset2_src = *offset_src;
-      return atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
+      return nir_atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
    case nir_intrinsic_shared_atomic:
    case nir_intrinsic_global_atomic:
    case nir_intrinsic_deref_atomic:
       *offset_src = 0;
       *data_src = 1;
       *offset2_src = *offset_src;
-      return atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
+      return nir_atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
    case nir_intrinsic_global_atomic_amd:
       *offset_src = 0;
       *data_src = 1;
       *offset2_src = 2;
-      return atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
+      return nir_atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
    case nir_intrinsic_image_deref_atomic:
    case nir_intrinsic_image_atomic:
    case nir_intrinsic_bindless_image_atomic:
       *offset_src = 1;
       *data_src = 3;
       *offset2_src = *offset_src;
-      return atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
+      return nir_atomic_op_to_alu(nir_intrinsic_atomic_op(intr));
 
    default:
       return nir_num_opcodes;

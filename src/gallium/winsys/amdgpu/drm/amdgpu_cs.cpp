@@ -967,6 +967,15 @@ amdgpu_cs_create(struct radeon_cmdbuf *rcs,
       return false;
    }
 
+   if (cs->aws->info.ip[ip_type].has_userq &&
+       !amdgpu_userq_init(cs->aws, &cs->aws->queues[cs->queue_index].userq, ip_type)) {
+      amdgpu_destroy_cs_context(ctx->aws, &cs->csc2);
+      amdgpu_destroy_cs_context(ctx->aws, &cs->csc1);
+      FREE(cs);
+      rcs->priv = NULL;
+      return false;
+   }
+
    p_atomic_inc(&ctx->aws->num_cs);
    return true;
 }

@@ -324,6 +324,7 @@ static int parse_reg(const char *str)
 "stlw"                            return TOKEN(T_OP_STLW);
 "resfmt"                          return TOKEN(T_OP_RESFMT);
 "resinfo"                         return TOKEN(T_OP_RESINFO);
+"resbase"                         return TOKEN(T_OP_RESBASE);
 "atomic.add"                      return TOKEN(T_OP_ATOMIC_ADD);
 "atomic.sub"                      return TOKEN(T_OP_ATOMIC_SUB);
 "atomic.xchg"                     return TOKEN(T_OP_ATOMIC_XCHG);
@@ -382,6 +383,8 @@ static int parse_reg(const char *str)
 "getfiberid"                      return TOKEN(T_OP_GETFIBERID);
 "stc"                             return TOKEN(T_OP_STC);
 "stsc"                            return TOKEN(T_OP_STSC);
+
+"ray_intersection"                return TOKEN(T_OP_RAY_INTERSECTION);
 
 ("b16"|"b32"){1} ir3_yylval.str = yytext; return T_INSTR_TYPE;
 

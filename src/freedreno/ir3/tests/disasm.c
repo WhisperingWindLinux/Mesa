@@ -455,6 +455,9 @@ static const struct test {
    /* dEQP-VK.subgroups.quad.graphics.subgroupquadbroadcast_int */
    INSTR_6XX(c0260001_00c98000, "getfiberid.u32 r0.y"),
 
+   /* dEQP-VK.glsl.atomic_operations.exchange_unsigned64bit_compute */
+   INSTR_7XX(c03c0009_05648142, "atomic.b.xchg.untyped.1d.u64.1.uniform.base1 r2.y, r1.y, r0.x"),
+
    /* Custom test since we've never seen the blob emit these. */
    INSTR_6XX(c0260004_00490000, "getspid.u32 r1.x"),
    INSTR_6XX(c0260005_00494000, "getwid.u32 r1.y"),

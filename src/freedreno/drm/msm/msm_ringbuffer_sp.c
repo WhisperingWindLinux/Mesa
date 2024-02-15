@@ -119,7 +119,7 @@ flush_submit_list(struct list_head *submit_list)
    for (unsigned i = 0; i < fd_submit->nr_bos; i++) {
       submit_bos[i].flags = fd_submit->bos[i]->reloc_flags;
       submit_bos[i].handle = fd_submit->bos[i]->handle;
-      submit_bos[i].presumed = 0;
+      submit_bos[i].presumed = fd_submit->bos[i]->iova;
    }
 
    req.bos = VOID2U64(submit_bos);

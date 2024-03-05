@@ -2521,6 +2521,14 @@ tu_BeginCommandBuffer(VkCommandBuffer commandBuffer,
             tu_setup_dynamic_inheritance(cmd_buffer, rendering_info);
             cmd_buffer->state.pass = &cmd_buffer->dynamic_pass;
             cmd_buffer->state.subpass = &cmd_buffer->dynamic_subpass;
+
+            const VkRenderingAttachmentLocationInfoKHR *location_info =
+               vk_find_struct_const(pBeginInfo->pInheritanceInfo->pNext,
+                                    RENDERING_ATTACHMENT_LOCATION_INFO_KHR);
+            if (location_info) {
+               vk_common_CmdSetRenderingAttachmentLocationsKHR(commandBuffer,
+                                                               location_info);
+            }
          } else {
             cmd_buffer->state.pass = tu_render_pass_from_handle(pBeginInfo->pInheritanceInfo->renderPass);
             cmd_buffer->state.subpass =
@@ -4740,6 +4748,62 @@ tu_CmdSetRenderingAttachmentLocationsKHR(
    }
 }
 TU_GENX(tu_CmdSetRenderingAttachmentLocationsKHR);
+
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdSetRenderingInputAttachmentIndicesKHR(
+   VkCommandBuffer commandBuffer,
+   const VkRenderingInputAttachmentIndexInfoKHR *pLocationInfo)
+{
+   VK_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
+
+   vk_common_CmdSetRenderingInputAttachmentIndicesKHR(commandBuffer, pLocationInfo);
+
+   const struct vk_input_attachment_location_state *ial =
+      &cmd->vk.dynamic_graphics_state.ial;
+
+   struct tu_subpass *subpass = &cmd->dynamic_subpass;
+
+   for (unsigned i = 0; i < ARRAY_SIZE(cmd->dynamic_input_attachments); i++) {
+      subpass->input_attachments[i].attachment = VK_ATTACHMENT_UNUSED;
+   }
+
+   unsigned max_idx = 0;
+   for (unsigned i = 0; i < subpass->color_count; i++) {
+      if (ial->color_map[i] == MESA_VK_ATTACHMENT_UNUSED)
+         continue;
+      subpass->input_attachments[ial->color_map[i] + 1].attachment =
+         subpass->color_attachments[i].attachment;
+      max_idx = MAX2(max_idx, ial->color_map[i] + 2);
+   }
+
+   if (ial->depth_att != MESA_VK_ATTACHMENT_UNUSED) {
+      if (ial->depth_att == MESA_VK_ATTACHMENT_NO_INDEX) {
+         subpass->input_attachments[0].attachment =
+            subpass->depth_stencil_attachment.attachment;
+         max_idx = MAX2(max_idx, 1);
+      } else {
+         subpass->input_attachments[ial->depth_att + 1].attachment =
+            subpass->depth_stencil_attachment.attachment;
+         max_idx = MAX2(max_idx, ial->depth_att + 2);
+      }
+   }
+
+   if (ial->stencil_att != MESA_VK_ATTACHMENT_UNUSED) {
+      if (ial->stencil_att == MESA_VK_ATTACHMENT_NO_INDEX) {
+         subpass->input_attachments[0].attachment =
+            subpass->depth_stencil_attachment.attachment;
+         max_idx = MAX2(max_idx, 1);
+      } else {
+         subpass->input_attachments[ial->stencil_att + 1].attachment =
+            subpass->depth_stencil_attachment.attachment;
+         max_idx = MAX2(max_idx, ial->stencil_att + 2);
+      }
+   }
+
+   subpass->input_count = max_idx;
+
+   tu_set_input_attachments(cmd, cmd->state.subpass);
+}
 
 template <chip CHIP>
 VKAPI_ATTR void VKAPI_CALL

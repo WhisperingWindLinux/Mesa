@@ -90,3 +90,6 @@ spec@!opengl 1.0@gl-1.0-no-op-paths
 
 # Some reconvergence tests are very slow:
 (gmem-|stale-regs-)?dEQP-VK.reconvergence.(sub|work)group_uniform_control_flow_(ballot|elect).compute.nesting4.(0.40|7.10)
+
+# These tests are broken and will be removed with https://gerrit.khronos.org/c/vk-gl-cts/+/15325
+dEQP-VK.dynamic_rendering.partial_secondary_cmd_buff.fragment_density_map.*

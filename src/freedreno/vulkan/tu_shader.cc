@@ -1471,11 +1471,6 @@ tu6_emit_cs_config(struct tu_cs *cs,
                         /* A7XX TODO: enable UNK15 when we don't use subgroup ops. */
                         .unk15 = false, ));
 
-      tu_cs_emit_regs(
-         cs, A7XX_HLSQ_CS_LAST_LOCAL_SIZE(.localsizex = v->local_size[0] - 1,
-                                          .localsizey = v->local_size[1] - 1,
-                                          .localsizez = v->local_size[2] - 1, ));
-
       tu_cs_emit_regs(cs, A7XX_SP_CS_UNKNOWN_A9BE(0)); // Sometimes is 0x08000000
    }
 }

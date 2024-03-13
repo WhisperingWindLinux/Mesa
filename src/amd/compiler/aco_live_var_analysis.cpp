@@ -9,6 +9,40 @@
 
 namespace aco {
 
+void
+compute_blocked_abi_demand(Program* program, unsigned linear_vgpr_demand, Pseudo_call_instruction& instr)
+{
+   const unsigned max_vgpr = get_addr_vgpr_from_waves(program, program->min_waves);
+   /* Linear VGPRs can intersect with preserved VGPRs, we insert spill code for them in
+    * spill_preserved.
+    */
+   unsigned preserved_vgprs = max_vgpr - (instr.abi.clobberedRegs.vgpr.hi() - 256);
+   linear_vgpr_demand -= std::min(preserved_vgprs, linear_vgpr_demand);
+
+   unsigned preserved_vgpr_demand =
+      instr.abi.clobberedRegs.vgpr.size -
+      std::min(linear_vgpr_demand, instr.abi.clobberedRegs.vgpr.size);
+   unsigned preserved_sgpr_demand = instr.abi.clobberedRegs.sgpr.size;
+
+   /* Don't count definitions contained in clobbered call regs twice */
+   for (auto& definition : instr.definitions) {
+      if (definition.isTemp() && definition.isFixed()) {
+         auto def_regs = PhysRegInterval{PhysReg{definition.physReg().reg()}, definition.size()};
+         for (auto reg : def_regs) {
+            if (instr.abi.clobberedRegs.sgpr.contains(reg))
+               --preserved_sgpr_demand;
+            if (instr.abi.clobberedRegs.vgpr.contains(reg))
+               --preserved_vgpr_demand;
+         }
+      }
+   }
+   if (instr.abi.clobberedRegs.sgpr.contains(instr.operands[1].physReg()) &&
+       !instr.operands[1].isKill())
+      --preserved_sgpr_demand;
+
+   instr.blocked_abi_demand = RegisterDemand(preserved_vgpr_demand, preserved_sgpr_demand);
+}
+
 RegisterDemand
 get_live_changes(Instruction* instr)
 {
@@ -29,8 +63,8 @@ get_live_changes(Instruction* instr)
 }
 
 void
-get_additional_operand_demand(Instruction* instr, RegisterDemand& demand_before,
-                              RegisterDemand& demand_after)
+get_additional_operand_demand(Instruction* instr,
+                              RegisterDemand& demand_before, RegisterDemand& demand_after)
 {
    int op_idx = get_op_fixed_to_def(instr);
    if (op_idx != -1 && !instr->operands[op_idx].isKill())
@@ -57,6 +91,9 @@ get_additional_operand_demand(Instruction* instr, RegisterDemand& demand_before,
          }
       }
    }
+
+   if (instr->isCall())
+      demand_after += instr->call().blocked_abi_demand;
 }
 
 void
@@ -329,6 +366,9 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
                linear_vgpr_demand += temp.size();
          }
       }
+
+      if (insn->isCall())
+         compute_blocked_abi_demand(ctx.program, linear_vgpr_demand, insn->call());
 
       RegisterDemand before_instr = new_demand;
       get_additional_operand_demand(insn, before_instr, insn->register_demand);

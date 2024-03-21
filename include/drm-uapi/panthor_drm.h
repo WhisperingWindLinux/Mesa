@@ -95,9 +95,6 @@ enum drm_panthor_ioctl_id {
 	/** @DRM_PANTHOR_VM_BIND: Bind/unbind memory to a VM. */
 	DRM_PANTHOR_VM_BIND,
 
-	/** @DRM_PANTHOR_VM_GET_STATE: Get VM state. */
-	DRM_PANTHOR_VM_GET_STATE,
-
 	/** @DRM_PANTHOR_BO_CREATE: Create a buffer object. */
 	DRM_PANTHOR_BO_CREATE,
 
@@ -127,6 +124,9 @@ enum drm_panthor_ioctl_id {
 
 	/** @DRM_PANTHOR_TILER_HEAP_DESTROY: Destroy a tiler heap. */
 	DRM_PANTHOR_TILER_HEAP_DESTROY,
+
+	/** @DRM_PANTHOR_VM_GET_STATE: Get VM state. */
+	DRM_PANTHOR_VM_GET_STATE,
 };
 
 /**
@@ -152,8 +152,6 @@ enum drm_panthor_ioctl_id {
 	DRM_IOCTL_PANTHOR(WR, VM_DESTROY, vm_destroy)
 #define DRM_IOCTL_PANTHOR_VM_BIND \
 	DRM_IOCTL_PANTHOR(WR, VM_BIND, vm_bind)
-#define DRM_IOCTL_PANTHOR_VM_GET_STATE \
-	DRM_IOCTL_PANTHOR(WR, VM_GET_STATE, vm_get_state)
 #define DRM_IOCTL_PANTHOR_BO_CREATE \
 	DRM_IOCTL_PANTHOR(WR, BO_CREATE, bo_create)
 #define DRM_IOCTL_PANTHOR_BO_MMAP_OFFSET \
@@ -170,6 +168,8 @@ enum drm_panthor_ioctl_id {
 	DRM_IOCTL_PANTHOR(WR, TILER_HEAP_CREATE, tiler_heap_create)
 #define DRM_IOCTL_PANTHOR_TILER_HEAP_DESTROY \
 	DRM_IOCTL_PANTHOR(WR, TILER_HEAP_DESTROY, tiler_heap_destroy)
+#define DRM_IOCTL_PANTHOR_VM_GET_STATE \
+	DRM_IOCTL_PANTHOR(WR, VM_GET_STATE, vm_get_state)
 
 /**
  * DOC: IOCTL arguments

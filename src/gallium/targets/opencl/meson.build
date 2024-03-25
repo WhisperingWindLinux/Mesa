@@ -18,29 +18,6 @@ opencl_libname = with_opencl_icd ? 'MesaOpenCL' : 'OpenCL'
 polly_dep = cpp.find_library('Polly', dirs : llvm_libdir, required : false)
 polly_isl_dep = cpp.find_library('PollyISL', dirs : llvm_libdir, required : false)
 
-dep_clang = cpp.find_library('clang-cpp', dirs : llvm_libdir, required : false)
-if not dep_clang.found() or not _shared_llvm
-  dep_clang = [
-    cpp.find_library('clangCodeGen', dirs : llvm_libdir),
-    cpp.find_library('clangFrontendTool', dirs : llvm_libdir),
-    cpp.find_library('clangFrontend', dirs : llvm_libdir),
-    cpp.find_library('clangDriver', dirs : llvm_libdir),
-    cpp.find_library('clangSerialization', dirs : llvm_libdir),
-    cpp.find_library('clangParse', dirs : llvm_libdir),
-    cpp.find_library('clangSema', dirs : llvm_libdir),
-    cpp.find_library('clangAnalysis', dirs : llvm_libdir),
-    cpp.find_library('clangAST', dirs : llvm_libdir),
-    cpp.find_library('clangASTMatchers', dirs : llvm_libdir),
-    cpp.find_library('clangEdit', dirs : llvm_libdir),
-    cpp.find_library('clangLex', dirs : llvm_libdir),
-    cpp.find_library('clangBasic', dirs : llvm_libdir),
-    polly_dep, polly_isl_dep,
-  ]
-  if dep_llvm.version().version_compare('>= 15.0')
-    dep_clang += cpp.find_library('clangSupport', dirs : llvm_libdir)
-  endif
-endif
-
 ocldef_in = files(opencl_libname + '.def.in')[0]
 ocldef = custom_target(
   'ocldef.def',
@@ -59,7 +36,8 @@ libopencl = shared_library(
   link_with : [libpipe_loader_dynamic, libgallium],
   dependencies : [
     idep_mesautil,
-    dep_clock, dep_dl, dep_unwind, dep_elf, dep_clang, dep_version
+    dep_clock, dep_dl, dep_unwind, dep_elf, dep_clang, dep_version, polly_dep,
+    polly_isl_dep,
   ],
   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libOpenCL-1.dll or libMesaOpenCL-1.dll
   version : '@0@.0.0'.format(opencl_version),

@@ -1848,7 +1848,7 @@ if dep_spirv_tools.found()
 endif
 
 dep_clang = null_dep
-if with_clc
+if with_clc or with_gallium_clover
   llvm_libdir = dep_llvm.get_variable(cmake : 'LLVM_LIBRARY_DIR', configtool: 'libdir')
 
   dep_clang = cpp.find_library('clang-cpp', dirs : llvm_libdir, required : false)

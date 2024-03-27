@@ -330,7 +330,19 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
    if (arrsz == 1)
       return arr[0];
 
-   unsigned flags = dest_flags(arr[0]);
+   int non_undef_src = -1;
+   for (unsigned i = 0; i < arrsz; i++) {
+      if (arr[i]) {
+         non_undef_src = i;
+         break;
+      }
+   }
+
+   /* There should be at least one non-undef source to determine the type of the
+    * destination.
+    */
+   assert(non_undef_src != -1);
+   unsigned flags = dest_flags(arr[non_undef_src]);
 
    collect = ir3_instr_create(block, OPC_META_COLLECT, 1, arrsz);
    __ssa_dst(collect)->flags |= flags;
@@ -361,13 +373,17 @@ ir3_create_collect(struct ir3_block *block, struct ir3_instruction *const *arr,
        * scalar registers.
        *
        */
-      if (elem->dsts[0]->flags & IR3_REG_ARRAY) {
+      if (elem && elem->dsts[0]->flags & IR3_REG_ARRAY) {
          type_t type = (flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
          elem = ir3_MOV(block, elem, type);
       }
 
-      assert(dest_flags(elem) == flags);
-      __ssa_src(collect, elem, flags);
+      if (elem) {
+         assert(dest_flags(elem) == flags);
+         __ssa_src(collect, elem, flags);
+      } else {
+         ir3_src_create(collect, INVALID_REG, flags | IR3_REG_SSA);
+      }
    }
 
    collect->dsts[0]->wrmask = MASK(arrsz);

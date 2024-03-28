@@ -111,6 +111,7 @@ protected:
    uint8_t *buf_src;
    uint32_t tile_width, tile_height;
    uint32_t tile_sz;
+   enum isl_format fmt;
    TILE_CONV conv;
    struct tile_swizzle_ops ops;
    bool print_results;
@@ -150,6 +151,7 @@ void tileTFixture::test_setup(TILE_CONV convert,
 
    const struct isl_format_layout *fmtl = isl_format_get_layout(format);
    conv = convert;
+   fmt = format;
    ops.tiling = tiling_fmt;
 
    isl_tiling_get_info(tiling_fmt, ISL_SURF_DIM_2D, ISL_MSAA_LAYOUT_NONE,
@@ -244,7 +246,7 @@ void tileTFixture::convert_texture(uint8_t x1, uint8_t x2, uint8_t y1, uint8_t y
 void tileTFixture::compare_conv_result(uint8_t x1, uint8_t x2,
                                        uint8_t y1, uint8_t y2)
 {
-   uint32_t x_max = (uint32_t) align(x2, tile_info.logical_extent_el.w);
+   uint32_t x_max = tile_width;
    uint32_t y_max = (uint32_t) align(y2, tile_info.logical_extent_el.h);
 
    for(uint32_t y = 0; y < y_max; y++) {

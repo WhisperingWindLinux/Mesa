@@ -2342,6 +2342,10 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       }
    }
 
+   result = vk_meta_device_init(&device->vk, &device->meta);
+   if (result != VK_SUCCESS)
+      goto fail_queues;
+
    {
       struct ir3_compiler_options ir3_options = {
          .robust_buffer_access2 = device->vk.enabled_features.robustBufferAccess2,
@@ -2360,7 +2364,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       result = vk_startup_errorf(physical_device->instance,
                                  VK_ERROR_INITIALIZATION_FAILED,
                                  "failed to initialize ir3 compiler");
-      goto fail_queues;
+      goto fail_compiler;
    }
 
    /* Initialize sparse array for refcounting imported BOs */
@@ -2617,12 +2621,14 @@ fail_global_bo_map:
    tu_bo_finish(device, device->global_bo);
    vk_free(&device->vk.alloc, device->bo_list);
 fail_global_bo:
-   ir3_compiler_destroy(device->compiler);
-   util_sparse_array_finish(&device->bo_map);
    if (physical_device->has_set_iova)
       util_vma_heap_finish(&device->vma);
 fail_free_zombie_vma:
+   util_sparse_array_finish(&device->bo_map);
    u_vector_finish(&device->zombie_vmas);
+   ir3_compiler_destroy(device->compiler);
+fail_compiler:
+   vk_meta_device_finish(&device->vk, &device->meta);
 fail_queues:
    for (unsigned i = 0; i < TU_MAX_QUEUE_FAMILIES; i++) {
       for (unsigned q = 0; q < device->queue_count[i]; q++)
@@ -2671,6 +2677,8 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    tu_destroy_empty_shaders(device);
 
    tu_destroy_dynamic_rendering(device);
+
+   vk_meta_device_finish(&device->vk, &device->meta);
 
    ir3_compiler_destroy(device->compiler);
 

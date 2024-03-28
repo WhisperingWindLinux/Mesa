@@ -104,6 +104,19 @@ tu_spirv_to_nir(struct tu_device *dev,
    NIR_PASS_V(nir, nir_lower_system_values);
    NIR_PASS_V(nir, nir_lower_is_helper_invocation);
 
+   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
+   if (nir->info.ray_queries > 0) {
+      NIR_PASS(_, nir, nir_opt_ray_queries);
+      NIR_PASS(_, nir, nir_opt_ray_query_ranges);
+      NIR_PASS(_, nir, tu_nir_lower_ray_queries);
+
+      /* Lower copies introduced by ray query lowering. */
+      NIR_PASS(_, nir, nir_split_var_copies);
+      NIR_PASS(_, nir, nir_lower_var_copies);
+
+   }
+
    ir3_optimize_loop(dev->compiler, nir);
 
    NIR_PASS_V(nir, nir_opt_conditional_discard);

@@ -2644,7 +2644,8 @@ VkResult anv_BindImageMemory2(
 }
 
 static void
-anv_get_image_subresource_layout(const struct anv_image *image,
+anv_get_image_subresource_layout(struct anv_device *device,
+                                 const struct anv_image *image,
                                  const VkImageSubresource2KHR *subresource,
                                  VkSubresourceLayout2KHR *layout)
 {
@@ -2756,17 +2757,29 @@ anv_get_image_subresource_layout(const struct anv_image *image,
       const uint32_t level = subresource->imageSubresource.mipLevel;
       const uint32_t layer = subresource->imageSubresource.arrayLayer;
       if (level > 0 || layer > 0) {
-         assert(isl_surf->tiling == ISL_TILING_LINEAR);
-
+         struct isl_surf sub_surf;
+         uint32_t x_offset_sa, y_offset_sa;
          uint64_t offset_B;
-         isl_surf_get_image_offset_B_tile_sa(isl_surf, level, layer,
-                                             0 /* logical_z_offset_px */,
-                                             &offset_B, NULL, NULL);
+         isl_surf_get_image_surf(&device->physical->isl_dev, isl_surf,
+                                 subresource->imageSubresource.mipLevel,
+                                 subresource->imageSubresource.arrayLayer,
+                                 0,
+                                 &sub_surf,
+                                 &offset_B,
+                                 &x_offset_sa,
+                                 &y_offset_sa);
+
          layout->subresourceLayout.offset += offset_B;
-         layout->subresourceLayout.size =
-            layout->subresourceLayout.rowPitch *
-            u_minify(image->vk.extent.height, level) *
-            image->vk.extent.depth;
+         layout->subresourceLayout.size = isl_surf_get_array_pitch(&sub_surf) *
+                                          u_minify(isl_surf->logical_level0_px.d,
+                                                   subresource->imageSubresource.mipLevel) *
+                                          (isl_surf->logical_level0_px.a -
+                                           subresource->imageSubresource.arrayLayer);
+#if 0
+         /* TODO: Not sure why those don't work */
+         layout->subresourceLayout.arrayPitch = isl_surf_get_array_pitch(&sub_surf);
+         layout->subresourceLayout.depthPitch = isl_surf_get_array_pitch(&sub_surf);
+#endif
       } else {
          layout->subresourceLayout.size = mem_range->size;
       }
@@ -2802,18 +2815,19 @@ void anv_GetDeviceImageSubresourceLayoutKHR(
       return;
    }
 
-   anv_get_image_subresource_layout(&image, pInfo->pSubresource, pLayout);
+   anv_get_image_subresource_layout(device, &image, pInfo->pSubresource, pLayout);
 }
 
 void anv_GetImageSubresourceLayout2KHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkImage                                     _image,
     const VkImageSubresource2KHR*               pSubresource,
     VkSubresourceLayout2KHR*                    pLayout)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    ANV_FROM_HANDLE(anv_image, image, _image);
 
-   anv_get_image_subresource_layout(image, pSubresource, pLayout);
+   anv_get_image_subresource_layout(device, image, pSubresource, pLayout);
 }
 
 static VkImageUsageFlags

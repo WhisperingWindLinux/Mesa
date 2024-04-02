@@ -1563,6 +1563,9 @@ struct isl_surf_init_info {
 
    /** Flags that alter how ISL selects isl_surf::tiling.  */
    isl_tiling_flags_t tiling_flags;
+
+   /** Maximum size of the image if this is to create a sub-surface. */
+   uint64_t max_size_B;
 };
 
 /***/

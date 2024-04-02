@@ -2896,6 +2896,9 @@ isl_surf_init_s(const struct isl_device *dev,
                       array_pitch_el_rows, row_pitch_B, &size_B))
       return false;
 
+   if (info->max_size_B)
+      size_B = MIN2(size_B, info->max_size_B);
+
    const uint32_t base_alignment_B =
       isl_calc_base_alignment(dev, info, &tile_info);
 
@@ -3883,7 +3886,8 @@ isl_surf_get_image_surf(const struct isl_device *dev,
                       .samples = surf->samples,
                       .row_pitch_B = surf->row_pitch_B,
                       .usage = usage,
-                      .tiling_flags = (1 << surf->tiling));
+                      .tiling_flags = (1 << surf->tiling),
+                      .max_size_B = surf->size_B - *offset_B);
    assert(ok);
 }
 
@@ -3988,7 +3992,8 @@ isl_surf_get_uncompressed_surf(const struct isl_device *dev,
                             (int) (view->base_level < surf->miptail_start_level),
                          .row_pitch_B = surf->row_pitch_B,
                          .usage = surf->usage,
-                         .tiling_flags = (1u << surf->tiling));
+                         .tiling_flags = (1u << surf->tiling),
+                         .max_size_B = surf->size_B - *offset_B);
       assert(ok);
 
       /* Use the array pitch from the original surface.  This way 2D arrays
@@ -4100,7 +4105,8 @@ isl_surf_get_uncompressed_surf(const struct isl_device *dev,
                             .samples = 1,
                             .row_pitch_B = surf->row_pitch_B,
                             .usage = usage,
-                            .tiling_flags = (1 << surf->tiling));
+                            .tiling_flags = (1 << surf->tiling),
+                            .max_size_B = surf->size_B - *offset_B);
          assert(ok);
 
          /* The newly created image represents the one subimage we're

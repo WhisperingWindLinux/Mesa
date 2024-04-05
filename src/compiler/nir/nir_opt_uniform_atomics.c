@@ -250,15 +250,14 @@ optimize_atomic(nir_builder *b, nir_intrinsic_instr *intrin, bool return_prev)
    unsigned data_src = 0;
    unsigned offset2_src = 0;
    nir_op op = parse_atomic_op(intrin, &offset_src, &data_src, &offset2_src);
-   nir_def *data = intrin->src[data_src].ssa;
+   nir_src *data = &intrin->src[data_src];
 
    /* Separate uniform reduction and scan is faster than doing a combined scan+reduce */
-   bool combined_scan_reduce = return_prev && data->divergent;
+   bool combined_scan_reduce = return_prev && nir_src_is_divergent(*data);
    nir_def *reduce = NULL, *scan = NULL;
-   reduce_data(b, op, data, &reduce, combined_scan_reduce ? &scan : NULL);
+   reduce_data(b, op, data->ssa, &reduce, combined_scan_reduce ? &scan : NULL);
 
-   nir_src_rewrite(&intrin->src[data_src], reduce);
-   nir_update_instr_divergence(b->shader, &intrin->instr);
+   nir_src_rewrite(data, reduce);
 
    nir_def *cond = nir_elect(b, 1);
 
@@ -277,7 +276,7 @@ optimize_atomic(nir_builder *b, nir_intrinsic_instr *intrin, bool return_prev)
       result = nir_read_first_invocation(b, result);
 
       if (!combined_scan_reduce)
-         reduce_data(b, op, data, NULL, &scan);
+         reduce_data(b, op, data->ssa, NULL, &scan);
 
       return nir_build_alu(b, op, result, scan, NULL, NULL);
    } else {
@@ -296,7 +295,6 @@ optimize_and_rewrite_atomic(nir_builder *b, nir_intrinsic_instr *intrin,
       helper_nif = nir_push_if(b, nir_inot(b, helper));
    }
 
-   ASSERTED bool original_result_divergent = intrin->def.divergent;
    bool return_prev = !nir_def_is_unused(&intrin->def);
 
    nir_def old_result = intrin->def;
@@ -315,7 +313,7 @@ optimize_and_rewrite_atomic(nir_builder *b, nir_intrinsic_instr *intrin,
    }
 
    if (result) {
-      assert(result->divergent == original_result_divergent);
+      result->divergent = old_result.divergent;
       nir_def_rewrite_uses(&old_result, result);
    }
 }
@@ -325,7 +323,6 @@ opt_uniform_atomics(nir_function_impl *impl, bool fs_atomics_predicated)
 {
    bool progress = false;
    nir_builder b = nir_builder_create(impl);
-   b.update_divergence = true;
 
    nir_foreach_block(block, impl) {
       nir_foreach_instr_safe(instr, block) {

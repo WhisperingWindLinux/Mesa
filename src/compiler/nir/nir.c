@@ -644,7 +644,8 @@ nir_loop_create(nir_shader *shader)
 
    cf_init(&loop->cf_node, nir_cf_node_loop);
    /* Assume that loops are divergent until proven otherwise */
-   loop->divergent = true;
+   loop->divergent_break = true;
+   loop->divergent_continue = true;
 
    nir_block *body = nir_block_create(shader);
    exec_list_make_empty(&loop->body);
@@ -2916,6 +2917,51 @@ nir_op_is_vec(nir_op op)
    default:
       return false;
    }
+}
+
+bool
+nir_src_is_divergent(nir_src src)
+{
+   if (src.ssa->divergent)
+      return true;
+
+   /* We cannot use nir_src_get_block() because we need to consider
+    * LCSSA uses as being outside of the loop.
+    */
+   nir_block *use_block = nir_src_is_if(&src)
+                             ? nir_cf_node_cf_tree_prev(&nir_src_parent_if(&src)->cf_node)
+                             : nir_src_parent_instr(&src)->block;
+
+   /* Short-cut the common case. */
+   nir_block *def_block = src.ssa->parent_instr->block;
+   if (def_block == use_block)
+      return false;
+
+   /* If the source was computed in a divergent loop, and is not
+    * loop-invariant, then it must also be considered divergent.
+    */
+   bool loop_invariant = src.ssa->loop_invariant;
+   nir_cf_node *node = def_block->cf_node.parent;
+   while (node) {
+      /* The use is inside the same cf_node. */
+      if (use_block->index >= nir_cf_node_cf_tree_first(node)->index &&
+          use_block->index <= nir_cf_node_cf_tree_last(node)->index)
+         return false;
+
+      if (node->type == nir_cf_node_loop) {
+         /* Because the use is outside of this loop, it is divergent. */
+         if (nir_cf_node_as_loop(node)->divergent_break && !loop_invariant) {
+            return true;
+         }
+
+         /* For outer loops, consider this variable not loop invariant. */
+         loop_invariant = false;
+      }
+
+      node = node->parent;
+   }
+
+   return false;
 }
 
 nir_component_mask_t

@@ -40,6 +40,8 @@
 #include "nir_deref.h"
 #include "nir_search_helpers.h"
 
+#include <sys/stat.h>
+
 
 // Doing AOS (and linear) codegen?
 static bool
@@ -2769,6 +2771,19 @@ visit_call(struct lp_build_nir_context *bld_base,
 }
 
 static void
+visit_debug_info(struct lp_build_nir_context *bld_base,
+                 nir_debug_info_instr *instr)
+{
+   struct gallivm_state *gallivm = bld_base->base.gallivm;
+
+   if (instr->type == nir_debug_info_src_loc && gallivm->di_function) {
+      LLVMMetadataRef di_loc = LLVMDIBuilderCreateDebugLocation(
+         gallivm->context, instr->src_loc.line, instr->src_loc.column, gallivm->di_function, NULL);
+      LLVMSetCurrentDebugLocation2(gallivm->builder, di_loc);
+   }
+}
+
+static void
 visit_block(struct lp_build_nir_context *bld_base, nir_block *block)
 {
    nir_foreach_instr(instr, block)
@@ -2800,6 +2815,9 @@ visit_block(struct lp_build_nir_context *bld_base, nir_block *block)
          break;
       case nir_instr_type_call:
          visit_call(bld_base, nir_instr_as_call(instr));
+         break;
+      case nir_instr_type_debug_info:
+         visit_debug_info(bld_base, nir_instr_as_debug_info(instr));
          break;
       default:
          fprintf(stderr, "Unknown NIR instr type: ");
@@ -2914,6 +2932,21 @@ bool lp_build_nir_llvm(struct lp_build_nir_context *bld_base,
                        struct nir_shader *nir,
                        nir_function_impl *impl)
 {
+   nir_index_ssa_defs(impl);
+
+   if (bld_base->base.gallivm->di_builder && bld_base->base.gallivm->file_name) {
+      char *shader_src = nir_shader_gather_debug_info(nir, bld_base->base.gallivm->file_name);
+      if (shader_src) {
+         mkdir(LP_NIR_SHADER_DUMP_DIR, 0774);
+
+         FILE *f = fopen(bld_base->base.gallivm->file_name, "w");
+         fprintf(f, "%s\n", shader_src);
+         fclose(f);
+
+         ralloc_free(shader_src);
+      }
+   }
+
    nir_foreach_shader_out_variable(variable, nir)
       handle_shader_output_decl(bld_base, nir, variable);
 
@@ -2945,7 +2978,7 @@ bool lp_build_nir_llvm(struct lp_build_nir_context *bld_base,
                                                type, "reg");
       _mesa_hash_table_insert(bld_base->regs, reg, reg_alloc);
    }
-   nir_index_ssa_defs(impl);
+
    bld_base->ssa_defs = calloc(impl->ssa_alloc, sizeof(LLVMValueRef));
    visit_cf_list(bld_base, &impl->body);
 

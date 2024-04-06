@@ -1636,6 +1636,8 @@ draw_llvm_generate(struct draw_llvm *llvm, struct draw_llvm_variant *variant)
       if (LLVMGetTypeKind(arg_types[i]) == LLVMPointerTypeKind)
          lp_add_function_attr(variant_func, i + 1, LP_FUNC_ATTR_NOALIAS);
 
+   lp_function_add_debug_info(gallivm, variant_func, func_type);
+
    if (gallivm->cache && gallivm->cache->data_size) {
       gallivm_stub_func(gallivm, variant_func);
       return;
@@ -2369,6 +2371,8 @@ draw_gs_llvm_generate(struct draw_llvm *llvm,
       if (LLVMGetTypeKind(arg_types[i]) == LLVMPointerTypeKind)
          lp_add_function_attr(variant_func, i + 1, LP_FUNC_ATTR_NOALIAS);
 
+   lp_function_add_debug_info(gallivm, variant_func, func_type);
+
    if (gallivm->cache && gallivm->cache->data_size) {
       gallivm_stub_func(gallivm, variant_func);
       return;
@@ -2966,6 +2970,9 @@ draw_tcs_llvm_generate(struct draw_llvm *llvm,
       }
    }
 
+   lp_function_add_debug_info(gallivm, variant_func, func_type);
+   lp_function_add_debug_info(gallivm, variant_coro, coro_func_type);
+
    if (gallivm->cache && gallivm->cache->data_size) {
       gallivm_stub_func(gallivm, variant_func);
       gallivm_stub_func(gallivm, variant_coro);
@@ -3531,6 +3538,8 @@ draw_tes_llvm_generate(struct draw_llvm *llvm,
    for (i = 0; i < ARRAY_SIZE(arg_types); ++i)
       if (LLVMGetTypeKind(arg_types[i]) == LLVMPointerTypeKind)
          lp_add_function_attr(variant_func, i + 1, LP_FUNC_ATTR_NOALIAS);
+
+   lp_function_add_debug_info(gallivm, variant_func, func_type);
 
    if (gallivm->cache && gallivm->cache->data_size) {
       gallivm_stub_func(gallivm, variant_func);

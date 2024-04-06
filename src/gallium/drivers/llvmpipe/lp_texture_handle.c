@@ -342,6 +342,8 @@ compile_image_function(struct llvmpipe_context *ctx, struct lp_static_texture_st
 
    LLVMValueRef function = LLVMAddFunction(gallivm->module, "image", function_type);
 
+   lp_function_add_debug_info(gallivm, function, function_type);
+
    uint32_t arg_index = 0;
 
    gallivm->texture_descriptor = LLVMGetParam(function, arg_index++);
@@ -490,6 +492,8 @@ compile_sample_function(struct llvmpipe_context *ctx, struct lp_static_texture_s
    LLVMTypeRef function_type = lp_build_sample_function_type(gallivm, sample_key);
    LLVMValueRef function = LLVMAddFunction(gallivm->module, "sample", function_type);
 
+   lp_function_add_debug_info(gallivm, function, function_type);
+
    uint32_t arg_index = 0;
 
    gallivm->texture_descriptor = LLVMGetParam(function, arg_index++);
@@ -634,6 +638,8 @@ compile_jit_sample_function(struct llvmpipe_context *ctx, uint32_t sample_key)
    LLVMTypeRef function_type = lp_build_sample_function_type(gallivm, sample_key);
    LLVMValueRef function = LLVMAddFunction(gallivm->module, "sample", function_type);
 
+   lp_function_add_debug_info(gallivm, function, function_type);
+
    uint32_t arg_index = 0;
    LLVMValueRef texture_descriptor = LLVMGetParam(function, arg_index++);
    LLVMValueRef sampler_descriptor = LLVMGetParam(function, arg_index++);
@@ -761,6 +767,8 @@ compile_size_function(struct llvmpipe_context *ctx, struct lp_static_texture_sta
 
    LLVMTypeRef function_type = lp_build_size_function_type(gallivm, &params);
    LLVMValueRef function = LLVMAddFunction(gallivm->module, "size", function_type);
+
+   lp_function_add_debug_info(gallivm, function, function_type);
 
    uint32_t arg_index = 0;
 

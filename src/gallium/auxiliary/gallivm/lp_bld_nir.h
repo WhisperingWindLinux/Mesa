@@ -81,6 +81,7 @@ struct lp_build_nir_context
    struct lp_build_context int64_bld;
 
    LLVMValueRef *ssa_defs;
+   LLVMTypeRef *ssa_types;
    struct hash_table *regs;
    struct hash_table *vars;
    struct hash_table *fns;
@@ -92,6 +93,9 @@ struct lp_build_nir_context
 
    LLVMValueRef func;
    nir_shader *shader;
+
+   uint32_t line;
+   uint32_t column;
 
    void (*load_ubo)(struct lp_build_nir_context *bld_base,
                     unsigned nc,

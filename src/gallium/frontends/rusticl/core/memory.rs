@@ -15,6 +15,7 @@ use mesa_rust::pipe::context::*;
 use mesa_rust::pipe::resource::*;
 use mesa_rust::pipe::screen::ResourceType;
 use mesa_rust::pipe::transfer::*;
+use mesa_rust::util::vm::VMA;
 use mesa_rust_gen::*;
 use mesa_rust_util::properties::Properties;
 use mesa_rust_util::ptr::AllocSize;
@@ -29,6 +30,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::mem;
 use std::mem::size_of;
+use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::os::raw::c_void;
 use std::ptr;
@@ -56,8 +58,8 @@ impl<T> Drop for Mapping<T> {
 }
 
 impl<T> AllocSize<usize> for Mapping<T> {
-    fn size(&self) -> usize {
-        self.layout.size()
+    fn size(&self) -> Option<usize> {
+        Some(self.layout.size())
     }
 }
 
@@ -207,13 +209,35 @@ pub struct MemBase {
     pub props: Vec<cl_mem_properties>,
     pub cbs: Mutex<Vec<MemCB>>,
     pub gl_obj: Option<GLObject>,
-    res: Option<HashMap<&'static Device, Arc<PipeResource>>>,
+    pub res: Option<HashMap<&'static Device, Arc<PipeResource>>>,
+}
+
+pub enum BufferAddress {
+    Address(NonZeroU64),
+    #[allow(clippy::upper_case_acronyms)]
+    VMA(VMA),
+}
+
+impl BufferAddress {
+    pub fn address(&self) -> NonZeroU64 {
+        match self {
+            BufferAddress::Address(addr) => *addr,
+            BufferAddress::VMA(vma) => vma.address(),
+        }
+    }
 }
 
 pub struct Buffer {
     base: MemBase,
+    address: Option<BufferAddress>,
     pub offset: usize,
     maps: Mutex<TrackedPointers<usize, Mapping<BufferMapping>>>,
+}
+
+impl AllocSize<cl_mem_device_address_EXT> for Buffer {
+    fn size(&self) -> Option<cl_mem_device_address_EXT> {
+        Some(self.size as cl_mem_device_address_EXT)
+    }
 }
 
 pub struct Image {
@@ -398,6 +422,7 @@ impl MemBase {
         host_ptr: *mut c_void,
         props: Vec<cl_mem_properties>,
     ) -> CLResult<Arc<Buffer>> {
+        let bda = bit_check(flags, CL_MEM_DEVICE_ADDRESS_EXT | CL_MEM_DEVICE_PRIVATE_EXT);
         let res_type = if bit_check(flags, CL_MEM_ALLOC_HOST_PTR) {
             ResourceType::Staging
         } else {
@@ -408,6 +433,13 @@ impl MemBase {
             size,
             host_ptr,
             bit_check(flags, CL_MEM_COPY_HOST_PTR),
+            if !bda {
+                BDAType::None
+            } else if context.devs.len() == 1 && context.vm.is_none() {
+                BDAType::Single
+            } else {
+                BDAType::Multi
+            },
             res_type,
         )?;
 
@@ -417,7 +449,35 @@ impl MemBase {
             0
         };
 
-        Ok(Arc::new(Buffer {
+        let address = if bda {
+            // split out so we can make use of the ? syntax.
+            let allocate_address = || -> Option<BufferAddress> {
+                Some(match &context.vm {
+                    // if we have a vm manager allocate a proper VMA
+                    Some(vm) => {
+                        let mut vm = vm.lock().unwrap();
+                        let vma = vm.alloc(size as u64, 0x1000)?;
+                        BufferAddress::VMA(vma)
+                    }
+                    // otherwise just fetch the address of a resource if possible. This only works
+                    // for single device contexts;
+                    None => {
+                        if context.devs.len() > 1 {
+                            // TODO: properly support CL_MEM_DEVICE_PRIVATE_EXT
+                            return None;
+                        }
+
+                        let address = buffer[context.devs[0]].resource_get_address()?;
+                        BufferAddress::Address(address)
+                    }
+                })
+            };
+            Some(allocate_address().ok_or(CL_INVALID_VALUE)?)
+        } else {
+            None
+        };
+
+        let buffer = Arc::new(Buffer {
             base: Self {
                 base: CLObjectBase::new(RusticlTypes::Buffer),
                 context: context,
@@ -431,9 +491,16 @@ impl MemBase {
                 cbs: Mutex::new(Vec::new()),
                 res: Some(buffer),
             },
+            address: address,
             offset: 0,
             maps: Mutex::new(TrackedPointers::new()),
-        }))
+        });
+
+        if let Some(address) = &buffer.address {
+            buffer.context.add_bda_ptr(address, &buffer)?;
+        }
+
+        Ok(buffer)
     }
 
     pub fn new_sub_buffer(
@@ -447,6 +514,11 @@ impl MemBase {
         } else {
             unsafe { parent.host_ptr().byte_add(offset) as usize }
         };
+
+        let address = parent
+            .vm_address()
+            .and_then(|addr| addr.checked_add(offset as u64))
+            .map(BufferAddress::Address);
 
         Arc::new(Buffer {
             base: Self {
@@ -462,6 +534,7 @@ impl MemBase {
                 cbs: Mutex::new(Vec::new()),
                 res: None,
             },
+            address: address,
             offset: offset,
             maps: Mutex::new(TrackedPointers::new()),
         })
@@ -655,6 +728,7 @@ impl MemBase {
         Ok(if rusticl_type == RusticlTypes::Buffer {
             Arc::new(Buffer {
                 base: base,
+                address: None,
                 offset: gl_mem_props.offset as usize,
                 maps: Mutex::new(TrackedPointers::new()),
             })
@@ -926,6 +1000,25 @@ impl Buffer {
         Ok(())
     }
 
+    pub fn get_address_of_res(&self) -> CLResult<Vec<cl_mem_device_address_pair_EXT>> {
+        if !bit_check(
+            self.flags,
+            CL_MEM_DEVICE_ADDRESS_EXT | CL_MEM_DEVICE_PRIVATE_EXT,
+        ) {
+            return Err(CL_INVALID_MEM_OBJECT);
+        }
+
+        Ok(self
+            .context
+            .devs
+            .iter()
+            .map(|&dev| cl_mem_device_address_pair_EXT {
+                address: self.vm_address().unwrap().into(),
+                device: cl_device_id::from_ptr(dev),
+            })
+            .collect())
+    }
+
     fn is_mapped_ptr(&self, ptr: *mut c_void) -> bool {
         let mut maps = self.maps.lock().unwrap();
         let entry = maps.entry(ptr as usize);
@@ -1011,7 +1104,7 @@ impl Buffer {
             return Err(CL_INVALID_VALUE);
         };
 
-        self.read(q, ctx, mapping.offset, ptr, mapping.size())
+        self.read(q, ctx, mapping.offset, ptr, mapping.size().unwrap())
     }
 
     pub fn sync_unmap(&self, q: &Queue, ctx: &PipeContext, ptr: MutMemoryPtr) -> CLResult<()> {
@@ -1026,7 +1119,7 @@ impl Buffer {
                 let mapping = entry.get();
 
                 if mapping.writes {
-                    self.write(q, ctx, mapping.offset, ptr.into(), mapping.size())?;
+                    self.write(q, ctx, mapping.offset, ptr.into(), mapping.size().unwrap())?;
                 }
 
                 // only remove if the mapping wasn't reused in the meantime
@@ -1069,6 +1162,10 @@ impl Buffer {
                 Ok(entry.count == 0)
             }
         }
+    }
+
+    pub fn vm_address(&self) -> Option<NonZeroU64> {
+        self.address.as_ref().map(BufferAddress::address)
     }
 
     pub fn write(
@@ -1128,6 +1225,15 @@ impl Buffer {
         );
 
         Ok(())
+    }
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        if let Some(addr) = &self.address {
+            self.context
+                .remove_bda_ptr(addr.address().into(), self.size);
+        }
     }
 }
 

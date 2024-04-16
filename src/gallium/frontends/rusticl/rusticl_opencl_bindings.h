@@ -1,4 +1,5 @@
 #include "CL/cl_icd.h"
+#include "CL/cl_ext_pocl.h"
 #include "GL/gl.h"
 #include "EGL/egl.h"
 #ifdef HAVE_X11_PLATFORM

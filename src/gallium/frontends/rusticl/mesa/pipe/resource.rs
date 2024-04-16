@@ -90,6 +90,10 @@ impl PipeResource {
         unsafe { self.pipe.as_ref() }
     }
 
+    pub fn bind(&self) -> u32 {
+        self.as_ref().bind
+    }
+
     pub fn width(&self) -> u32 {
         self.as_ref().width0
     }
@@ -107,7 +111,7 @@ impl PipeResource {
     }
 
     pub fn is_buffer(&self) -> bool {
-        self.as_ref().target() == pipe_texture_target::PIPE_BUFFER
+        self.target() == pipe_texture_target::PIPE_BUFFER
     }
 
     pub fn is_linear(&self) -> bool {
@@ -120,6 +124,10 @@ impl PipeResource {
 
     pub fn is_user(&self) -> bool {
         self.as_ref().flags & PIPE_RESOURCE_FLAG_RUSTICL_IS_USER != 0
+    }
+
+    pub fn target(&self) -> pipe_texture_target {
+        self.as_ref().target()
     }
 
     pub fn resource_get_address(&self) -> Option<NonZeroU64> {

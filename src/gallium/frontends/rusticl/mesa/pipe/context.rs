@@ -395,12 +395,16 @@ impl PipeContext {
         block: [u32; 3],
         grid: [u32; 3],
         variable_local_mem: u32,
+        globals: &[&PipeResource],
     ) {
+        let mut globals: Vec<*mut pipe_resource> = globals.iter().map(|res| res.pipe()).collect();
         let info = pipe_grid_info {
             variable_shared_mem: variable_local_mem,
             work_dim: work_dim,
             block: block,
             grid: grid,
+            globals: globals.as_mut_ptr(),
+            num_globals: globals.len() as u32,
             ..Default::default()
         };
         unsafe { self.pipe.as_ref().launch_grid.unwrap()(self.pipe.as_ptr(), &info) }
@@ -481,6 +485,10 @@ impl PipeContext {
 
     pub fn sampler_view_destroy(&self, view: *mut pipe_sampler_view) {
         unsafe { self.pipe.as_ref().sampler_view_destroy.unwrap()(self.pipe.as_ptr(), view) }
+    }
+
+    pub fn screen(&self) -> &PipeScreen {
+        &self.screen
     }
 
     pub fn set_shader_images(&self, images: &[PipeImageView]) {

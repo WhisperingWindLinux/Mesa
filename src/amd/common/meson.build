@@ -108,6 +108,8 @@ amd_common_files = files(
   'ac_pm4.h',
   'ac_vcn_av1_default.h',
   'ac_vcn_dec.c',
+  'libdrm_amdgpu_loader.c',
+  'libdrm_amdgpu_loader.h',
 )
 
 if dep_elf.found()

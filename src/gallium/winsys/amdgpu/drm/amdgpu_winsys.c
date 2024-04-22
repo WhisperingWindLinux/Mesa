@@ -365,7 +365,7 @@ amdgpu_drm_winsys_get_fd(struct radeon_winsys *rws)
 
 PUBLIC struct radeon_winsys *
 amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
-		     radeon_screen_create_t screen_create)
+		     radeon_screen_create_t screen_create, bool is_virtio)
 {
    struct amdgpu_screen_winsys *sws;
    struct amdgpu_winsys *aws;
@@ -374,7 +374,13 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
    struct libdrm_amdgpu *libdrm_amdgpu;
    int r;
 
-   libdrm_amdgpu = ac_init_libdrm_amdgpu();
+  #if HAVE_AMDGPU_VIRTIO
+   if (is_virtio)
+      libdrm_amdgpu = ac_init_libdrm_amdgpu_for_virtio();
+   else
+#endif
+      libdrm_amdgpu = ac_init_libdrm_amdgpu();
+
    if (libdrm_amdgpu == NULL) {
       fprintf(stderr, "amdgpu: libdrm_amdgpu init failed");
       return NULL;
@@ -396,7 +402,8 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
     * for the same fd. */
    r = libdrm_amdgpu->device_initialize(sws->fd, &drm_major, &drm_minor, &dev);
    if (r) {
-      fprintf(stderr, "amdgpu: amdgpu_device_initialize failed.\n");
+      fprintf(stderr, "amdgpu: amd%s_device_initialize failed.\n",
+         is_virtio ? "vgpu" : "gpu");
       goto fail;
    }
 
@@ -429,6 +436,8 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
       if (!sws->kms_handles)
          goto fail;
 
+      ac_deinit_libdrm_amdgpu(libdrm_amdgpu);
+      libdrm_amdgpu = NULL;
       pipe_reference(NULL, &aws->reference);
    } else {
       /* Create a new winsys. */
@@ -460,6 +469,8 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
       }
       aws->info.drm_major = drm_major;
       aws->info.drm_minor = drm_minor;
+
+      aws->info.is_virtio = is_virtio;
 
       /* Only aws and buffer functions are used. */
       aws->dummy_sws.aws = aws;
@@ -575,6 +586,8 @@ fail_alloc:
 fail:
    if (sws->kms_handles)
       _mesa_hash_table_destroy(sws->kms_handles, NULL);
+   if (libdrm_amdgpu)
+      ac_deinit_libdrm_amdgpu(libdrm_amdgpu);
    close(sws->fd);
    FREE(sws);
    simple_mtx_unlock(&dev_tab_mutex);

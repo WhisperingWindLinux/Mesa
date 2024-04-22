@@ -1072,7 +1072,7 @@ bool ac_query_gpu_info(struct libdrm_amdgpu *libdrm_amdgpu,
 
    info->has_userptr = !info->is_virtio;
    info->has_syncobj = true;
-   info->has_timeline_syncobj = has_timeline_syncobj(fd);
+   info->has_timeline_syncobj = !info->is_virtio && has_timeline_syncobj(fd);
    info->has_fence_to_handle = true;
    info->has_local_buffers = true;
    info->has_bo_metadata = true;

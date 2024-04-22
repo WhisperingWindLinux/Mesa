@@ -40,6 +40,7 @@ typedef void *drmDevicePtr;
 #endif
 #include "winsys/null/radv_null_winsys_public.h"
 #include "git_sha1.h"
+#include "libdrm_amdgpu_loader.h"
 
 #if AMD_LLVM_AVAILABLE
 #include "ac_llvm_util.h"
@@ -1995,7 +1996,9 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
                           "Could not get the kernel driver version for device %s: %m", path);
       }
 
-      if (strcmp(version->name, "amdgpu")) {
+      if (!strcmp(version->name, "amdgpu")) {
+         ac_init_libdrm_amdgpu();
+      } else {
          drmFreeVersion(version);
          close(fd);
 

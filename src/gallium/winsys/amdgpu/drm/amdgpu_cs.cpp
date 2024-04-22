@@ -8,6 +8,7 @@
 
 #include "amdgpu_cs.h"
 #include "util/detect_os.h"
+#include "amdgpu_winsys.h"
 #include "util/os_time.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -27,7 +28,7 @@
 
 void amdgpu_fence_destroy(struct amdgpu_fence *fence)
 {
-   amdgpu_cs_destroy_syncobj(fence->aws->dev, fence->syncobj);
+   fence->aws->libdrm_amdgpu->cs_destroy_syncobj(fence->aws->dev, fence->syncobj);
 
    if (fence->ctx)
       amdgpu_ctx_reference(&fence->ctx, NULL);
@@ -47,7 +48,7 @@ amdgpu_fence_create(struct amdgpu_cs *cs)
    amdgpu_ctx_reference(&fence->ctx, ctx);
    fence->ctx = ctx;
    fence->ip_type = cs->ip_type;
-   if (amdgpu_cs_create_syncobj2(ctx->aws->dev, 0, &fence->syncobj)) {
+   if (ctx->aws->libdrm_amdgpu->cs_create_syncobj2(ctx->aws->dev, 0, &fence->syncobj)) {
       free(fence);
       return NULL;
    }
@@ -72,7 +73,7 @@ amdgpu_fence_import_syncobj(struct radeon_winsys *rws, int fd)
    fence->aws = aws;
    fence->ip_type = 0xffffffff;
 
-   r = amdgpu_cs_import_syncobj(aws->dev, fd, &fence->syncobj);
+   r = aws->libdrm_amdgpu->cs_import_syncobj(aws->dev, fd, &fence->syncobj);
    if (r) {
       FREE(fence);
       return NULL;
@@ -98,15 +99,15 @@ amdgpu_fence_import_sync_file(struct radeon_winsys *rws, int fd)
    /* fence->ctx == NULL means that the fence is syncobj-based. */
 
    /* Convert sync_file into syncobj. */
-   int r = amdgpu_cs_create_syncobj(aws->dev, &fence->syncobj);
+   int r = aws->libdrm_amdgpu->cs_create_syncobj(aws->dev, &fence->syncobj);
    if (r) {
       FREE(fence);
       return NULL;
    }
 
-   r = amdgpu_cs_syncobj_import_sync_file(aws->dev, fence->syncobj, fd);
+   r = aws->libdrm_amdgpu->cs_syncobj_import_sync_file(aws->dev, fence->syncobj, fd);
    if (r) {
-      amdgpu_cs_destroy_syncobj(aws->dev, fence->syncobj);
+      aws->libdrm_amdgpu->cs_destroy_syncobj(aws->dev, fence->syncobj);
       FREE(fence);
       return NULL;
    }
@@ -127,7 +128,7 @@ static int amdgpu_fence_export_sync_file(struct radeon_winsys *rws,
    util_queue_fence_wait(&fence->submitted);
 
    /* Convert syncobj into sync_file. */
-   r = amdgpu_cs_syncobj_export_sync_file(aws->dev, fence->syncobj, &fd);
+   r = aws->libdrm_amdgpu->cs_syncobj_export_sync_file(aws->dev, fence->syncobj, &fd);
    return r ? -1 : fd;
 }
 
@@ -137,18 +138,18 @@ static int amdgpu_export_signalled_sync_file(struct radeon_winsys *rws)
    uint32_t syncobj;
    int fd = -1;
 
-   int r = amdgpu_cs_create_syncobj2(aws->dev, DRM_SYNCOBJ_CREATE_SIGNALED,
-                                     &syncobj);
+   int r = aws->libdrm_amdgpu->cs_create_syncobj2(aws->dev, DRM_SYNCOBJ_CREATE_SIGNALED,
+                                                  &syncobj);
    if (r) {
       return -1;
    }
 
-   r = amdgpu_cs_syncobj_export_sync_file(aws->dev, syncobj, &fd);
+   r = aws->libdrm_amdgpu->cs_syncobj_export_sync_file(aws->dev, syncobj, &fd);
    if (r) {
       fd = -1;
    }
 
-   amdgpu_cs_destroy_syncobj(aws->dev, syncobj);
+   aws->libdrm_amdgpu->cs_destroy_syncobj(aws->dev, syncobj);
    return fd;
 }
 
@@ -207,9 +208,8 @@ bool amdgpu_fence_wait(struct pipe_fence_handle *fence, uint64_t timeout,
    if ((uint64_t)abs_timeout == OS_TIMEOUT_INFINITE)
       abs_timeout = INT64_MAX;
 
-   if (amdgpu_cs_syncobj_wait(afence->aws->dev, &afence->syncobj, 1,
-                              abs_timeout, 0, NULL))
-
+   if (afence->aws->libdrm_amdgpu->cs_syncobj_wait(afence->aws->dev, &afence->syncobj, 1,
+                                                   abs_timeout, 0, NULL))
       return false;
 
    afence->signalled = true;
@@ -268,6 +268,7 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
                                                    enum radeon_ctx_priority priority,
                                                    bool allow_context_lost)
 {
+   struct amdgpu_winsys *aws = amdgpu_winsys(rws);
    struct amdgpu_ctx *ctx = CALLOC_STRUCT(amdgpu_ctx);
    int r;
    struct amdgpu_bo_alloc_request alloc_buffer = {};
@@ -281,7 +282,7 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    ctx->reference.count = 1;
    ctx->allow_context_lost = allow_context_lost;
 
-   r = amdgpu_cs_ctx_create2(ctx->aws->dev, amdgpu_priority, &ctx->ctx);
+   r = aws->libdrm_amdgpu->cs_ctx_create2(ctx->aws->dev, amdgpu_priority, &ctx->ctx);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_cs_ctx_create2 failed. (%i)\n", r);
       goto error_create;
@@ -291,13 +292,13 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    alloc_buffer.phys_alignment = ctx->aws->info.gart_page_size;
    alloc_buffer.preferred_heap = AMDGPU_GEM_DOMAIN_GTT;
 
-   r = amdgpu_bo_alloc(ctx->aws->dev, &alloc_buffer, &buf_handle);
+   r = aws->libdrm_amdgpu->bo_alloc(ctx->aws->dev, &alloc_buffer, &buf_handle);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_bo_alloc failed. (%i)\n", r);
       goto error_user_fence_alloc;
    }
 
-   r = amdgpu_bo_cpu_map(buf_handle, (void**)&ctx->user_fence_cpu_address_base);
+   r = aws->libdrm_amdgpu->bo_cpu_map(buf_handle, (void**)&ctx->user_fence_cpu_address_base);
    if (r) {
       fprintf(stderr, "amdgpu: amdgpu_bo_cpu_map failed. (%i)\n", r);
       goto error_user_fence_map;
@@ -309,9 +310,11 @@ static struct radeon_winsys_ctx *amdgpu_ctx_create(struct radeon_winsys *rws,
    return (struct radeon_winsys_ctx*)ctx;
 
 error_user_fence_map:
-   amdgpu_bo_free(buf_handle);
+   aws->libdrm_amdgpu->bo_free(buf_handle);
+
 error_user_fence_alloc:
-   amdgpu_cs_ctx_free(ctx->ctx);
+   aws->libdrm_amdgpu->cs_ctx_free(ctx->ctx);
+
 error_create:
    FREE(ctx);
    return NULL;
@@ -369,39 +372,39 @@ static int amdgpu_submit_gfx_nop(struct amdgpu_ctx *ctx)
     * that the reset is not complete.
     */
    amdgpu_context_handle temp_ctx;
-   r = amdgpu_cs_ctx_create2(ctx->aws->dev, AMDGPU_CTX_PRIORITY_NORMAL, &temp_ctx);
+   r = ctx->aws->libdrm_amdgpu->cs_ctx_create2(ctx->aws->dev, AMDGPU_CTX_PRIORITY_NORMAL, &temp_ctx);
    if (r)
       return r;
 
    request.preferred_heap = AMDGPU_GEM_DOMAIN_VRAM;
    request.alloc_size = 4096;
    request.phys_alignment = 4096;
-   r = amdgpu_bo_alloc(ctx->aws->dev, &request, &buf_handle);
+   r = ctx->aws->libdrm_amdgpu->bo_alloc(ctx->aws->dev, &request, &buf_handle);
    if (r)
       goto destroy_ctx;
 
-   r = amdgpu_va_range_alloc(ctx->aws->dev, amdgpu_gpu_va_range_general,
-                 request.alloc_size, request.phys_alignment,
-                 0, &va, &va_handle,
-                 AMDGPU_VA_RANGE_32_BIT | AMDGPU_VA_RANGE_HIGH);
+   r = ctx->aws->libdrm_amdgpu->va_range_alloc(ctx->aws->dev, amdgpu_gpu_va_range_general,
+                                               request.alloc_size, request.phys_alignment,
+                                               0, &va, &va_handle,
+                                               AMDGPU_VA_RANGE_32_BIT | AMDGPU_VA_RANGE_HIGH);
    if (r)
       goto destroy_bo;
-   r = amdgpu_bo_va_op_raw(ctx->aws->dev, buf_handle, 0, request.alloc_size, va,
-                           AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE | AMDGPU_VM_PAGE_EXECUTABLE,
-                           AMDGPU_VA_OP_MAP);
+   r = ctx->aws->libdrm_amdgpu->bo_va_op_raw(ctx->aws->dev, buf_handle, 0, request.alloc_size, va,
+                                             AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE | AMDGPU_VM_PAGE_EXECUTABLE,
+                                             AMDGPU_VA_OP_MAP);
    if (r)
       goto destroy_bo;
 
-   r = amdgpu_bo_cpu_map(buf_handle, &cpu);
+   r = ctx->aws->libdrm_amdgpu->bo_cpu_map(buf_handle, &cpu);
    if (r)
       goto destroy_bo;
 
    noop_dw_size = ctx->aws->info.ip[AMD_IP_GFX].ib_pad_dw_mask + 1;
    ((uint32_t*)cpu)[0] = PKT3(PKT3_NOP, noop_dw_size - 2, 0);
 
-   amdgpu_bo_cpu_unmap(buf_handle);
+   ctx->aws->libdrm_amdgpu->bo_cpu_unmap(buf_handle);
 
-   amdgpu_bo_export(buf_handle, amdgpu_bo_handle_type_kms, &list.bo_handle);
+   ctx->aws->libdrm_amdgpu->bo_export(buf_handle, amdgpu_bo_handle_type_kms, &list.bo_handle);
    list.bo_priority = 0;
 
    bo_list_in.list_handle = ~0;
@@ -421,14 +424,14 @@ static int amdgpu_submit_gfx_nop(struct amdgpu_ctx *ctx)
    chunks[1].length_dw = sizeof(struct drm_amdgpu_cs_chunk_ib) / 4;
    chunks[1].chunk_data = (uintptr_t)&ib_in;
 
-   r = amdgpu_cs_submit_raw2(ctx->aws->dev, temp_ctx, 0, 2, chunks, &seq_no);
+   r = ctx->aws->libdrm_amdgpu->cs_submit_raw2(ctx->aws->dev, temp_ctx, 0, 2, chunks, &seq_no);
 
 destroy_bo:
    if (va_handle)
-      amdgpu_va_range_free(va_handle);
-   amdgpu_bo_free(buf_handle);
+      ctx->aws->libdrm_amdgpu->va_range_free(va_handle);
+   ctx->aws->libdrm_amdgpu->bo_free(buf_handle);
 destroy_ctx:
-   amdgpu_cs_ctx_free(temp_ctx);
+   ctx->aws->libdrm_amdgpu->cs_ctx_free(temp_ctx);
 
    return r;
 }
@@ -488,7 +491,7 @@ amdgpu_ctx_query_reset_status(struct radeon_winsys_ctx *rwctx, bool full_reset_o
     * that the context reset is complete.
     */
    if (ctx->sw_status != PIPE_NO_RESET) {
-      int r = amdgpu_cs_query_reset_state2(ctx->ctx, &flags);
+      int r = ctx->aws->libdrm_amdgpu->cs_query_reset_state2(ctx->ctx, &flags);
       if (!r) {
          if (flags & AMDGPU_CTX_QUERY2_FLAGS_RESET) {
             if (reset_completed) {
@@ -930,8 +933,8 @@ amdgpu_cs_create(struct radeon_cmdbuf *rcs,
    struct amdgpu_cs_fence_info fence_info;
    fence_info.handle = cs->ctx->user_fence_bo;
    fence_info.offset = cs->ip_type * 4;
-   amdgpu_cs_chunk_fence_info_to_data(&fence_info,
-                                      (struct drm_amdgpu_cs_chunk_data*)&cs->fence_chunk);
+   ctx->aws->libdrm_amdgpu->cs_chunk_fence_info_to_data(&fence_info,
+                                                        (struct drm_amdgpu_cs_chunk_data*)&cs->fence_chunk);
 
    if (!amdgpu_init_cs_context(ctx->aws, &cs->csc1, ip_type)) {
       FREE(cs);
@@ -1144,7 +1147,7 @@ static unsigned amdgpu_cs_get_buffer_list(struct radeon_cmdbuf *rcs,
         for (unsigned i = 0; i < num_real_buffers; i++) {
             list[i].bo_size = real_buffers->buffers[i].bo->base.size;
             list[i].vm_address =
-               amdgpu_va_get_start_addr(get_real_bo(real_buffers->buffers[i].bo)->va_handle);
+               cs->aws->libdrm_amdgpu->va_get_start_addr(get_real_bo(real_buffers->buffers[i].bo)->va_handle);
             list[i].priority_usage = real_buffers->buffers[i].usage;
         }
     }
@@ -1628,7 +1631,7 @@ static void amdgpu_cs_submit_ib(void *job, void *gdata, int thread_index)
          if (r == -ENOMEM)
             os_time_sleep(1000);
 
-         r = amdgpu_cs_submit_raw2(aws->dev, acs->ctx->ctx, 0, num_chunks, chunks, &seq_no);
+         r = aws->libdrm_amdgpu->cs_submit_raw2(aws->dev, acs->ctx->ctx, 0, num_chunks, chunks, &seq_no);
       } while (r == -ENOMEM);
 
       if (!r) {

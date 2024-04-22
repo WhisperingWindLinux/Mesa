@@ -11,6 +11,7 @@
 #include "amdgpu_bo.h"
 #include "util/u_memory.h"
 #include "drm-uapi/amdgpu_drm.h"
+#include "libdrm_amdgpu_loader.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -191,9 +192,10 @@ static inline void amdgpu_ctx_reference(struct amdgpu_ctx **dst, struct amdgpu_c
 
    if (pipe_reference(old_dst ? &old_dst->reference : NULL,
                       src ? &src->reference : NULL)) {
-      amdgpu_cs_ctx_free(old_dst->ctx);
-      amdgpu_bo_cpu_unmap(old_dst->user_fence_bo);
-      amdgpu_bo_free(old_dst->user_fence_bo);
+      struct amdgpu_winsys *aws = old_dst->aws;
+      aws->libdrm_amdgpu->cs_ctx_free(old_dst->ctx);
+      aws->libdrm_amdgpu->bo_cpu_unmap(old_dst->user_fence_bo);
+      aws->libdrm_amdgpu->bo_free(old_dst->user_fence_bo);
       FREE(old_dst);
    }
    *dst = src;

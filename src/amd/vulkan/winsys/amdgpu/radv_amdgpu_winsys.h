@@ -21,9 +21,12 @@
 #include "vk_sync.h"
 #include "vk_sync_timeline.h"
 
+struct libdrm_amdgpu;
+
 struct radv_amdgpu_winsys {
    struct radeon_winsys base;
    amdgpu_device_handle dev;
+   struct libdrm_amdgpu *libdrm_amdgpu;
 
    struct radeon_info info;
    struct ac_addrlib *addrlib;

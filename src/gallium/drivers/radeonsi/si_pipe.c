@@ -32,6 +32,8 @@
 #include "ac_llvm_util.h"
 #endif
 
+#include "libdrm_amdgpu_loader.h"
+
 #include <xf86drm.h>
 
 static struct pipe_context *si_create_context(struct pipe_screen *screen, unsigned flags);
@@ -1549,6 +1551,7 @@ struct pipe_screen *radeonsi_screen_create(int fd, const struct pipe_screen_conf
       rw = radeon_drm_winsys_create(fd, config, radeonsi_screen_create_impl);
       break;
    case 3:
+      ac_init_libdrm_amdgpu();
       rw = amdgpu_winsys_create(fd, config, radeonsi_screen_create_impl);
       break;
    }

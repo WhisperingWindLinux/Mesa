@@ -1655,6 +1655,9 @@ foreach d : _libdrm_checks
   endif
 endforeach
 
+# Don't link with libdrm_amdgpu.
+dep_libdrm_amdgpu = dep_libdrm_amdgpu.partial_dependency(includes: true, compile_args: true)
+
 with_gallium_drisw_kms = false
 if system_has_kms_drm
   dep_libdrm = dependency(

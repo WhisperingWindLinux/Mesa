@@ -89,6 +89,7 @@ struct amdgpu_cs;
  *           │   └─ fd = 5
  *    dev_tab(0xffff0250) = 0xffff0940
  */
+struct libdrm_amdgpu;
 
 /* One struct amdgpu_screen_winsys is created in amdgpu_winsys_create() for one
  * fd. For fd's that are same (read above description for same if condition),
@@ -190,6 +191,7 @@ struct amdgpu_winsys {
    struct pipe_reference reference;
    /* See comment above */
    int fd;
+   struct libdrm_amdgpu *libdrm_amdgpu;
 
    /* Protected by bo_fence_lock. */
    struct amdgpu_queue queues[AMDGPU_MAX_QUEUES];

@@ -112,6 +112,19 @@ amd_common_files = files(
   'libdrm_amdgpu_loader.h',
 )
 
+link_with = []
+c_args = ['-DADDR_FASTCALL=']
+if with_amdgpu_virtio
+  c_args += '-DHAVE_AMDGPU_VIRTIO'
+  amd_common_files += files(
+    'virtio/amdgpu_virtio.c',
+    'virtio/amdgpu_virtio_bo.c',
+    'virtio/amdgpu_virtio_device.c',
+    'virtio/amdgpu_virtio_private.h',
+    'virtio/amdgpu_virtio_proto.h')
+  link_with += libvdrm
+endif
+
 if dep_elf.found()
   amd_common_files += files(
     'ac_rtld.c',
@@ -124,14 +137,15 @@ libamd_common = static_library(
   'amd_common',
   [amd_common_files, sid_tables_h, amdgfxregs_h, gfx10_format_table_c],
   include_directories : [
-    inc_include, inc_src, inc_amd,
+    inc_include, inc_src, inc_amd, inc_virtio_gpu,
   ],
   dependencies : [
     dep_thread, dep_elf, dep_libdrm_amdgpu, dep_valgrind,
     idep_mesautil, idep_nir_headers, idep_nir
   ],
+  link_with: [ link_with ],
   gnu_symbol_visibility : 'hidden',
-  c_args : ['-DADDR_FASTCALL=']
+  c_args : c_args
 )
 
 idep_amdgfxregs_h = declare_dependency(sources : [amdgfxregs_h])

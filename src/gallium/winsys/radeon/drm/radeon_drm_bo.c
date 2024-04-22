@@ -1345,7 +1345,7 @@ static bool radeon_winsys_bo_is_suballocated(struct pb_buffer_lean *buf)
    return !((struct radeon_bo*)buf)->handle;
 }
 
-static uint64_t radeon_winsys_bo_va(struct pb_buffer_lean *buf)
+static uint64_t radeon_winsys_bo_va(struct radeon_winsys *ws, struct pb_buffer_lean *buf)
 {
    return ((struct radeon_bo*)buf)->va;
 }

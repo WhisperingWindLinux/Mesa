@@ -87,7 +87,7 @@ static void send_cmd_bitstream(struct radeon_decoder *dec, struct pb_buffer_lean
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_SOFT_RESET), COND0, TYPE3, (1 << 9));
 
    dec->ws->cs_add_buffer(&dec->jcs[dec->cb_idx], buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
-   addr = dec->ws->buffer_get_virtual_address(buf);
+   addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
    addr = addr + off;
 
    // set UVD_LMI_JPEG_READ_64BIT_BAR_LOW/HIGH based on bitstream buffer address
@@ -119,7 +119,7 @@ static void send_cmd_target(struct radeon_decoder *dec, struct pb_buffer_lean *b
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_JPEG_UV_TILING_CTRL), COND0, TYPE0, 0);
 
    dec->ws->cs_add_buffer(&dec->jcs[dec->cb_idx], buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
-   addr = dec->ws->buffer_get_virtual_address(buf);
+   addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
    addr = addr + off;
 
    // set UVD_LMI_JPEG_WRITE_64BIT_BAR_LOW/HIGH based on target buffer address
@@ -207,7 +207,7 @@ static void send_cmd_bitstream_direct(struct radeon_decoder *dec, struct pb_buff
    set_reg_jpeg(dec, dec->jpg_reg.jpeg_dec_soft_rst, COND3, TYPE3, (0x1 << 0x10));
 
    dec->ws->cs_add_buffer(&dec->jcs[dec->cb_idx], buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
-   addr = dec->ws->buffer_get_virtual_address(buf);
+   addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
    addr = addr + off;
 
    // set UVD_LMI_JPEG_READ_64BIT_BAR_LOW/HIGH based on bitstream buffer address
@@ -264,7 +264,7 @@ static void send_cmd_target_direct(struct radeon_decoder *dec, struct pb_buffer_
    set_reg_jpeg(dec, dec->jpg_reg.dec_uv_gfx10_tiling_surface, COND0, TYPE0, 0);
 
    dec->ws->cs_add_buffer(&dec->jcs[dec->cb_idx], buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
-   addr = dec->ws->buffer_get_virtual_address(buf);
+   addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
    addr = addr + off;
 
    // set UVD_LMI_JPEG_WRITE_64BIT_BAR_LOW/HIGH based on target buffer address

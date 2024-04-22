@@ -165,7 +165,7 @@ bool r600_alloc_resource(struct r600_common_screen *rscreen,
 	res->buf = new_buf; /* should be atomic */
 
 	if (rscreen->info.r600_has_virtual_memory)
-		res->gpu_address = rscreen->ws->buffer_get_virtual_address(res->buf);
+		res->gpu_address = rscreen->ws->buffer_get_virtual_address(rscreen->ws, res->buf);
 	else
 		res->gpu_address = 0;
 
@@ -623,7 +623,7 @@ r600_buffer_from_user_memory(struct pipe_screen *screen,
 
 	if (rscreen->info.r600_has_virtual_memory)
 		rbuffer->gpu_address =
-			ws->buffer_get_virtual_address(rbuffer->buf);
+			ws->buffer_get_virtual_address(ws, rbuffer->buf);
 	else
 		rbuffer->gpu_address = 0;
 

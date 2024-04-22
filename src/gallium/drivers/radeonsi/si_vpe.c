@@ -850,7 +850,7 @@ si_vpe_processor_process_frame(struct pipe_video_codec *codec,
 
    emb_buf = &vpeproc->emb_buffers[vpeproc->cur_buf];
    vpeproc->vpe_build_bufs->emb_buf.cpu_va = (uintptr_t)vpeproc->mapped_cpu_va[vpeproc->cur_buf];
-   vpeproc->vpe_build_bufs->emb_buf.gpu_va = vpeproc->ws->buffer_get_virtual_address(emb_buf->res->buf);
+   vpeproc->vpe_build_bufs->emb_buf.gpu_va = vpeproc->ws->buffer_get_virtual_address(vpeproc->ws, emb_buf->res->buf);
    vpeproc->vpe_build_bufs->emb_buf.size = VPE_EMBBUF_SIZE;
    vpeproc->vpe_build_bufs->emb_buf.tmz = false;
 

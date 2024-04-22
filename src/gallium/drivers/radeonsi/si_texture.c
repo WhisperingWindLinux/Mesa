@@ -1073,7 +1073,7 @@ static struct si_texture *si_texture_create_object(struct pipe_screen *screen,
          goto error;
    } else {
       resource->buf = imported_buf;
-      resource->gpu_address = sscreen->ws->buffer_get_virtual_address(resource->buf);
+      resource->gpu_address = sscreen->ws->buffer_get_virtual_address(sscreen->ws, resource->buf);
       resource->bo_size = imported_buf->size;
       resource->bo_alignment_log2 = imported_buf->alignment_log2;
       resource->domains = sscreen->ws->buffer_get_initial_domain(resource->buf);

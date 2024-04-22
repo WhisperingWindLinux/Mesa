@@ -716,7 +716,7 @@ static bool amdgpu_ib_new_buffer(struct amdgpu_winsys *aws,
    radeon_bo_reference(&aws->dummy_sws.base, &main_ib->big_buffer, pb);
    radeon_bo_reference(&aws->dummy_sws.base, &pb, NULL);
 
-   main_ib->gpu_address = amdgpu_bo_get_va(main_ib->big_buffer);
+   main_ib->gpu_address = amdgpu_bo_get_va(&aws->dummy_sws.base, main_ib->big_buffer);
    main_ib->big_buffer_cpu_ptr = mapped;
    main_ib->used_ib_space = 0;
 
@@ -1006,7 +1006,7 @@ amdgpu_cs_setup_preemption(struct radeon_cmdbuf *rcs, const uint32_t *preamble_i
    amdgpu_bo_unmap(&aws->dummy_sws.base, preamble_bo);
 
    for (unsigned i = 0; i < 2; i++) {
-      csc[i]->chunk_ib[IB_PREAMBLE].va_start = amdgpu_bo_get_va(preamble_bo);
+      csc[i]->chunk_ib[IB_PREAMBLE].va_start = amdgpu_bo_get_va(&aws->dummy_sws.base, preamble_bo);
       csc[i]->chunk_ib[IB_PREAMBLE].ib_bytes = preamble_num_dw * 4;
 
       csc[i]->chunk_ib[IB_MAIN].flags |= AMDGPU_IB_FLAG_PREEMPT;

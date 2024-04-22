@@ -156,7 +156,7 @@ bool si_alloc_resource(struct si_screen *sscreen, struct si_resource *res)
     * the others are using it. */
    old_buf = res->buf;
    res->buf = new_buf; /* should be atomic */
-   res->gpu_address = sscreen->ws->buffer_get_virtual_address(res->buf);
+   res->gpu_address = sscreen->ws->buffer_get_virtual_address(sscreen->ws, res->buf);
 
    if (res->flags & RADEON_FLAG_32BIT) {
       uint64_t start = res->gpu_address;
@@ -640,7 +640,7 @@ static struct pipe_resource *si_buffer_from_user_memory(struct pipe_screen *scre
       return NULL;
    }
 
-   buf->gpu_address = ws->buffer_get_virtual_address(buf->buf);
+   buf->gpu_address = ws->buffer_get_virtual_address(sscreen->ws, buf->buf);
    buf->bo_size = templ->width0;
    return &buf->b.b;
 }
@@ -692,7 +692,7 @@ struct pipe_resource *si_buffer_from_winsys_buffer(struct pipe_screen *screen,
    res->b.is_shared = true;
    res->b.buffer_id_unique = util_idalloc_mt_alloc(&sscreen->buffer_ids);
    res->buf = imported_buf;
-   res->gpu_address = sscreen->ws->buffer_get_virtual_address(res->buf) + offset;
+   res->gpu_address = sscreen->ws->buffer_get_virtual_address(sscreen->ws, res->buf) + offset;
    res->domains = domains;
    res->flags = flags;
 

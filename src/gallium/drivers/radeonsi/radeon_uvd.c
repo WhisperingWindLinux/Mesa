@@ -111,7 +111,7 @@ static void send_cmd(struct ruvd_decoder *dec, unsigned cmd, struct pb_buffer_le
    reloc_idx = dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    if (!dec->use_legacy) {
       uint64_t addr;
-      addr = dec->ws->buffer_get_virtual_address(buf);
+      addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
       addr = addr + off;
       set_reg(dec, dec->reg.data0, addr);
       set_reg(dec, dec->reg.data1, addr >> 32);

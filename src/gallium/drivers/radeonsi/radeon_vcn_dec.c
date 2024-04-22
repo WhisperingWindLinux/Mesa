@@ -1382,13 +1382,13 @@ static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn
          if (((dec->ref_codec.ref_list[i] & 0x7f) != 0x7f) && (d->index == (dec->ref_codec.ref_list[i] & 0x7f))) {
             if (!dummy)
                dummy = d;
-            addr = dec->ws->buffer_get_virtual_address(res->buf);
+            addr = dec->ws->buffer_get_virtual_address(dec->ws, res->buf);
             if (!addr && dummy) {
                struct si_resource *dummy_res;
                RVID_ERR("Ref list from application is incorrect, using dummy buffer instead.\n");
                dummy_res = (dec->dpb_use_surf) ? &(((struct si_texture *)((struct vl_video_buffer *)dummy->vbuf)->resources[0])->buffer) :
                            dummy->dpb.res;
-               addr = dec->ws->buffer_get_virtual_address(dummy_res->buf);
+               addr = dec->ws->buffer_get_virtual_address(dec->ws, dummy_res->buf);
             }
             dec->ws->cs_add_buffer(&dec->cs, res->buf, RADEON_USAGE_READWRITE | RADEON_USAGE_SYNCHRONIZED, RADEON_DOMAIN_VRAM);
             dynamic_dpb_t2->dpbAddrLo[i] = addr;
@@ -1478,12 +1478,12 @@ static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn
 
       res = (dec->dpb_use_surf) ? &(((struct si_texture *)((struct vl_video_buffer *)d->vbuf)->resources[0])->buffer) :
             d->dpb.res;
-      addr = dec->ws->buffer_get_virtual_address(res->buf);
+      addr = dec->ws->buffer_get_virtual_address(dec->ws, res->buf);
       if (!addr && dummy) {
          struct si_resource *dummy_res;
          dummy_res = (dec->dpb_use_surf) ? &(((struct si_texture *)((struct vl_video_buffer *)dummy->vbuf)->resources[0])->buffer) :
                      dummy->dpb.res;
-         addr = dec->ws->buffer_get_virtual_address(dummy_res->buf);
+         addr = dec->ws->buffer_get_virtual_address(dec->ws, dummy_res->buf);
       }
       assert(addr);
       for (i = 0; i < dec->ref_codec.num_refs; ++i) {
@@ -1505,7 +1505,7 @@ static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn
       decode->db_swizzle_mode = dpb_luma->surface.u.gfx9.swizzle_mode;
 
       dec->ws->cs_add_buffer(&dec->cs, (dpb_luma->buffer).buf, RADEON_USAGE_READWRITE | RADEON_USAGE_SYNCHRONIZED, RADEON_DOMAIN_VRAM);
-      addr = dec->ws->buffer_get_virtual_address((dpb_luma->buffer).buf);
+      addr = dec->ws->buffer_get_virtual_address(dec->ws, (dpb_luma->buffer).buf);
 
       dynamic_dpb_t2->dpbLumaPitch = dpb_luma->buffer.b.b.width0;
       dynamic_dpb_t2->dpbLumaAlignedHeight = dpb_luma->buffer.b.b.height0;
@@ -1515,7 +1515,7 @@ static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn
       dynamic_dpb_t2->dpbChromaAlignedSize = dpb_chroma->surface.u.gfx9.surf_slice_size;
    } else {
       dec->ws->cs_add_buffer(&dec->cs, dpb->dpb.res->buf, RADEON_USAGE_READWRITE | RADEON_USAGE_SYNCHRONIZED, RADEON_DOMAIN_VRAM);
-      addr = dec->ws->buffer_get_virtual_address(dpb->dpb.res->buf);
+      addr = dec->ws->buffer_get_virtual_address(dec->ws, dpb->dpb.res->buf);
 
       if (((struct si_screen *)dec->screen)->info.vcn_ip_version == VCN_5_0_0)
          decode->db_swizzle_mode = RDECODE_VCN5_256B_D;
@@ -2034,7 +2034,7 @@ static void send_cmd(struct radeon_decoder *dec, unsigned cmd, struct pb_buffer_
    uint64_t addr;
 
    dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
-   addr = dec->ws->buffer_get_virtual_address(buf);
+   addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
    addr = addr + off;
 
    if (dec->vcn_dec_sw_ring == false) {

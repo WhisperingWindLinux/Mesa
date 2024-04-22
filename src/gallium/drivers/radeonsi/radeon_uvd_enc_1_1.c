@@ -40,7 +40,7 @@ static void radeon_uvd_enc_add_buffer(struct radeon_uvd_encoder *enc, struct pb_
 {
    enc->ws->cs_add_buffer(&enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    uint64_t addr;
-   addr = enc->ws->buffer_get_virtual_address(buf);
+   addr = enc->ws->buffer_get_virtual_address(enc->ws, buf);
    addr = addr + offset;
    RADEON_ENC_CS(addr >> 32);
    RADEON_ENC_CS(addr);

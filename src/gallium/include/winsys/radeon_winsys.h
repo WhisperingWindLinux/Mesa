@@ -473,7 +473,7 @@ struct radeon_winsys {
     * \param buf       A winsys buffer object
     * \return          virtual address
     */
-   uint64_t (*buffer_get_virtual_address)(struct pb_buffer_lean *buf);
+   uint64_t (*buffer_get_virtual_address)(struct radeon_winsys *ws, struct pb_buffer_lean *buf);
 
    /**
     * Return the offset of this buffer relative to the relocation base.

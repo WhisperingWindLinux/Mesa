@@ -1769,7 +1769,7 @@ static bool amdgpu_bo_is_suballocated(struct pb_buffer_lean *buf)
    return bo->type == AMDGPU_BO_SLAB_ENTRY;
 }
 
-uint64_t amdgpu_bo_get_va(struct pb_buffer_lean *buf)
+uint64_t amdgpu_bo_get_va(struct radeon_winsys *rws, struct pb_buffer_lean *buf)
 {
    struct amdgpu_winsys_bo *bo = amdgpu_winsys_bo(buf);
 

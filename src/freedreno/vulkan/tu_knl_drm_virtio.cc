@@ -87,16 +87,15 @@ struct tu_virtio_device {
    struct u_vector zombie_vmas_stage_2;
 };
 
-static int tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *value);
+static int tu_drm_get_param(struct vdrm_device *vdrm, uint32_t param, uint64_t *value);
 
 /**
  * Helper for simple pass-thru ioctls
  */
 static int
-virtio_simple_ioctl(struct tu_device *dev, unsigned cmd, void *_req)
+virtio_simple_ioctl(struct vdrm_device *vdrm, unsigned cmd, void *_req)
 {
    MESA_TRACE_FUNC();
-   struct vdrm_device *vdrm = dev->vdev->vdrm;
    unsigned req_len = sizeof(struct msm_ccmd_ioctl_simple_req);
    unsigned rsp_len = sizeof(struct msm_ccmd_ioctl_simple_rsp);
 
@@ -150,7 +149,7 @@ query_faults(struct tu_device *dev, uint64_t *value)
    if (vdrm_shmem_has_field(vdev->shmem, global_faults)) {
       global_faults = vdev->shmem->global_faults;
    } else {
-      int ret = tu_drm_get_param(dev, MSM_PARAM_FAULTS, &global_faults);
+      int ret = tu_drm_get_param(vdev->vdrm, MSM_PARAM_FAULTS, &global_faults);
       if (ret)
          return ret;
    }
@@ -257,7 +256,7 @@ virtio_device_finish(struct tu_device *dev)
 }
 
 static int
-tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *value)
+tu_drm_get_param(struct vdrm_device *vdrm, uint32_t param, uint64_t *value)
 {
    /* Technically this requires a pipe, but the kernel only supports one pipe
     * anyway at the time of writing and most of these are clearly pipe
@@ -267,7 +266,7 @@ tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *value)
       .param = param,
    };
 
-   int ret = virtio_simple_ioctl(dev, DRM_IOCTL_MSM_GET_PARAM, &req);
+   int ret = virtio_simple_ioctl(vdrm, DRM_IOCTL_MSM_GET_PARAM, &req);
    if (ret)
       return ret;
 
@@ -279,13 +278,13 @@ tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *value)
 static int
 virtio_device_get_gpu_timestamp(struct tu_device *dev, uint64_t *ts)
 {
-   return tu_drm_get_param(dev, MSM_PARAM_TIMESTAMP, ts);
+   return tu_drm_get_param(dev->vdev->vdrm, MSM_PARAM_TIMESTAMP, ts);
 }
 
 static int
 virtio_device_get_suspend_count(struct tu_device *dev, uint64_t *suspend_count)
 {
-   int ret = tu_drm_get_param(dev, MSM_PARAM_SUSPENDS, suspend_count);
+   int ret = tu_drm_get_param(dev->vdev->vdrm, MSM_PARAM_SUSPENDS, suspend_count);
    return ret;
 }
 
@@ -315,7 +314,7 @@ virtio_submitqueue_new(struct tu_device *dev,
       .prio = priority,
    };
 
-   int ret = virtio_simple_ioctl(dev, DRM_IOCTL_MSM_SUBMITQUEUE_NEW, &req);
+   int ret = virtio_simple_ioctl(dev->vdev->vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_NEW, &req);
    if (ret)
       return ret;
 
@@ -326,7 +325,7 @@ virtio_submitqueue_new(struct tu_device *dev,
 static void
 virtio_submitqueue_close(struct tu_device *dev, uint32_t queue_id)
 {
-   virtio_simple_ioctl(dev, DRM_IOCTL_MSM_SUBMITQUEUE_CLOSE, &queue_id);
+   virtio_simple_ioctl(dev->vdev->vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_CLOSE, &queue_id);
 }
 
 static VkResult

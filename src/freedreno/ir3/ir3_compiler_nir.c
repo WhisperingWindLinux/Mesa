@@ -893,7 +893,19 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
       dst[0] = ir3_SUB_S(b, src[0], 0, src[1], 0);
       dst[0]->flags |= IR3_INSTR_SAT;
       break;
-
+   case nir_op_pack_64_2x32_split: {
+      dst[0] = ir3_MOV(b, src[0], TYPE_U32);
+      dst[1] = ir3_MOV(b, src[1], TYPE_U32);
+      break;
+   }
+   case nir_op_unpack_64_2x32_split_x: {
+      ir3_split_dest(b, dst, src[0], 0, 1);
+      break;
+   }
+   case nir_op_unpack_64_2x32_split_y: {
+      ir3_split_dest(b, dst, src[0], 1, 1);
+      break;
+   }
    case nir_op_udot_4x8_uadd:
    case nir_op_udot_4x8_uadd_sat:
    case nir_op_sudot_4x8_iadd:

@@ -12799,7 +12799,8 @@ calc_nontrivial_instance_id(Builder& bld, const struct ac_shader_args* args,
 void
 select_rt_prolog(Program* program, ac_shader_config* config,
                  const struct aco_compiler_options* options, const struct aco_shader_info* info,
-                 const struct ac_shader_args* in_args, const struct ac_shader_args* out_args)
+                 const struct ac_shader_args* in_args, const struct ac_shader_args* out_args,
+                 unsigned raygen_param_count, nir_parameter* raygen_params)
 {
    init_program(program, compute_cs, info, options->gfx_level, options->family, options->wgp_mode,
                 config);
@@ -12812,6 +12813,9 @@ select_rt_prolog(Program* program, ac_shader_config* config,
    block->instructions.reserve(32);
    unsigned num_sgprs = MAX2(in_args->num_sgprs_used, out_args->num_sgprs_used);
    unsigned num_vgprs = MAX2(in_args->num_vgprs_used, out_args->num_vgprs_used);
+
+   struct callee_info raygen_info = get_callee_info(make_abi(rtRaygenABI, out_args, program),
+                                                    raygen_param_count, raygen_params, NULL);
 
    /* Inputs:
     * Ring offsets:                s[0-1]

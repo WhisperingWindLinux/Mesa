@@ -628,7 +628,7 @@ endif
 # GLSL has interesting version output and Meson doesn't parse it correctly as of
 # Meson 1.4.0
 prog_glslang = find_program('glslangValidator', native : true,
-                            required : with_vulkan_overlay_layer or with_aco_tests or with_amd_vk or with_intel_vk)
+                            required : with_vulkan_overlay_layer or with_aco_tests or with_amd_vk or with_intel_vk or with_freedreno_vk)
 if prog_glslang.found()
   # Check if glslang has depfile support. Support was added in 11.3.0, but
   # Windows path support was broken until 11.9.0.

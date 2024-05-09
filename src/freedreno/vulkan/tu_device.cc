@@ -30,6 +30,7 @@
 #include "freedreno/common/freedreno_uuid.h"
 #include "freedreno/common/freedreno_stompable_regs.h"
 
+#include "tu_acceleration_structure.h"
 #include "tu_clear_blit.h"
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
@@ -142,14 +143,25 @@ static void
 get_device_extensions(const struct tu_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
+   /* device->has_raytracing contains the value of the SW fuse. If the
+    * device doesn't have a fuse (i.e. a740), we have to ignore it because
+    * kgsl returns false. If it does have a fuse, enable raytracing if the
+    * fuse is set and we have ray_intersection.
+    */
+   bool has_raytracing =
+      device->info->a7xx.has_ray_intersection &&
+      (!device->info->a7xx.has_sw_fuse || device->has_raytracing);
+
    *ext = (struct vk_device_extension_table) { .table = {
       .KHR_8bit_storage = device->info->a7xx.storage_8bit,
       .KHR_16bit_storage = device->info->a6xx.storage_16bit,
+      .KHR_acceleration_structure = has_raytracing,
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_copy_commands2 = true,
       .KHR_create_renderpass2 = true,
       .KHR_dedicated_allocation = true,
+      .KHR_deferred_host_operations = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_descriptor_update_template = true,
       .KHR_device_group = true,
@@ -449,6 +461,15 @@ tu_get_features(struct tu_physical_device *pdevice,
    features->dynamicRendering                    = true;
    features->shaderIntegerDotProduct             = true;
    features->maintenance4                        = true;
+
+   /* VK_KHR_acceleration_structure */
+   features->accelerationStructure =
+      pdevice->vk.supported_extensions.KHR_acceleration_structure;
+   features->accelerationStructureCaptureReplay =
+      pdevice->vk.supported_extensions.KHR_acceleration_structure &&
+      pdevice->has_set_iova;
+   features->descriptorBindingAccelerationStructureUpdateAfterBind =
+      pdevice->vk.supported_extensions.KHR_acceleration_structure;
 
    /* VK_KHR_index_type_uint8 */
    features->indexTypeUint8 = true;
@@ -1115,6 +1136,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
       COND(pdevice->info->a7xx.storage_8bit, 1));
    props->robustStorageBufferDescriptorSize =
       props->storageBufferDescriptorSize;
+   props->accelerationStructureDescriptorSize = 4 * A6XX_TEX_CONST_DWORDS;
    props->inputAttachmentDescriptorSize = TU_DEBUG(DYNAMIC) ?
       A6XX_TEX_CONST_DWORDS * 4 : 0;
    props->maxSamplerDescriptorBufferRange = ~0ull;
@@ -1144,6 +1166,16 @@ tu_get_properties(struct tu_physical_device *pdevice,
    props->blockTexelViewCompatibleMultipleLayers = true;
    props->maxCombinedImageSamplerDescriptorCount = 1;
    props->fragmentShadingRateClampCombinerInputs = false; /* TODO */
+
+   /* VK_KHR_acceleration_structure */
+   props->maxGeometryCount = (1 << 24) - 1;
+   props->maxInstanceCount = (1 << 24) - 1;
+   props->maxPrimitiveCount = (1 << 29) - 1;
+   props->maxPerStageDescriptorAccelerationStructures = max_descriptor_set_size;
+   props->maxPerStageDescriptorUpdateAfterBindAccelerationStructures = max_descriptor_set_size;
+   props->maxDescriptorSetAccelerationStructures = max_descriptor_set_size;
+   props->maxDescriptorSetUpdateAfterBindAccelerationStructures = max_descriptor_set_size;
+   props->minAccelerationStructureScratchOffsetAlignment = 128;
 }
 
 static const struct vk_pipeline_cache_object_ops *const cache_import_ops[] = {
@@ -2289,6 +2321,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    }
 
    device->vk.command_buffer_ops = &tu_cmd_buffer_ops;
+   device->vk.as_build_ops = &tu_as_build_ops;
    device->vk.check_status = tu_device_check_status;
 
    mtx_init(&device->bo_mutex, mtx_plain);
@@ -2351,6 +2384,10 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    result = vk_meta_device_init(&device->vk, &device->meta);
    if (result != VK_SUCCESS)
       goto fail_queues;
+
+   util_sparse_array_init(&device->accel_struct_ranges, sizeof(VkDeviceSize), 256);
+
+   mtx_init(&device->radix_sort_mutex, mtx_plain);
 
    {
       struct ir3_compiler_options ir3_options = {
@@ -2428,6 +2465,14 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    global = (struct tu6_global *)device->global_bo->map;
    device->global_bo_map = global;
    tu_init_clear_blit_shaders(device);
+
+   if (device->vk.enabled_features.accelerationStructure) {
+      result = tu_init_null_accel_struct(device);
+      if (result != VK_SUCCESS) {
+         vk_startup_errorf(device->instance, result, "null acceleration struct");
+         goto fail_null_accel_struct;
+      }
+   }
 
    result = tu_init_empty_shaders(device);
    if (result != VK_SUCCESS) {
@@ -2621,6 +2666,9 @@ fail_pipeline_cache:
 fail_dynamic_rendering:
    tu_destroy_empty_shaders(device);
 fail_empty_shaders:
+   if (device->null_accel_struct_bo)
+      tu_bo_finish(device, device->null_accel_struct_bo);
+fail_null_accel_struct:
    tu_destroy_clear_blit_shaders(device);
 fail_global_bo_map:
    TU_RMV(resource_destroy, device, device->global_bo);
@@ -2634,6 +2682,7 @@ fail_free_zombie_vma:
    u_vector_finish(&device->zombie_vmas);
    ir3_compiler_destroy(device->compiler);
 fail_compiler:
+   util_sparse_array_finish(&device->accel_struct_ranges);
    vk_meta_device_finish(&device->vk, &device->meta);
 fail_queues:
    for (unsigned i = 0; i < TU_MAX_QUEUE_FAMILIES; i++) {
@@ -2686,6 +2735,8 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
 
    vk_meta_device_finish(&device->vk, &device->meta);
 
+   util_sparse_array_finish(&device->accel_struct_ranges);
+
    ir3_compiler_destroy(device->compiler);
 
    vk_pipeline_cache_destroy(device->mem_cache, &device->vk.alloc);
@@ -2719,6 +2770,9 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    tu_bo_suballocator_finish(&device->kgsl_profiling_suballoc);
 
    tu_bo_finish(device, device->global_bo);
+
+   if (device->null_accel_struct_bo)
+      tu_bo_finish(device, device->null_accel_struct_bo);
 
    for (unsigned i = 0; i < TU_MAX_QUEUE_FAMILIES; i++) {
       for (unsigned q = 0; q < device->queue_count[i]; q++)

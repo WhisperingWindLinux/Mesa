@@ -70,6 +70,8 @@ brw_compile_vs(const struct brw_compiler *compiler,
       brw_should_print_shader(nir, params->base.debug_flag ?
                                    params->base.debug_flag : DEBUG_VS);
 
+   brw_debug_archive_nir(&params->base);
+
    prog_data->base.base.stage = MESA_SHADER_VERTEX;
    prog_data->base.base.ray_queries = nir->info.ray_queries;
    prog_data->base.base.total_scratch = 0;

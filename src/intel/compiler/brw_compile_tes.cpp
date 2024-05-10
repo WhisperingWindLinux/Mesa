@@ -68,6 +68,8 @@ brw_compile_tes(const struct brw_compiler *compiler,
 
    const bool debug_enabled = brw_should_print_shader(nir, DEBUG_TES);
 
+   brw_debug_archive_nir(&params->base);
+
    prog_data->base.base.stage = MESA_SHADER_TESS_EVAL;
    prog_data->base.base.ray_queries = nir->info.ray_queries;
 

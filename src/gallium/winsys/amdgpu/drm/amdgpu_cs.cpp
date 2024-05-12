@@ -1388,6 +1388,10 @@ static void amdgpu_cs_add_userq_packets(struct amdgpu_userq *userq,
       }
    }
 
+   /* HDP flush */
+   amdgpu_pkt_add_dw(PKT3(PKT3_HDP_FLUSH, 0, 0));
+   amdgpu_pkt_add_dw(0x0);
+
    if (userq->ip_type == AMD_IP_GFX || userq->ip_type == AMD_IP_COMPUTE) {
       /* add ib */
       amdgpu_pkt_add_dw(PKT3(PKT3_INDIRECT_BUFFER, 2, 0));

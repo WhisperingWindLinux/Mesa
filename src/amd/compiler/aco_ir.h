@@ -2039,7 +2039,9 @@ is_dead(const std::vector<uint16_t>& uses, const Instruction* instr)
 {
    if (instr->definitions.empty() || instr->isBranch() || instr->isCall() ||
        instr->opcode == aco_opcode::p_startpgm || instr->opcode == aco_opcode::p_init_scratch ||
-       instr->opcode == aco_opcode::p_dual_src_export_gfx11)
+       instr->opcode == aco_opcode::p_dual_src_export_gfx11 ||
+       instr->opcode == aco_opcode::p_spill_preserved_vgpr ||
+       instr->opcode == aco_opcode::p_reload_preserved_vgpr)
       return false;
 
    if (std::any_of(instr->definitions.begin(), instr->definitions.end(),
@@ -2415,6 +2417,7 @@ void optimize_postRA(Program* program);
 void setup_reduce_temp(Program* program);
 void lower_to_cssa(Program* program);
 void register_allocation(Program* program, ra_test_policy = {});
+void spill_preserved(Program* program);
 void ssa_elimination(Program* program);
 void lower_to_hw_instr(Program* program);
 void schedule_program(Program* program);
@@ -2514,5 +2517,11 @@ typedef struct {
 extern const Info instr_info;
 
 } // namespace aco
+
+namespace std {
+template <> struct hash<aco::PhysReg> {
+   size_t operator()(aco::PhysReg temp) const noexcept { return std::hash<uint32_t>{}(temp.reg_b); }
+};
+} // namespace std
 
 #endif /* ACO_IR_H */

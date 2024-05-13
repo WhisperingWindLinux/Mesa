@@ -28,15 +28,35 @@ get_live_changes(Instruction* instr)
    return changes;
 }
 
-RegisterDemand
-get_additional_operand_demand(Instruction* instr)
+void
+get_additional_operand_demand(Instruction* instr, RegisterDemand& demand_before,
+                              RegisterDemand& demand_after)
 {
-   RegisterDemand additional_demand;
    int op_idx = get_op_fixed_to_def(instr);
    if (op_idx != -1 && !instr->operands[op_idx].isKill())
-      additional_demand += instr->definitions[0].getTemp();
+      demand_before += instr->definitions[0].getTemp();
 
-   return additional_demand;
+   for (Operand op : instr->operands) {
+      if (op.isTemp() && op.isFixed() && !op.isFirstKill()) {
+         for (Operand op2 : instr->operands) {
+            if (!op2.isTemp())
+               continue;
+            if (op2 == op)
+               break;
+
+            /* The operand needs to reside in two different registers at the same time: A copy will
+             * be necessary.
+             */
+            if (op2.tempId() == op.tempId() && op2.isFixed() && op2.physReg() != op.physReg()) {
+               if (op.isLateKill())
+                  demand_after += op.getTemp();
+               else
+                  demand_before += op.getTemp();
+               break;
+            }
+         }
+      }
+   }
 }
 
 RegisterDemand
@@ -60,7 +80,7 @@ get_temp_registers(Instruction* instr)
       }
    }
 
-   demand_before += get_additional_operand_demand(instr);
+   get_additional_operand_demand(instr, demand_before, demand_after);
    demand_after.update(demand_before);
    return demand_after;
 }
@@ -90,7 +110,7 @@ instr_needs_vcc(Instruction* instr)
 }
 
 IDSet
-compute_live_out(live_ctx& ctx, Block* block)
+compute_live_out(live_ctx& ctx, Block* block, unsigned& live_out_linear_vgpr)
 {
    IDSet live(ctx.m);
 
@@ -155,6 +175,11 @@ compute_live_out(live_ctx& ctx, Block* block)
       }
    }
 
+   for (auto t : live) {
+      if (ctx.program->temp_rc[t].is_linear_vgpr())
+         live_out_linear_vgpr += ctx.program->temp_rc[t].size();
+   }
+
    return live;
 }
 
@@ -163,7 +188,8 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
 {
    RegisterDemand new_demand;
    block->register_demand = RegisterDemand();
-   IDSet live = compute_live_out(ctx, block);
+   unsigned linear_vgpr_demand = 0;
+   IDSet live = compute_live_out(ctx, block, linear_vgpr_demand);
 
    /* initialize register demand */
    for (unsigned t : live)
@@ -191,6 +217,9 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
          }
          if (definition.isFixed() && definition.physReg() == vcc)
             ctx.program->needs_vcc = true;
+         if (definition.isFixed() && definition.regClass().type() == RegType::vgpr)
+            block->register_demand.update(
+               RegisterDemand((int16_t)(definition.physReg().reg() - 256 + linear_vgpr_demand), 0));
 
          const Temp temp = definition.getTemp();
          const size_t n = live.erase(temp.id());
@@ -198,6 +227,8 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
          if (n) {
             new_demand -= temp;
             definition.setKill(false);
+            if (temp.regClass().is_linear_vgpr())
+               linear_vgpr_demand -= temp.size();
          } else {
             insn->register_demand += temp;
             definition.setKill(true);
@@ -258,6 +289,9 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
             continue;
          if (operand.isFixed() && operand.physReg() == vcc)
             ctx.program->needs_vcc = true;
+         if (operand.isFixed() && operand.regClass().type() == RegType::vgpr)
+            block->register_demand.update(
+               RegisterDemand((int16_t)(operand.physReg().reg() - 256 + linear_vgpr_demand), 0));
          const Temp temp = operand.getTemp();
          const bool inserted = live.insert(temp.id()).second;
          if (inserted) {
@@ -271,10 +305,13 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
             if (operand.isLateKill())
                insn->register_demand += temp;
             new_demand += temp;
+            if (operand.regClass().is_linear_vgpr())
+               linear_vgpr_demand += temp.size();
          }
       }
 
-      RegisterDemand before_instr = new_demand + get_additional_operand_demand(insn);
+      RegisterDemand before_instr = new_demand;
+      get_additional_operand_demand(insn, before_instr, insn->register_demand);
       insn->register_demand.update(before_instr);
       block->register_demand.update(insn->register_demand);
    }

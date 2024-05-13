@@ -2264,6 +2264,7 @@ public:
    std::vector<Block> blocks;
    std::vector<RegClass> temp_rc = {s1};
    RegisterDemand max_reg_demand = RegisterDemand();
+   RegisterDemand cur_reg_demand = RegisterDemand();
    ac_shader_config* config;
    struct aco_shader_info info;
    enum amd_gfx_level gfx_level;

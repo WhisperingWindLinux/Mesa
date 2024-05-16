@@ -886,6 +886,7 @@ a7xx_750 = A7XXProps(
         has_compliant_dp4acc = True,
         has_ray_intersection = True,
         has_sw_fuse = True,
+        has_rt_workaround = True,
     )
 
 a730_magic_regs = dict(

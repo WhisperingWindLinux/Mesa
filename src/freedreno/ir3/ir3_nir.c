@@ -274,6 +274,7 @@ ir3_optimize_loop(struct ir3_compiler *compiler, nir_shader *s)
       progress |= OPT(s, nir_opt_find_array_copies);
       progress |= OPT(s, nir_opt_copy_prop_vars);
       progress |= OPT(s, nir_opt_dead_write_vars);
+      progress |= OPT(s, nir_opt_split_vars);
 
       static int gcm = -1;
       if (gcm == -1)

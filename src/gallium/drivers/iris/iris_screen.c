@@ -399,7 +399,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
        * extensive checking in the driver for correctness, e.g. to prevent
        * illegal snoop <-> snoop transfers.
        */
-      return devinfo->has_llc;
+      return devinfo->has_llc && devinfo->has_userptr_uapi;
    case PIPE_CAP_THROTTLE:
       return screen->driconf.disable_throttling ? 0 : 1;
 

@@ -2051,6 +2051,8 @@ public:
    bool is_prolog = false;
    bool is_epilog = false;
 
+   std::vector<aco_debug_info> debug_info;
+
    std::vector<uint8_t> constant_data;
    Temp private_segment_buffer;
    Temp scratch_offset;

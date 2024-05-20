@@ -197,6 +197,26 @@ struct aco_symbol {
    unsigned offset;
 };
 
+enum aco_debug_info_type {
+   aco_debug_info_src_loc,
+};
+
+struct aco_debug_info {
+   enum aco_debug_info_type type;
+
+   union {
+      struct {
+         char* file;
+         uint32_t line;
+         uint32_t column;
+         uint32_t spirv_offset;
+      } src_loc;
+   };
+
+   /* Offset into the shader binary: */
+   uint32_t offset;
+};
+
 #ifdef __cplusplus
 }
 #endif

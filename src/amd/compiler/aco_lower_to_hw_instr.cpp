@@ -2245,7 +2245,8 @@ lower_to_hw_instr(Program* program)
          }
 
          aco_ptr<Instruction> mov;
-         if (instr->isPseudo() && instr->opcode != aco_opcode::p_unit_test) {
+         if (instr->isPseudo() && instr->opcode != aco_opcode::p_unit_test &&
+             instr->opcode != aco_opcode::p_debug_info) {
             Pseudo_instruction* pi = &instr->pseudo();
 
             switch (instr->opcode) {
@@ -2893,7 +2894,7 @@ lower_to_hw_instr(Program* program)
                              inst->isLDSDIR()) {
                      // TODO: GFX6-9 can use vskip
                      can_remove = prefer_remove;
-                  } else {
+                  } else if (inst->opcode != aco_opcode::p_debug_info) {
                      can_remove = false;
                      assert(false && "Pseudo instructions should be lowered by this point.");
                   }

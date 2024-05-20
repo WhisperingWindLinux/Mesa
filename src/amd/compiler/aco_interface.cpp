@@ -275,6 +275,8 @@ aco_compile_shader(const struct aco_compiler_options* options, const struct aco_
 
    std::string llvm_ir = aco_postprocess_shader(options, info, program);
 
+   aco_print_program(program.get(), stderr);
+
    /* assembly */
    std::vector<uint32_t> code;
    std::vector<struct aco_symbol> symbols;
@@ -299,7 +301,8 @@ aco_compile_shader(const struct aco_compiler_options* options, const struct aco_
 
    (*build_binary)(binary, &config, llvm_ir.c_str(), llvm_ir.size(), disasm.c_str(), disasm.size(),
                    program->statistics, stats_size, exec_size, code.data(), code.size(),
-                   symbols.data(), symbols.size());
+                   symbols.data(), symbols.size(), program->debug_info.data(),
+                   program->debug_info.size());
 }
 
 void
@@ -343,7 +346,7 @@ aco_compile_rt_prolog(const struct aco_compiler_options* options,
       disasm = get_disasm_string(program.get(), code, exec_size);
 
    (*build_prolog)(binary, &config, NULL, 0, disasm.c_str(), disasm.size(), program->statistics, 0,
-                   exec_size, code.data(), code.size(), NULL, 0);
+                   exec_size, code.data(), code.size(), NULL, 0, NULL, 0);
 }
 
 void
@@ -422,17 +425,13 @@ aco_is_gpu_supported(const struct radeon_info* info)
    switch (info->gfx_level) {
    case GFX6:
    case GFX7:
-   case GFX8:
-      return true;
-   case GFX9:
-      return info->has_graphics; /* no CDNA support */
+   case GFX8: return true;
+   case GFX9: return info->has_graphics; /* no CDNA support */
    case GFX10:
    case GFX10_3:
    case GFX11:
-   case GFX11_5:
-      return true;
-   default:
-      return false;
+   case GFX11_5: return true;
+   default: return false;
    }
 }
 
@@ -481,8 +480,7 @@ aco_nir_op_supports_packed_math_16bit(const nir_alu_instr* alu)
 const aco_compiler_statistic_info* aco_statistic_infos = statistic_infos.data();
 
 void
-aco_print_asm(const struct radeon_info *info, unsigned wave_size,
-              uint32_t *binary, unsigned num_dw)
+aco_print_asm(const struct radeon_info* info, unsigned wave_size, uint32_t* binary, unsigned num_dw)
 {
    std::vector<uint32_t> binarray(binary, binary + num_dw);
    aco::Program prog;

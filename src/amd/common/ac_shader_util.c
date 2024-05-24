@@ -149,25 +149,127 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
                               unsigned num_components, unsigned hole_size, nir_intrinsic_instr *low,
                               nir_intrinsic_instr *high, void *data)
 {
-   if (num_components > 4 || hole_size)
-      return false;
-
+   struct ac_nir_config *config = (struct ac_nir_config *)data;
+   bool uses_smem = false;
+   bool uses_buffer_smem = false;
+   bool is_store = false;
+   bool is_shared = false;
    bool is_scratch = false;
+
    switch (low->intrinsic) {
+   case nir_intrinsic_load_ubo:
+   case nir_intrinsic_load_push_constant:
+   case nir_intrinsic_load_smem_amd:
+      /* Don't vectorize descriptor loads for LLVM due to excessive SGPR and VGPR spilling. */
+      if (!config->uses_aco && low->intrinsic == nir_intrinsic_load_smem_amd)
+         return false;
+      uses_smem = all_src_convergent(low);
+      uses_buffer_smem = uses_smem && low->intrinsic == nir_intrinsic_load_ubo;
+      break;
+
    case nir_intrinsic_load_stack:
    case nir_intrinsic_load_scratch:
    case nir_intrinsic_store_stack:
    case nir_intrinsic_store_scratch:
+      is_store = low->intrinsic == nir_intrinsic_store_stack ||
+                 low->intrinsic == nir_intrinsic_store_scratch;
       is_scratch = true;
       break;
-   default:
+
+   case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_constant:
+   case nir_intrinsic_load_ssbo:
       break;
+
+   case nir_intrinsic_store_global:
+   case nir_intrinsic_store_ssbo:
+      is_store = true;
+      break;
+
+   case nir_intrinsic_load_deref:
+   case nir_intrinsic_store_deref:
+      assert(nir_deref_mode_is(nir_src_as_deref(low->src[0]), nir_var_mem_shared));
+      FALLTHROUGH;
+   case nir_intrinsic_load_shared:
+   case nir_intrinsic_store_shared:
+      is_store = low->intrinsic == nir_intrinsic_store_shared ||
+                 low->intrinsic == nir_intrinsic_store_deref;
+      is_shared = true;
+      break;
+
+   default:
+      return false;
    }
 
-   /* >128 bit loads are split except with SMEM. On GFX6-8, >32 bit scratch loads are split. */
-   enum amd_gfx_level gfx_level = *(enum amd_gfx_level *)data;
-   if (bit_size * num_components > (is_scratch && gfx_level <= GFX8 ? 32 : 128))
-      return false;
+   assert(!is_store || hole_size == 0);
+
+   /* Align the size to what the hw supports. */
+   unsigned new_size = align_load_store_size(config->gfx_level, num_components * bit_size,
+                                             uses_smem, is_shared);
+
+   if (uses_smem) {
+      /* Maximize SMEM vectorization except for LLVM, which suffers from SGPR and VGPR spilling.
+       * GFX6-7 have fewer hw SGPRs, so merge only up to 128 bits to limit SGPR usage.
+       */
+      if (new_size > (config->gfx_level >= GFX8 ? (config->uses_aco ? 512 : 256) : 128))
+         return false;
+   } else {
+      if (new_size > 128)
+         return false;
+
+      /* GFX6-8 only support 32-bit scratch loads/stores. */
+      if (config->gfx_level <= GFX8 && is_scratch && new_size > 32)
+         return false;
+   }
+
+   if (!is_store) {
+      unsigned low_size = low->num_components * low->def.bit_size;
+      unsigned high_size = high->num_components * high->def.bit_size;
+      unsigned aligned_low_size = align_load_store_size(config->gfx_level, low_size, uses_smem,
+                                                        is_shared);
+      /* Include the alignment of the first load if there is a hole because that portion would
+       * have to be loaded anyway. VMEM loads overfetching due to alignment should have been
+       * scalarized by now.
+       */
+      unsigned loaded_low_size = MIN2(aligned_low_size, low_size + hole_size * 8);
+      unsigned unvectorized_size = loaded_low_size + high_size;
+
+      /* Only allow SMEM loads to overfetch by 32 bits, which can be either a hole between 2 loads or
+       * alignment after the second load.
+       *
+       * Examples (the hole is indicated by parentheses, the numbers are
+       * in bytes, the maximum overfetch size is 4):
+       *    4  | (4) | 4   ->  hw loads 12  : ALLOWED    (4 over)
+       *    4  | (4) | 4   ->  hw loads 16  : DISALLOWED (8 over)
+       *    4  |  4  | 4   ->  hw loads 16  : ALLOWED    (4 over)
+       *    4  | (4) | 8   ->  hw loads 16  : ALLOWED    (4 over)
+       *    16 |  4        ->  hw loads 32  : DISALLOWED (12 over)
+       *    16 |  8        ->  hw loads 32  : DISALLOWED (8 over)
+       *    16 | 12        ->  hw loads 32  : ALLOWED    (4 over)
+       *    16 | (4) | 12  ->  hw loads 32  : ALLOWED    (4 over)
+       *    32 | 16        ->  hw loads 64  : DISALLOWED (16 over)
+       *    32 | 28        ->  hw loads 64  : ALLOWED    (4 over)
+       *    32 | (4) | 28  ->  hw loads 64  : ALLOWED    (4 over)
+       *    12 | (4) | 12  ->  hw loads 32  : ALLOWED    (4 + 4 over)
+       *
+       * The reason for the last case is that we align the unvectorized size of the first load
+       * because that's what we end up loading anyway, so it's really treated as 16 + 12.
+       *
+       * Note that we can overfetch by more than 4 bytes if we merge more than 2 loads, e.g.:
+       *    4  | (4) | 8 | (4) | 12  ->  hw loads 32  : ALLOWED (4 + 4 over)
+       *
+       * That's because this callback is called twice in that case, each time allowing only 4 over.
+       *
+       * (We could also merge LDS or VMEM loads with a hole between them, subject to favorable
+       *  performance results)
+       *
+       * We can't overfetch with LLVM because if we did, SGPR and VGPR spilling would get out of
+       * control.
+       */
+      unsigned overfetch_size = config->uses_aco && uses_buffer_smem && new_size >= 128 ? 32 : 0;
+      if (new_size > unvectorized_size + overfetch_size)
+         return false;
+   }
 
    uint32_t align;
    if (align_offset)
@@ -175,18 +277,8 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
    else
       align = align_mul;
 
-   switch (low->intrinsic) {
-   case nir_intrinsic_load_global:
-   case nir_intrinsic_load_global_constant:
-   case nir_intrinsic_store_global:
-   case nir_intrinsic_store_ssbo:
-   case nir_intrinsic_load_ssbo:
-   case nir_intrinsic_load_ubo:
-   case nir_intrinsic_load_push_constant:
-   case nir_intrinsic_load_stack:
-   case nir_intrinsic_load_scratch:
-   case nir_intrinsic_store_stack:
-   case nir_intrinsic_store_scratch: {
+   /* Validate the alignment and number of components. */
+   if (!is_shared) {
       unsigned max_components;
       if (align % 4 == 0)
          max_components = NIR_MAX_VEC_COMPONENTS;
@@ -195,13 +287,7 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
       else
          max_components = 8u / bit_size;
       return (align % (bit_size / 8u)) == 0 && num_components <= max_components;
-   }
-   case nir_intrinsic_load_deref:
-   case nir_intrinsic_store_deref:
-      assert(nir_deref_mode_is(nir_src_as_deref(low->src[0]), nir_var_mem_shared));
-      FALLTHROUGH;
-   case nir_intrinsic_load_shared:
-   case nir_intrinsic_store_shared:
+   } else {
       if (bit_size * num_components == 96) { /* 96 bit loads require 128 bit alignment and are split otherwise */
          return align % 16 == 0;
       } else if (bit_size == 16 && (align % 4)) {
@@ -219,8 +305,6 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
             req /= 2u;
          return align % (req / 8u) == 0;
       }
-   default:
-      return false;
    }
    return false;
 }

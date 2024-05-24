@@ -2540,12 +2540,14 @@ struct nir_shader *si_get_nir_shader(struct si_shader *shader,
       late_opts = true;
    }
 
+   NIR_PASS_V(nir, nir_convert_to_lcssa, true, true); /* required by divergence analysis */
+   NIR_PASS_V(nir, nir_divergence_analysis); /* required by ac_nir_mem_vectorize_callback */
    NIR_PASS(progress, nir, nir_opt_load_store_vectorize,
             &(nir_load_store_vectorize_options){
                .modes = nir_var_mem_ssbo | nir_var_mem_ubo | nir_var_mem_shared | nir_var_mem_global |
                         nir_var_shader_temp,
                .callback = ac_nir_mem_vectorize_callback,
-               .cb_data = &sel->screen->info.gfx_level,
+               .cb_data = &(struct ac_nir_config){sel->screen->info.gfx_level, sel->screen->use_aco},
                /* On GFX6, read2/write2 is out-of-bounds if the offset register is negative, even if
                 * the final offset is not.
                 */

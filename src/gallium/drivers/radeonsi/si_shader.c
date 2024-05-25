@@ -2527,6 +2527,12 @@ struct nir_shader *si_get_nir_shader(struct si_shader *shader,
             &args->ac);
    NIR_PASS(progress, nir, si_nir_lower_abi, shader, args);
 
+   NIR_PASS_V(nir, nir_convert_to_lcssa, true, true); /* required by divergence analysis */
+   NIR_PASS_V(nir, nir_divergence_analysis); /* required by ac_nir_scalarize_overfetched_load_callback */
+   NIR_PASS(progress, nir, nir_lower_io_to_scalar,
+            nir_var_mem_ubo | nir_var_mem_ssbo | nir_var_mem_shared | nir_var_mem_global,
+            ac_nir_scalarize_overfetching_loads_callback, &sel->screen->info.gfx_level);
+
    if (progress) {
       si_nir_opts(sel->screen, nir, false);
       progress = false;

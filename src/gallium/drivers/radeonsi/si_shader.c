@@ -2532,6 +2532,7 @@ struct nir_shader *si_get_nir_shader(struct si_shader *shader,
    NIR_PASS(progress, nir, nir_lower_io_to_scalar,
             nir_var_mem_ubo | nir_var_mem_ssbo | nir_var_mem_shared | nir_var_mem_global,
             ac_nir_scalarize_overfetching_loads_callback, &sel->screen->info.gfx_level);
+   NIR_PASS(progress, nir, si_nir_lower_resource, shader, args);
 
    if (progress) {
       si_nir_opts(sel->screen, nir, false);
@@ -2552,8 +2553,6 @@ struct nir_shader *si_get_nir_shader(struct si_shader *shader,
             });
    NIR_PASS(progress, nir, nir_opt_shrink_stores, false);
    NIR_PASS(progress, nir, ac_nir_lower_global_access);
-   /* This must be after vectorization because it causes bindings_different_restrict() to fail. */
-   NIR_PASS(progress, nir, si_nir_lower_resource, shader, args);
 
    if (progress) {
       si_nir_opts(sel->screen, nir, false);

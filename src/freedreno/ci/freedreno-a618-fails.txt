@@ -302,3 +302,98 @@ spec@arb_gpu_shader_fp64@execution@arb_gpu_shader_fp64-gs-getuniformdv,Crash
 # GL tests above, Vulkan tests below
 
 
+# OpenCL tests below
+#
+## rusticl-core issues:
+#
+#Unexpected CL error: CL_BUILD_PROGRAM_FAILURE -11
+#Expected CL error: CL_INVALID_BUILD_OPTIONS -43
+api@clbuildprogram,Fail
+
+#Unexpected CL error: CL_COMPILE_PROGRAM_FAILURE -15
+#Expected CL error: CL_INVALID_COMPILER_OPTIONS -66
+api@clcompileprogram,Fail
+
+#Unexpected CL error: CL_SUCCESS 0
+#Expected CL error: CL_KERNEL_ARG_INFO_NOT_AVAILABLE -19
+api@clgetkernelarginfo,Fail
+
+#Unexpected CL error: CL_SUCCESS 0
+#Expected CL error: CL_INVALID_LINKER_OPTIONS -67
+#Failed (error code: CL_SUCCESS): Trigger CL_INVALID_LINKER_OPTIONS if the linker options specified by options are invalid.
+#Unexpected CL error: CL_LINK_PROGRAM_FAILURE -17
+#Expected CL error: CL_INVALID_OPERATION -59
+#Failed (error code: CL_LINK_PROGRAM_FAILURE): Trigger CL_INVALID_OPERATION if the rules for devices containing compiled binaries or libraries as described in input_programs argument above are not followed.
+#Unexpected CL error: CL_SUCCESS 0
+#Expected CL error: CL_LINK_PROGRAM_FAILURE -17
+api@cllinkprogram,Fail
+
+# can be resolved by RUSTICL_FEATURES=fp16,fp64
+program@build@vector-data-types,Fail
+
+# https://gitlab.freedesktop.org/mesa/mesa/-/issues/8408
+program@execute@global-offset,Fail
+program@execute@global-offset@3d- input dependent,Fail
+
+#
+## freedreno issues:
+#
+#Error at data[0]
+custom@r600 create release buffer bug,Fail
+
+# broken multiple, add, saturated on char/uchar
+program@execute@builtin@builtin-char-mad_sat-1.0.generated,Fail
+program@execute@builtin@builtin-char-mad_sat-1.0.generated@mad_sat char1,Fail
+program@execute@builtin@builtin-char-mad_sat-1.0.generated@mad_sat char16,Fail
+program@execute@builtin@builtin-char-mad_sat-1.0.generated@mad_sat char2,Fail
+program@execute@builtin@builtin-char-mad_sat-1.0.generated@mad_sat char4,Fail
+program@execute@builtin@builtin-char-mad_sat-1.0.generated@mad_sat char8,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar1,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar16,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar2,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar4,Fail
+program@execute@builtin@builtin-uchar-mad_sat-1.0.generated@mad_sat uchar8,Fail
+
+# arithmetic short
+program@execute@scalar-arithmetic-short,Fail
+program@execute@scalar-arithmetic-short@neg div neg (remainder),Fail
+program@execute@scalar-arithmetic-short@neg div neg,Fail
+program@execute@scalar-arithmetic-short@neg div pos (remainder),Fail
+program@execute@scalar-arithmetic-short@neg div pos,Fail
+program@execute@scalar-arithmetic-short@neg mod pos=0,Fail
+program@execute@scalar-arithmetic-short@pos div neg (remainder),Fail
+program@execute@scalar-arithmetic-short@pos mod neg=pos,Fail
+# arithmetic ushort
+program@execute@scalar-comparison-ushort,Fail
+program@execute@scalar-comparison-ushort@num<=num,Fail
+program@execute@scalar-comparison-ushort@num>num,Fail
+program@execute@scalar-comparison-ushort@small_num<=big_num,Fail
+program@execute@scalar-comparison-ushort@small_num<big_num,Fail
+program@execute@scalar-comparison-ushort@small_num>=big_num,Fail
+program@execute@scalar-comparison-ushort@small_num>big_num,Fail
+
+#
+## works on OnePlus 6:
+#
+#Failed: return NULL if platform is not a valid platform
+api@clgetextensionfunctionaddressforplatform,Fail
+#Expecting -6 (0xfffffffffffffffa) with tolerance 0, but got 65530 (0xfffa)
+#Error at int[0]
+program@execute@scalar-load-short,Fail
+program@execute@scalar-load-short@parameter address space,Fail
+
+#
+## Not our problem:
+#
+# broken piglit test (doesn't account for FTZ)
+program@execute@builtin@builtin-float-nextafter-1.0.generated,Fail
+program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float1,Fail
+program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float16,Fail
+program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float2,Fail
+program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float4,Fail
+program@execute@builtin@builtin-float-nextafter-1.0.generated@nextafter float8,Fail
+
+# missing header file, broken piglit build, FIXED in next Piglit uprev
+program@build@include-directories,Fail
+

@@ -315,9 +315,16 @@ standalone_create_shader_program(void)
 void
 standalone_destroy_shader_program(struct gl_shader_program *whole_program)
 {
+   for (unsigned i = 0; i < whole_program->NumShaders; i++) {
+         ralloc_free(whole_program->Shaders[i]->nir);
+   }
+
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
-      if (whole_program->_LinkedShaders[i])
+      if (whole_program->_LinkedShaders[i]) {
+         if (whole_program->_LinkedShaders[i]->Program->Parameters)
+            _mesa_free_parameter_list(whole_program->_LinkedShaders[i]->Program->Parameters);
          _mesa_delete_linked_shader(NULL, whole_program->_LinkedShaders[i]);
+      }
    }
 
    delete whole_program->AttributeBindings;

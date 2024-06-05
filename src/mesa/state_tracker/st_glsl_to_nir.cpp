@@ -511,6 +511,11 @@ st_link_glsl_to_nir(struct gl_context *ctx,
 
    assert(shader_program->data->LinkStatus);
 
+   if (!shader_program->data->spirv) {
+      if (!gl_nir_link_glsl(ctx, shader_program))
+         return GL_FALSE;
+   }
+
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
       if (shader_program->_LinkedShaders[i])
          linked_shader[num_shaders++] = shader_program->_LinkedShaders[i];
@@ -524,7 +529,6 @@ st_link_glsl_to_nir(struct gl_context *ctx,
 
       shader->Program->info.separate_shader = shader_program->SeparateShader;
 
-      assert(!prog->nir);
       prog->shader_program = shader_program;
       prog->state.type = PIPE_SHADER_IR_NIR;
 
@@ -532,21 +536,10 @@ st_link_glsl_to_nir(struct gl_context *ctx,
       prog->Parameters = _mesa_new_parameter_list();
 
       if (shader_program->data->spirv) {
+         assert(!prog->nir);
          prog->nir = _mesa_spirv_to_nir(ctx, shader_program, shader->Stage, options);
       } else {
-         if (ctx->_Shader->Flags & GLSL_DUMP) {
-            _mesa_log("\n");
-            _mesa_log("GLSL IR for linked %s program %d:\n",
-                      _mesa_shader_stage_to_string(shader->Stage),
-                      shader_program->Name);
-            _mesa_print_ir(mesa_log_get_file(), shader->ir, NULL);
-            _mesa_log("\n\n");
-         }
-
-         prog->nir = glsl_to_nir(&st->ctx->Const, &shader->ir,
-                                 &shader->Program->info, shader->Stage,
-                                 options, NULL);
-
+         assert(prog->nir);
          prog->nir->info.name =
             ralloc_asprintf(shader, "GLSL%d", shader_program->Name);
          if (shader_program->Label)
@@ -581,9 +574,6 @@ st_link_glsl_to_nir(struct gl_context *ctx,
       };
       if (!gl_nir_link_spirv(&ctx->Const, &ctx->Extensions, shader_program,
                              &opts))
-         return GL_FALSE;
-   } else {
-      if (!gl_nir_link_glsl(ctx, shader_program))
          return GL_FALSE;
    }
 

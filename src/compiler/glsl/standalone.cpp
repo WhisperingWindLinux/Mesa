@@ -305,7 +305,7 @@ load_text_file(void *ctx, const char *file_name)
 static void
 compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 {
-   _mesa_glsl_compile_shader(ctx, shader, options->dump_ast,
+   _mesa_glsl_compile_shader(ctx, shader, NULL, options->dump_ast,
                              options->dump_hir, true);
 
    /* Print out the resulting IR */

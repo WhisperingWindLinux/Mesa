@@ -2265,7 +2265,7 @@ public:
    std::vector<Block> blocks;
    std::vector<RegClass> temp_rc = {s1};
    RegisterDemand max_reg_demand = RegisterDemand();
-   RegisterDemand cur_reg_demand = RegisterDemand();
+   RegisterDemand max_real_reg_demand = RegisterDemand();
    ac_shader_config* config;
    struct aco_shader_info info;
    enum amd_gfx_level gfx_level;
@@ -2409,7 +2409,8 @@ void select_ps_prolog(Program* program, void* pinfo, ac_shader_config* config,
 void lower_phis(Program* program);
 void lower_subdword(Program* program);
 void calc_min_waves(Program* program);
-void update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand);
+void update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand,
+                             const RegisterDemand new_real_demand);
 void live_var_analysis(Program* program);
 std::vector<uint16_t> dead_code_analysis(Program* program);
 void dominator_tree(Program* program);
@@ -2482,6 +2483,8 @@ int get_op_fixed_to_def(Instruction* instr);
 RegisterDemand get_live_changes(Instruction* instr);
 RegisterDemand get_temp_registers(Instruction* instr);
 RegisterDemand get_temp_reg_changes(Instruction* instr);
+void compute_blocked_abi_demand(Program* program, unsigned linear_vgpr_demand,
+                                Pseudo_call_instruction& instr);
 
 /* number of sgprs that need to be allocated but might notbe addressable as s0-s105 */
 uint16_t get_extra_sgprs(Program* program);

@@ -1781,7 +1781,7 @@ spill(Program* program)
       abi_sgpr_limit = sgpr_limit;
 
    /* no spilling when register pressure is low enough */
-   if (program->num_waves > 0 && program->cur_reg_demand.sgpr <= abi_sgpr_limit)
+   if (program->num_waves > 0 && program->max_reg_demand.sgpr <= abi_sgpr_limit)
       return;
 
    /* lower to CSSA before spilling to ensure correctness w.r.t. phis */
@@ -1831,7 +1831,7 @@ spill(Program* program)
                                      preserved_reload_instructions, reg);
 
       unsigned max_reg =
-         std::min((unsigned)program->cur_reg_demand.sgpr + extra_sgprs, (unsigned)sgpr_limit);
+         std::min((unsigned)program->max_reg_demand.sgpr + extra_sgprs, (unsigned)sgpr_limit);
       for (PhysReg reg = program->callee_abi.clobberedRegs.sgpr.hi(); reg < max_reg;
            reg = reg.advance(4))
          spill_reload_preserved_sgpr(ctx, preserved_spill_instructions,

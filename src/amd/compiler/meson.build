@@ -32,6 +32,7 @@ aco_builder_h = custom_target(
 
 libaco_files = files(
   'aco_dead_code_analysis.cpp',
+  'aco_disassembler.cpp',
   'aco_dominance.cpp',
   'aco_instruction_selection.cpp',
   'aco_instruction_selection.h',

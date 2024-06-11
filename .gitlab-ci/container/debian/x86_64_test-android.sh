@@ -80,7 +80,7 @@ popd
 
 ############### Building and installing Debian package ...
 
-ANDROID_CUTTLEFISH_VERSION=f6494d9fbeaa9974b56923e3029909e5d5f440dd
+ANDROID_CUTTLEFISH_VERSION=v0.9.31
 
 mkdir android-cuttlefish
 pushd android-cuttlefish
@@ -89,11 +89,9 @@ git remote add origin https://github.com/google/android-cuttlefish.git
 git fetch --depth 1 origin "$ANDROID_CUTTLEFISH_VERSION"
 git checkout FETCH_HEAD
 
-pushd base
-dpkg-buildpackage -uc -us
-popd
+./tools/buildutils/build_packages.sh
 
-apt-get install -y ./cuttlefish-base_*.deb
+apt-get install -y ./cuttlefish-base_*.deb ./cuttlefish-user_*.deb
 
 popd
 rm -rf android-cuttlefish

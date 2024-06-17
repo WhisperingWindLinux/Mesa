@@ -428,7 +428,9 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
             NIR_PASS(_, stage->nir, nir_opt_constant_folding);
 
          /* Gather info again, to update whether 8/16-bit are used. */
-         nir_shader_gather_info(stage->nir, nir_shader_get_entrypoint(stage->nir));
+         nir_foreach_function_impl (impl, stage->nir)
+            if (impl->function->is_entrypoint || impl->function->is_exported)
+               nir_shader_gather_info(stage->nir, impl);
       }
    }
 

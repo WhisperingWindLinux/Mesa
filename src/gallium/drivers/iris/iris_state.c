@@ -6152,20 +6152,12 @@ invalidate_aux_map_state_per_engine(struct iris_batch *batch)
        *
        *    "Render target Cache Flush + L3 Fabric Flush + State Invalidation + CS Stall"
        *
-       * Notice we don't set the L3 Fabric Flush here, because we have
-       * PIPE_CONTROL_CS_STALL. The PIPE_CONTROL::L3 Fabric Flush
-       * documentation says :
-       *
-       *    "L3 Fabric Flush will ensure all the pending transactions in the
-       *     L3 Fabric are flushed to global observation point. HW does
-       *     implicit L3 Fabric Flush on all stalling flushes (both explicit
-       *     and implicit) and on PIPECONTROL having Post Sync Operation
-       *     enabled."
-       *
-       * Therefore setting L3 Fabric Flush here would be redundant.
-       *
        * From Bspec 43904 (Register_CCSAuxiliaryTableInvalidate):
        * RCS engine idle sequence:
+       *
+       *    Gfx12+:
+       *       PIPE_CONTROL:- DC Flush + L3 Fabric Flush + CS Stall + Render
+       *                      Target Cache Flush + Depth Cache
        *
        *    Gfx125+:
        *       PIPE_CONTROL:- DC Flush + L3 Fabric Flush + CS Stall + Render
@@ -6176,6 +6168,10 @@ invalidate_aux_map_state_per_engine(struct iris_batch *batch)
                                  PIPE_CONTROL_CS_STALL |
                                  PIPE_CONTROL_RENDER_TARGET_FLUSH |
                                  PIPE_CONTROL_STATE_CACHE_INVALIDATE |
+                                 (GFX_VERx10 >= 120 ?
+                                  PIPE_CONTROL_L3_FABRIC_FLUSH |
+                                  PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+                                  PIPE_CONTROL_DATA_CACHE_FLUSH : 0) |
                                  (GFX_VERx10 == 125 ?
                                   PIPE_CONTROL_CCS_CACHE_FLUSH : 0));
 
@@ -6205,6 +6201,8 @@ invalidate_aux_map_state_per_engine(struct iris_batch *batch)
       iris_emit_end_of_pipe_sync(batch, "Invalidate aux map table",
                                  PIPE_CONTROL_DATA_CACHE_FLUSH |
                                  PIPE_CONTROL_CS_STALL |
+                                 (GFX_VERx10 >= 120 ?
+                                  PIPE_CONTROL_L3_FABRIC_FLUSH : 0) |
                                  (GFX_VERx10 == 125 ?
                                   PIPE_CONTROL_CCS_CACHE_FLUSH : 0));
 

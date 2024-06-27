@@ -16,6 +16,7 @@
 #include "frontend/drm_driver.h"
 #include "drm-uapi/amdgpu_drm.h"
 #include "drm-uapi/dma-buf.h"
+#include "sid.h"
 #include <xf86drm.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -565,6 +566,11 @@ static struct amdgpu_winsys_bo *amdgpu_create_bo(struct amdgpu_winsys *aws,
 
    if (flags & RADEON_FLAG_GFX12_ALLOW_DCC)
       request.flags |= AMDGPU_GEM_CREATE_GFX12_DCC;
+
+   /* Set AMDGPU_GEM_CREATE_VIRTIO_SHARED if the driver didn't disable buffer sharing. */
+   if (aws->info.is_virtio && (initial_domain & RADEON_DOMAIN_VRAM_GTT) &&
+       (flags & (RADEON_FLAG_DRIVER_INTERNAL | RADEON_FLAG_NO_INTERPROCESS_SHARING)) == 0)
+      request.flags |= AMDGPU_GEM_CREATE_VIRTIO_SHARED;
 
    r = aws->libdrm_amdgpu->bo_alloc(aws->dev, &request, &buf_handle);
    if (r) {

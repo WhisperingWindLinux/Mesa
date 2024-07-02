@@ -141,6 +141,7 @@ void
 _mesa_delete_linked_shader(struct gl_context *,
                            struct gl_linked_shader *sh)
 {
+   ralloc_free(sh->Program->nir);
    ralloc_free(sh->Program);
    ralloc_free(sh);
 }

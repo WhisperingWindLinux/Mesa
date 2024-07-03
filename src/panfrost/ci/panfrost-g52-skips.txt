@@ -17,6 +17,12 @@ dEQP-VK.spirv_assembly.instruction.compute.vector_shuffle.vector_shuffle
 # Seems to timeout occasionally
 dEQP-VK.api.object_management.max_concurrent.query_pool
 
+# indirect draw not supported yet
+dEQP-VK.pipeline.monolithic.timestamp.*.draw_indirect*
+dEQP-VK.pipeline.fast_linked_library.timestamp.*.draw_indirect*
+dEQP-VK.pipeline.monolithic.timestamp.*.draw_indirect*
+dEQP-VK.pipeline.pipeline_library.timestamp.*.draw_indirect*
+
 # Causes a GPU timeout
 spec@!opengl 1.1@longprim
 

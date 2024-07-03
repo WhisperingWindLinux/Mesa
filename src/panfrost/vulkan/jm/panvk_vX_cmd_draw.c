@@ -409,7 +409,8 @@ panvk_draw_prepare_fs_rsd(struct panvk_cmd_buffer *cmdbuf,
 
          bool writes_zs = writes_z || writes_s;
          bool zs_always_passes = ds_test_always_passes(cmdbuf);
-         bool oq = false; /* TODO: Occlusion queries */
+         bool oq = cmdbuf->state.gfx.occlusion_query.mode !=
+                   MALI_OCCLUSION_MODE_DISABLED;
 
          struct pan_earlyzs_state earlyzs =
             pan_earlyzs_get(pan_earlyzs_analyze(fs_info), writes_zs || oq,
@@ -1023,8 +1024,8 @@ panvk_emit_tiler_dcd(struct panvk_cmd_buffer *cmdbuf,
       cfg.push_uniforms = draw->push_uniforms;
       cfg.textures = fs_desc_state->tables[PANVK_BIFROST_DESC_TABLE_TEXTURE];
       cfg.samplers = fs_desc_state->tables[PANVK_BIFROST_DESC_TABLE_SAMPLER];
-
-      /* TODO: occlusion queries */
+      cfg.occlusion_query = cmdbuf->state.gfx.occlusion_query.mode;
+      cfg.occlusion = cmdbuf->state.gfx.occlusion_query.ptr;
    }
 }
 
@@ -1270,7 +1271,10 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
 
    bool vs_writes_pos =
       cmdbuf->state.gfx.link.buf_strides[PANVK_VARY_BUF_POSITION] > 0;
-   bool needs_tiling = !rs->rasterizer_discard_enable && vs_writes_pos;
+   bool active_occlusion =
+      cmdbuf->state.gfx.occlusion_query.mode != MALI_OCCLUSION_MODE_DISABLED;
+   bool needs_tiling =
+      !rs->rasterizer_discard_enable && (vs_writes_pos || active_occlusion);
 
    /* No need to setup the FS desc tables if the FS is not executed. */
    if (needs_tiling && fs_required(cmdbuf)) {

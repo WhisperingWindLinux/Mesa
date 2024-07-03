@@ -62,6 +62,7 @@ struct panvk_batch {
    struct pan_tls_info tlsinfo;
    unsigned wls_total_size;
    bool issued;
+   bool needs_job_req_cycle_count;
 };
 
 enum panvk_cmd_event_op_type {
@@ -86,6 +87,11 @@ struct panvk_resolve_attachment {
    struct panvk_image_view *dst_iview;
 };
 
+struct panvk_occlusion_query_state {
+   mali_ptr ptr;
+   enum mali_occlusion_mode mode;
+};
+
 struct panvk_cmd_graphics_state {
    struct panvk_descriptor_state desc_state;
 
@@ -95,6 +101,8 @@ struct panvk_cmd_graphics_state {
    } dynamic;
 
    uint32_t dirty;
+
+   struct panvk_occlusion_query_state occlusion_query;
 
    struct panvk_graphics_sysvals sysvals;
 

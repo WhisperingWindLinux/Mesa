@@ -88,6 +88,7 @@ nvk_get_image_plane_format_features(struct nvk_physical_device *pdev,
    if (features != 0) {
       features |= VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT;
       features |= VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+      features |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT;
    }
 
    return features;
@@ -548,6 +549,10 @@ nvk_GetPhysicalDeviceImageFormatProperties2(
        (pImageFormatInfo->flags & VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT)))
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
+   if ((pImageFormatInfo->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT) &&
+       (pImageFormatInfo->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT))
+      return VK_ERROR_FORMAT_NOT_SUPPORTED;
+
    pImageFormatProperties->imageFormatProperties = (VkImageFormatProperties) {
       .maxExtent = maxExtent,
       .maxMipLevels = maxMipLevels,
@@ -576,6 +581,12 @@ nvk_GetPhysicalDeviceImageFormatProperties2(
       case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES: {
          VkSamplerYcbcrConversionImageFormatProperties *ycbcr_props = (void *) s;
          ycbcr_props->combinedImageSamplerDescriptorCount = plane_count;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT: {
+         VkHostImageCopyDevicePerformanceQueryEXT *host_props = (void *) s;
+         host_props->optimalDeviceAccess = true;
+         host_props->identicalMemoryLayout = true;
          break;
       }
       default:
@@ -1244,6 +1255,12 @@ nvk_get_image_subresource_layout(struct nvk_device *dev,
    }
    offset_B += nil_image_level_layer_offset_B(&plane->nil, isr->mipLevel,
                                               isr->arrayLayer);
+
+   VkSubresourceHostMemcpySizeEXT *host_memcpy_size =
+      vk_find_struct(pLayout->pNext, SUBRESOURCE_HOST_MEMCPY_SIZE_EXT);
+      if (host_memcpy_size) {
+         host_memcpy_size->size = plane->nil.size_B;
+      }
 
    pLayout->subresourceLayout = (VkSubresourceLayout) {
       .offset = offset_B,

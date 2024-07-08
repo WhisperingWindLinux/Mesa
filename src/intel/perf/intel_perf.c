@@ -1652,3 +1652,46 @@ intel_perf_stream_set_metrics_id(struct intel_perf_config *perf_config,
          return -1;
    }
 }
+
+int
+intel_perf_eustall_stream_open(struct intel_device_info *devinfo, int drm_fd,
+                               size_t gpu_buf_size, uint64_t poll_period_ns,
+                               uint32_t sample_rate, uint32_t min_event_count,
+                               bool enable)
+{
+   if (devinfo->ver >= 20 &&
+       devinfo->kmd_type == INTEL_KMD_TYPE_XE)
+      return xe_perf_eustall_stream_open(drm_fd, gpu_buf_size, poll_period_ns,
+                                         sample_rate, min_event_count, enable);
+   return -1;
+}
+
+int
+intel_perf_eustall_stream_record_size(struct intel_device_info *devinfo,
+                                      int perf_stream_fd)
+{
+   if (devinfo->ver >= 20 &&
+       devinfo->kmd_type == INTEL_KMD_TYPE_XE)
+      return xe_perf_eustall_stream_record_size(perf_stream_fd);
+   return -1;
+}
+
+int
+intel_perf_eustall_stream_read_samples(struct intel_device_info *devinfo,
+                                       int perf_stream_fd, uint8_t *buffer,
+                                       size_t buffer_len, bool *overflow)
+{
+   if (devinfo->ver >= 20 &&
+       devinfo->kmd_type == INTEL_KMD_TYPE_XE)
+      return xe_perf_eustall_stream_read_samples(perf_stream_fd, buffer,
+                                                 buffer_len, overflow);
+   return -1;
+}
+
+void
+intel_perf_eustall_accumulate_results(struct intel_perf_query_eustall_result *result,
+                                      const void *start, const void *end,
+                                      size_t record_size)
+{
+   return xe_perf_eustall_accumulate_results(result, start, end, record_size);
+}

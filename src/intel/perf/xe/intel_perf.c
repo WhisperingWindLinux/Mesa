@@ -377,6 +377,7 @@ xe_perf_eustall_accumulate_results(struct intel_perf_query_eustall_result *resul
                                  (const void*)&stall_result->ip_addr,
                                  stall_result);
       }
+      assert(stall_result->ip_addr == stall_data->ip_addr);
 
       stall_result->tdr_count += stall_data->tdr_count;
       stall_result->other_count += stall_data->other_count;

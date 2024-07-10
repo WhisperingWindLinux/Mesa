@@ -567,6 +567,10 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_SHADER_SUBGROUP_QUAD_ALL_STAGES:
       return 0;
 
+   case PIPE_CAP_MIN_VMA_SHIFT:
+   case PIPE_CAP_MAX_VMA_SHIFT:
+      return 0;
+
    default:
       unreachable("bad PIPE_CAP_*");
    }

@@ -820,7 +820,7 @@ print_vopd_instr(enum amd_gfx_level gfx_level, const Instruction* instr, FILE* o
 }
 
 static void
-print_block_kind(uint16_t kind, FILE* output)
+print_block_kind(uint32_t kind, FILE* output)
 {
    if (kind & block_kind_uniform)
       fprintf(output, "uniform, ");
@@ -852,6 +852,8 @@ print_block_kind(uint16_t kind, FILE* output)
       fprintf(output, "export_end, ");
    if (kind & block_kind_end_with_regs)
       fprintf(output, "end_with_regs, ");
+   if (kind & block_kind_allow_repair_phis)
+      fprintf(output, "allow_repair_phis, ");
 }
 
 static void

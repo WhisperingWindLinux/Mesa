@@ -1893,6 +1893,7 @@ enum block_kind {
    block_kind_resume = 1 << 13,
    block_kind_export_end = 1 << 14,
    block_kind_end_with_regs = 1 << 15,
+   block_kind_allow_repair_phis = 1 << 16,
 };
 
 /* CFG */
@@ -2096,6 +2097,8 @@ public:
    /* For shader part with previous shader part that has lds access. */
    bool pending_lds_access = false;
 
+   bool should_repair_ssa = false;
+
    struct {
       monotonic_buffer_resource memory;
       /* live-in temps per block */
@@ -2185,6 +2188,7 @@ void select_ps_prolog(Program* program, void* pinfo, ac_shader_config* config,
                       const struct aco_compiler_options* options,
                       const struct aco_shader_info* info, const struct ac_shader_args* args);
 
+void repair_ssa(Program* program);
 void lower_phis(Program* program);
 void lower_subdword(Program* program);
 void calc_min_waves(Program* program);

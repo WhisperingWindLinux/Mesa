@@ -29,6 +29,8 @@
 
 #include "common/intel_engine.h"
 
+#include "drm-uapi/xe_drm.h"
+
 bool xe_gem_read_render_timestamp(int fd, uint64_t *value);
 bool
 xe_gem_read_correlate_cpu_gpu_timestamp(int fd,
@@ -39,3 +41,12 @@ xe_gem_read_correlate_cpu_gpu_timestamp(int fd,
                                         uint64_t *gpu_timestamp,
                                         uint64_t *cpu_delta);
 bool xe_gem_can_render_on_fd(int fd);
+
+static inline void
+intel_xe_gem_add_ext(__u64 *ptr, uint32_t ext_name,
+                     struct drm_xe_user_extension *ext)
+{
+   ext->next_extension = *ptr;
+   ext->name = ext_name;
+   *ptr = (uintptr_t)ext;
+}

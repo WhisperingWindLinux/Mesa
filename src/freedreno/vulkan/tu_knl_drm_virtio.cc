@@ -93,10 +93,9 @@ static int tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *val
  * Helper for simple pass-thru ioctls
  */
 static int
-virtio_simple_ioctl(struct tu_device *dev, unsigned cmd, void *_req)
+virtio_simple_ioctl(struct vdrm_device *vdrm, unsigned cmd, void *_req)
 {
    MESA_TRACE_FUNC();
-   struct vdrm_device *vdrm = dev->vdev->vdrm;
    unsigned req_len = sizeof(struct msm_ccmd_ioctl_simple_req);
    unsigned rsp_len = sizeof(struct msm_ccmd_ioctl_simple_rsp);
 
@@ -267,7 +266,7 @@ tu_drm_get_param(struct tu_device *dev, uint32_t param, uint64_t *value)
       .param = param,
    };
 
-   int ret = virtio_simple_ioctl(dev, DRM_IOCTL_MSM_GET_PARAM, &req);
+   int ret = virtio_simple_ioctl(dev->vdev->vdrm, DRM_IOCTL_MSM_GET_PARAM, &req);
    if (ret)
       return ret;
 
@@ -311,11 +310,13 @@ virtio_submitqueue_new(struct tu_device *dev,
           priority < dev->physical_device->submitqueue_priority_count);
 
    struct drm_msm_submitqueue req = {
-      .flags = 0,
+      .flags = dev->physical_device->info->chip >= 7 &&
+         dev->physical_device->has_preemption ?
+         MSM_SUBMITQUEUE_ALLOW_PREEMPT : 0,
       .prio = priority,
    };
 
-   int ret = virtio_simple_ioctl(dev, DRM_IOCTL_MSM_SUBMITQUEUE_NEW, &req);
+   int ret = virtio_simple_ioctl(dev->vdev->vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_NEW, &req);
    if (ret)
       return ret;
 
@@ -326,7 +327,23 @@ virtio_submitqueue_new(struct tu_device *dev,
 static void
 virtio_submitqueue_close(struct tu_device *dev, uint32_t queue_id)
 {
-   virtio_simple_ioctl(dev, DRM_IOCTL_MSM_SUBMITQUEUE_CLOSE, &queue_id);
+   virtio_simple_ioctl(dev->vdev->vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_CLOSE, &queue_id);
+}
+
+static bool
+virtio_has_preemption(struct vdrm_device *vdrm)
+{
+   struct drm_msm_submitqueue req = {
+      .flags = MSM_SUBMITQUEUE_ALLOW_PREEMPT,
+      .prio = vdrm->caps.u.msm.priorities / 2,
+   };
+
+   int ret = virtio_simple_ioctl(vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_NEW, &req);
+   if (ret)
+      return false;
+
+   virtio_simple_ioctl(vdrm, DRM_IOCTL_MSM_SUBMITQUEUE_CLOSE, &req.id);
+   return true;
 }
 
 static VkResult
@@ -1305,6 +1322,11 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
 
    caps = vdrm->caps;
 
+   /* TODO add something to virgl_renderer_capset_drm to avoid round-trip to
+    * host if virglrenderer is new enough.
+    */
+   bool has_preemption = virtio_has_preemption(vdrm);
+
    vdrm_device_close(vdrm);
 
    mesa_logd("wire_format_version: %u", caps.wire_format_version);
@@ -1360,6 +1382,7 @@ tu_knl_drm_virtio_load(struct tu_instance *instance,
    device->va_start       = caps.u.msm.va_start;
    device->va_size        = caps.u.msm.va_size;
    device->has_set_iova   = true;
+   device->has_preemption = has_preemption;
 
    device->gmem_size = debug_get_num_option("TU_GMEM", device->gmem_size);
 

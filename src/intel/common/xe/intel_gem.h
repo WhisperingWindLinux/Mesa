@@ -41,6 +41,7 @@ xe_gem_read_correlate_cpu_gpu_timestamp(int fd,
                                         uint64_t *gpu_timestamp,
                                         uint64_t *cpu_delta);
 bool xe_gem_can_render_on_fd(int fd);
+bool xe_gem_supports_protected_exec_queue(int fd);
 
 static inline void
 intel_xe_gem_add_ext(__u64 *ptr, uint32_t ext_name,

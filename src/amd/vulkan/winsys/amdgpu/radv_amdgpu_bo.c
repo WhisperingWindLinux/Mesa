@@ -464,8 +464,14 @@ radv_amdgpu_winsys_bo_create(struct radeon_winsys *_ws, uint64_t size, unsigned 
       request.flags |= AMDGPU_GEM_CREATE_EXPLICIT_SYNC;
    if ((initial_domain & RADEON_DOMAIN_VRAM_GTT) && (flags & RADEON_FLAG_NO_INTERPROCESS_SHARING) &&
        ((ws->perftest & RADV_PERFTEST_LOCAL_BOS) || (flags & RADEON_FLAG_PREFER_LOCAL_BO))) {
-      bo->base.is_local = true;
-      request.flags |= AMDGPU_GEM_CREATE_VM_ALWAYS_VALID;
+
+      /* virtio needs to be able to create a dmabuf if CPU access is required but a
+       * dmabuf cannot be created if VM_ALWAYS_VALID is used.
+       */
+      if (!ws->info.is_virtio || (request.flags & AMDGPU_GEM_CREATE_NO_CPU_ACCESS)) {
+         bo->base.is_local = true;
+         request.flags |= AMDGPU_GEM_CREATE_VM_ALWAYS_VALID;
+      }
    }
 
    if (initial_domain & RADEON_DOMAIN_VRAM) {
@@ -553,6 +559,21 @@ radv_amdgpu_winsys_bo_map(struct radeon_winsys *_ws, struct radeon_winsys_bo *_b
 
    assert(!bo->cpu_map);
 
+#if HAVE_AMDGPU_VIRTIO
+   if (ws->info.is_virtio) {
+      /* We can't use DRM_AMDGPU_GEM_MMAP directly on virtio. Instead use bo_cpu_map since
+       * the virtio version will map the buffer at the given address (if not NULL).
+       */
+      void *data = NULL;
+      if (use_fixed_addr)
+         data = fixed_addr;
+
+      if (ws->libdrm_amdgpu->bo_cpu_map(bo->bo, &data))
+         return NULL;
+      return data;
+   }
+#endif
+
    union drm_amdgpu_gem_mmap args;
    memset(&args, 0, sizeof(args));
    args.in.handle = bo->bo_handle;
@@ -584,6 +605,12 @@ radv_amdgpu_winsys_bo_unmap(struct radeon_winsys *_ws, struct radeon_winsys_bo *
    if (replace) {
       (void)mmap(bo->cpu_map, bo->base.size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
    } else {
+      #if HAVE_AMDGPU_VIRTIO
+      struct radv_amdgpu_winsys *ws = radv_amdgpu_winsys(_ws);
+      if (ws->info.is_virtio)
+         ws->libdrm_amdgpu->bo_cpu_unmap(bo->bo);
+      else
+      #endif
       munmap(bo->cpu_map, bo->base.size);
    }
    bo->cpu_map = NULL;

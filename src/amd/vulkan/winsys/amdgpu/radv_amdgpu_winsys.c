@@ -208,14 +208,20 @@ radv_amdgpu_winsys_get_sync_types(struct radeon_winsys *rws)
 }
 
 struct radeon_winsys *
-radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool reserve_vmid)
+radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool reserve_vmid, bool is_virtio)
 {
    uint32_t drm_major, drm_minor, r;
    amdgpu_device_handle dev;
    struct radv_amdgpu_winsys *ws = NULL;
    struct libdrm_amdgpu *libdrm_amdgpu;
 
-   libdrm_amdgpu = ac_init_libdrm_amdgpu();
+#if HAVE_AMDGPU_VIRTIO
+   if (is_virtio)
+      libdrm_amdgpu = ac_init_libdrm_amdgpu_for_virtio();
+   else
+#endif
+      libdrm_amdgpu = ac_init_libdrm_amdgpu();
+
    if (libdrm_amdgpu == NULL) {
       fprintf(stderr, "amdgpu: libdrm_amdgpu init failed");
       return NULL;
@@ -272,6 +278,7 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    ws->libdrm_amdgpu = libdrm_amdgpu;
    ws->info.drm_major = drm_major;
    ws->info.drm_minor = drm_minor;
+   ws->info.is_virtio = is_virtio;
    if (!do_winsys_init(ws, fd))
       goto winsys_fail;
 

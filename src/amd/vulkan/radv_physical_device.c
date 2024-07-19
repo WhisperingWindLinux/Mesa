@@ -1975,6 +1975,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    VkResult result;
    int fd = -1;
    int master_fd = -1;
+   bool is_virtio = false;
 
 #ifdef _WIN32
    assert(drm_device == NULL);
@@ -1997,8 +1998,14 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
       }
 
       if (!strcmp(version->name, "amdgpu")) {
-         ac_init_libdrm_amdgpu();
-      } else {
+         /* nothing to do. */
+      } else
+#ifdef HAVE_AMDGPU_VIRTIO
+         if (!strcmp(version->name, "virtio_gpu")) {
+         is_virtio = true;
+      } else
+#endif
+      {
          drmFreeVersion(version);
          close(fd);
 
@@ -2034,7 +2041,8 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    if (drm_device) {
       bool reserve_vmid = instance->vk.trace_mode & RADV_TRACE_MODE_RGP;
 
-      pdev->ws = radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags, reserve_vmid);
+      pdev->ws =
+         radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags, reserve_vmid, is_virtio);
    } else {
       pdev->ws = radv_null_winsys_create();
    }
@@ -2275,9 +2283,19 @@ create_null_physical_device(struct vk_instance *vk_instance)
 VkResult
 create_drm_physical_device(struct vk_instance *vk_instance, struct _drmDevice *device, struct vk_physical_device **out)
 {
+   bool supported_device = false;
+
 #ifndef _WIN32
-   if (!(device->available_nodes & (1 << DRM_NODE_RENDER)) || device->bustype != DRM_BUS_PCI ||
-       device->deviceinfo.pci->vendor_id != ATI_VENDOR_ID)
+   if (!(device->available_nodes & (1 << DRM_NODE_RENDER)) || device->bustype != DRM_BUS_PCI)
+      return VK_ERROR_INCOMPATIBLE_DRIVER;
+
+#ifdef HAVE_AMDGPU_VIRTIO
+   supported_device |= device->deviceinfo.pci->vendor_id == VIRTGPU_PCI_VENDOR_ID;
+#endif
+
+   supported_device |= device->deviceinfo.pci->vendor_id == ATI_VENDOR_ID;
+
+   if (!supported_device)
       return VK_ERROR_INCOMPATIBLE_DRIVER;
 
    return radv_physical_device_try_create((struct radv_instance *)vk_instance, device,

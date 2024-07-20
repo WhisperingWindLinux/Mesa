@@ -745,3 +745,10 @@ option(
     'none', 'dri2'
   ],
 )
+
+option(
+  'intel-virtio-experimental',
+  type : 'boolean',
+  value : false,
+  description : 'use experimental virtio backend for intel driver',
+)

@@ -1885,6 +1885,8 @@ iris_bufmgr_destroy(struct iris_bufmgr *bufmgr)
 
    iris_bufmgr_destroy_global_vm(bufmgr);
 
+   intel_virtio_unref_fd(bufmgr->fd);
+
    close(bufmgr->fd);
 
    simple_mtx_unlock(&bufmgr->lock);
@@ -2344,6 +2346,8 @@ iris_bufmgr_create(struct intel_device_info *devinfo, int fd, bool bo_reuse)
    if (bufmgr->fd == -1)
       goto error_dup;
 
+   intel_virtio_ref_fd(bufmgr->fd);
+
    p_atomic_set(&bufmgr->refcount, 1);
 
    simple_mtx_init(&bufmgr->lock, mtx_plain);
@@ -2495,6 +2499,7 @@ error_bucket_cache:
       util_vma_heap_finish(&bufmgr->vma_allocator[i]);
    iris_bufmgr_destroy_global_vm(bufmgr);
 error_init_vm:
+   intel_virtio_unref_fd(bufmgr->fd);
    close(bufmgr->fd);
 error_dup:
    free(bufmgr);

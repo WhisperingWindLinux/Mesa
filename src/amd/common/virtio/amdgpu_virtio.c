@@ -574,6 +574,41 @@ int amdvgpu_cs_query_reset_state2(void *_dev, uint64_t *flags)
    return 0;
 }
 
+static
+int amdvgpu_cs_query_fence_status(struct amdgpu_cs_fence *fence,
+                                  uint64_t timeout_ns,
+                                  uint64_t flags,
+                                  uint32_t *expired)
+{
+   struct amdvgpu_context *ctx = (struct amdvgpu_context *)fence->context;
+   unsigned req_len = sizeof(struct amdgpu_ccmd_cs_query_fence_status_req);
+   unsigned rsp_len = sizeof(struct amdgpu_ccmd_cs_query_fence_status_rsp);
+
+   uint8_t buf[req_len];
+   struct amdgpu_ccmd_cs_query_fence_status_req *req = (void *)buf;
+   struct amdgpu_ccmd_cs_query_fence_status_rsp *rsp;
+
+   amdvgpu_device_handle dev = ctx->dev;
+
+   req->hdr = AMDGPU_CCMD(CS_QUERY_FENCE_STATUS, req_len);
+   req->ctx_id = ctx->host_context_id;
+   req->ip_type = fence->ip_type;
+   req->ip_instance = fence->ip_instance;
+   req->ring = fence->ring;
+   req->fence = fence->fence;
+   req->timeout_ns = timeout_ns;
+   req->flags = flags;
+
+   rsp = vdrm_alloc_rsp(dev->vdev, &req->hdr, rsp_len);
+
+   int r = vdrm_send_req_wrapper(dev, &req->hdr, &rsp->hdr, true);
+
+   if (r == 0)
+      *expired = rsp->expired;
+
+   return r;
+}
+
 static int amdvgpu_cs_syncobj_wait(amdvgpu_device_handle dev, uint32_t *handles,
                                   unsigned num_handles, int64_t timeout_nsec,
                                   unsigned flags, uint32_t *first_signaled) {
@@ -708,6 +743,7 @@ struct libdrm_amdgpu * ac_init_libdrm_amdgpu_for_virtio(void) {
    libdrm_amdgpu->vm_reserve_vmid = (amdgpu_vm_reserve_vmid_type) amdvgpu_vm_reserve_vmid;
    libdrm_amdgpu->vm_unreserve_vmid = (amdgpu_vm_unreserve_vmid_type) amdvgpu_vm_unreserve_vmid;
    libdrm_amdgpu->cs_ctx_stable_pstate = (amdgpu_cs_ctx_stable_pstate_type) amdvgpu_cs_ctx_stable_pstate;
+   libdrm_amdgpu->cs_query_fence_status = (amdgpu_cs_query_fence_status_type) amdvgpu_cs_query_fence_status;
 
    /* For this function we can use the stock libdrm_amdgpu version. */
    libdrm_amdgpu->va_get_start_addr = (amdgpu_va_get_start_addr_type) libdrm_amdgpu_va_get_start_addr;

@@ -19,6 +19,7 @@ enum amdgpu_ccmd {
    AMDGPU_CCMD_CREATE_CTX,
    AMDGPU_CCMD_RESERVE_VMID,
    AMDGPU_CCMD_SET_PSTATE,
+   AMDGPU_CCMD_CS_QUERY_FENCE_STATUS,
 };
 
 struct amdgpu_ccmd_rsp {
@@ -239,6 +240,33 @@ struct amdgpu_ccmd_set_pstate_rsp {
    uint32_t pad;
 };
 AMDGPU_STATIC_ASSERT_SIZE(amdgpu_ccmd_set_pstate_rsp)
+
+/*
+ * AMDGPU_CCMD_CS_QUERY_FENCE_STATUS
+ */
+struct amdgpu_ccmd_cs_query_fence_status_req {
+   struct vdrm_ccmd_req hdr;
+
+   uint32_t ctx_id;
+
+   uint32_t ip_type;
+   uint32_t ip_instance;
+   uint32_t ring;
+
+   uint64_t fence;
+
+   uint64_t timeout_ns;
+   uint64_t flags;
+};
+DEFINE_CAST(vdrm_ccmd_req, amdgpu_ccmd_cs_query_fence_status_req)
+AMDGPU_STATIC_ASSERT_SIZE(amdgpu_ccmd_cs_query_fence_status_req)
+
+struct amdgpu_ccmd_cs_query_fence_status_rsp {
+   struct amdgpu_ccmd_rsp hdr;
+   uint32_t expired;
+   uint32_t pad;
+};
+AMDGPU_STATIC_ASSERT_SIZE(amdgpu_ccmd_cs_query_fence_status_rsp)
 
 #ifdef __GNUC__
 # pragma GCC diagnostic pop

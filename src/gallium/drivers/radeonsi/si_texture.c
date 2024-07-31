@@ -847,7 +847,9 @@ static bool si_texture_get_handle(struct pipe_screen *screen, struct pipe_contex
       if (sscreen->ws->buffer_is_suballocated(res->buf) ||
           /* A DMABUF export always fails if the BO is local. */
           (tex->buffer.flags & RADEON_FLAG_NO_INTERPROCESS_SHARING &&
-           sscreen->info.has_local_buffers)) {
+           sscreen->info.has_local_buffers) ||
+          (tex->buffer.flags & RADEON_FLAG_NO_INTERPROCESS_SHARING &&
+           sscreen->info.is_userq_enabled)) {
          assert(!res->b.is_shared);
 
          /* Allocate a new buffer with PIPE_BIND_SHARED. */

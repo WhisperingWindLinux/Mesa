@@ -153,6 +153,17 @@ amdgpu_userq_init(struct amdgpu_winsys *aws, struct amdgpu_userq *userq, enum am
    if (!userq->doorbell_ptr)
       goto fail;
 
+   /* The VA page table for ring buffer should be ready before job submission so that the packets
+    * submitted can be read by gpu. The same applies for rptr, wptr buffers also.
+    */
+   uint64_t point = p_atomic_read(&aws->vm_timeline_seq_num);
+   r = amdgpu_cs_syncobj_timeline_wait(aws->dev, &aws->vm_timeline_syncobj,
+                                       (uint64_t *)&point, 1, INT64_MAX,
+                                       DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL |
+                                       DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT, NULL);
+   if (r)
+      fprintf(stderr, "amdgpu: waiting for vm fences failed\n");
+
    /* Create the Usermode Queue */
    r = amdgpu_create_userqueue(aws->dev, hw_ip_type, 0,
                                get_real_bo(amdgpu_winsys_bo(userq->doorbell_bo))->kms_handle,

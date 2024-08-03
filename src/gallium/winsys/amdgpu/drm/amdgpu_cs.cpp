@@ -1417,6 +1417,35 @@ static void amdgpu_cs_add_userq_packets(struct amdgpu_userq *userq,
       /* send protected fence packet */
       amdgpu_pkt_add_dw(PKT3(PKT3_PROTECTED_FENCE_SIGNAL, 0, 0));
       amdgpu_pkt_add_dw(0);
+   } else if (userq->ip_type == AMD_IP_SDMA) {
+      /* add ib */
+      amdgpu_sdma_add_align_for_ib_pkt_to_8dw();
+      amdgpu_pkt_add_dw(SDMA_PACKET(SDMA_OPCODE_INDIRECT_BUFFER, 0, 0));
+      amdgpu_pkt_add_dw(cs->chunk_ib[IB_MAIN].va_start);
+      amdgpu_pkt_add_dw(cs->chunk_ib[IB_MAIN].va_start >> 32);
+      amdgpu_pkt_add_dw(cs->chunk_ib[IB_MAIN].ib_bytes / 4);
+      amdgpu_pkt_add_dw(0);
+      amdgpu_pkt_add_dw(0);
+
+      /* send user fence */
+      uint64_t user_fence_va_addr = amdgpu_va_get_start_addr(
+         get_real_bo(amdgpu_winsys_bo(userq->user_fence_bo))->va_handle);
+      ++userq->user_fence_seq_num;
+      amdgpu_pkt_add_dw(SDMA_PACKET(SDMA_OPCODE_FENCE, 0, 0) |
+                        S_50_SDMA_PKT_FENCE_HEADER_TYPE(3));
+      amdgpu_pkt_add_dw(user_fence_va_addr);
+      amdgpu_pkt_add_dw(user_fence_va_addr >> 32);
+      ++userq->user_fence_seq_num;
+      amdgpu_pkt_add_dw(userq->user_fence_seq_num);
+      user_fence_va_addr += 4;
+      amdgpu_pkt_add_dw(SDMA_PACKET(SDMA_OPCODE_FENCE, 0, 0) |
+                        S_50_SDMA_PKT_FENCE_HEADER_TYPE(3));
+      amdgpu_pkt_add_dw(user_fence_va_addr);
+      amdgpu_pkt_add_dw(user_fence_va_addr >> 32);
+      amdgpu_pkt_add_dw(userq->user_fence_seq_num >> 32);
+
+      /* send protected fence packet */
+      amdgpu_pkt_add_dw(SDMA_PACKET(SDMA_OPCODE_FENCE, SDMA_FENCE_SUB_OPCODE_PROTECTED, 0));
    } else {
       fprintf(stderr, "amdgpu: unsupported userq ip submission = %d\n", userq->ip_type);
    }

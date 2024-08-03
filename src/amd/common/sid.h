@@ -359,6 +359,8 @@
 #define SDMA_WRITE_SUB_OPCODE_TILED                0x1
 #define SDMA_OPCODE_INDIRECT_BUFFER                0x4
 #define SDMA_OPCODE_FENCE                          0x5
+#define    S_50_SDMA_PKT_FENCE_HEADER_TYPE(x)         ((x & 7) << 16)
+#define SDMA_FENCE_SUB_OPCODE_PROTECTED            0x1
 #define SDMA_FENCE_MTYPE_UC                        0x3
 #define SDMA_OPCODE_TRAP                           0x6
 #define SDMA_OPCODE_SEMAPHORE                      0x7
@@ -372,6 +374,7 @@
 #define SDMA_TS_SUB_OPCODE_GET_LOCAL_TIMESTAMP     0x1
 #define SDMA_TS_SUB_OPCODE_GET_GLOBAL_TIMESTAMP    0x2
 #define SDMA_OPCODE_SRBM_WRITE                     0xe
+
 
 /* There is apparently an undocumented HW limitation that
  * prevents the HW from copying the last 255 bytes of (1 << 22) - 1

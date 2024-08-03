@@ -29,6 +29,19 @@ extern "C" {
    num_dw_written++; \
 } while (0)
 
+/* sdma ib packet size is 6, so start addr should end with 2. */
+#define amdgpu_sdma_add_align_for_ib_pkt_to_8dw() do { \
+   uint8_t start = ((uint8_t)(*userq->mono_wptr + num_dw_written) & 7); \
+   uint8_t count = (8 - start + 2) & 7; \
+   for (uint8_t i; i < count; i++) { \
+      if (i) \
+         amdgpu_pkt_add_dw(0); \
+      else \
+         amdgpu_pkt_add_dw(SDMA_PACKET(SDMA_OPCODE_NOP, 0, count - 1)); \
+   } \
+   num_dw_written += count; \
+} while (0)
+
 #define amdgpu_pkt_end() do { \
    *userq->mono_wptr += num_dw_written; \
 } while (0)

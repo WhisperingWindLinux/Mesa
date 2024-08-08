@@ -404,7 +404,8 @@ new_shader_window(struct aub_mem *mem, uint64_t address, const char *desc)
          if (context.file->devinfo.ver >= 9) {
             brw_disassemble_with_errors(&context.file->brw,
                                         (const uint8_t *) shader_bo.map +
-                                        (address - shader_bo.addr), 0, f);
+                                        (address - shader_bo.addr), 0,
+                                        NULL, f);
          } else {
             elk_disassemble_with_errors(&context.file->elk,
                                         (const uint8_t *) shader_bo.map +

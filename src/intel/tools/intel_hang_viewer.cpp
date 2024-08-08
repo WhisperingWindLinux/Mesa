@@ -231,7 +231,8 @@ public:
             if (context.devinfo.ver >= 9) {
                brw_disassemble_with_errors(&context.brw,
                                            (const uint8_t *) bo->map +
-                                           (address - bo->offset), 0, f);
+                                           (address - bo->offset), 0,
+                                           NULL, f);
             } else {
                elk_disassemble_with_errors(&context.elk,
                                            (const uint8_t *) bo->map +

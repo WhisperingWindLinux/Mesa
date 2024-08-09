@@ -38,7 +38,7 @@ void brw_disassemble_with_errors(const struct brw_isa_info *isa,
                                  const void *assembly, int start,
                                  int64_t *lineno_offset, FILE *out);
 void brw_disassemble_with_lineno(const struct brw_isa_info *isa, uint32_t stage,
-                                 uint32_t dispatch_width, uint32_t src_hash,
+                                 int dispatch_width, uint32_t src_hash,
                                  const void *assembly, int start,
                                  int64_t lineno_offset, FILE *out);
 

@@ -215,7 +215,7 @@ BEGIN_TEST(assembler.long_jump.constaddr)
    bld.reset(program->create_and_insert_block());
 
    //>> s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_add_u32 s0, s0, 32                                         ; 8000ff00 00000020
+   //! s_add_u32 s0, s0, 0x20                                       ; 8000ff00 00000020
    bld.sop1(aco_opcode::p_constaddr_getpc, Definition(PhysReg(0), s2), Operand::zero());
    bld.sop2(aco_opcode::p_constaddr_addlo, Definition(PhysReg(0), s1), bld.def(s1, scc),
             Operand(PhysReg(0), s1), Operand::zero(), Operand::zero());
@@ -282,8 +282,8 @@ BEGIN_TEST(assembler.v_add3_clamp)
       if (!setup_cs(NULL, (amd_gfx_level)i))
          continue;
 
-      //~gfx9>> integer addition + clamp ; d1ff8000 02010080
-      //~gfx10>> integer addition + clamp ; d76d8000 02010080
+      //~gfx9>> v_add3_u32 v0, 0, 0, 0 clamp ; d1ff8000 02010080
+      //~gfx10>> v_add3_u32 v0, 0, 0, 0 clamp ; d76d8000 02010080
       aco_ptr<Instruction> add3{create_instruction(aco_opcode::v_add3_u32, Format::VOP3, 3, 1)};
       add3->operands[0] = Operand::zero();
       add3->operands[1] = Operand::zero();
@@ -331,11 +331,11 @@ BEGIN_TEST(assembler.p_constaddr)
    dst1.setFixed(PhysReg(2));
 
    //>> s_getpc_b64 s[0:1] ; be801c00
-   //! s_add_u32 s0, s0, 44 ; 8000ff00 0000002c
+   //! s_add_u32 s0, s0, 0x2c ; 8000ff00 0000002c
    bld.pseudo(aco_opcode::p_constaddr, dst0, Operand::zero());
 
    //! s_getpc_b64 s[2:3] ; be821c00
-   //! s_add_u32 s2, s2, 64 ; 8002ff02 00000040
+   //! s_add_u32 s2, s2, 0x40 ; 8002ff02 00000040
    bld.pseudo(aco_opcode::p_constaddr, dst1, Operand::c32(32));
 
    aco::lower_to_hw_instr(program.get());
@@ -527,10 +527,7 @@ BEGIN_TEST(assembler.mubuf)
          ->mubuf()
          .cache = cache_sys_coherent;
 
-      //; if llvm_ver >= 16 and variant == 'gfx11':
-      //;    insert_pattern('buffer_load_b32 v[42:43], off, s[32:35], 0 tfe              ; e0500000 80282a80')
-      //; elif variant == 'gfx11':
-      //;    insert_pattern('buffer_load_b32 v42, off, s[32:35], 0 tfe                   ; e0500000 80282a80')
+      //~gfx11! buffer_load_b32 v[42:43], off, s[32:35], 0 tfe              ; e0500000 80282a80
       //~gfx12! buffer_load_b32 v[42:43], off, s[32:35], null tfe           ; c445007c 0080402a 00000000
       bld.mubuf(aco_opcode::buffer_load_dword, dst, op_s4, Operand(v1), Operand::zero(), 0, false)
          ->mubuf()
@@ -538,37 +535,37 @@ BEGIN_TEST(assembler.mubuf)
 
       /* LDS */
       if (gfx == GFX11) {
-         //~gfx11! buffer_load_lds_b32 off, s[32:35], 0                        ; e0c40000 80080080
+         //~gfx11! buffer_load_lds_b32 off, s[32:35]                           ; e0c40000 80080080
          bld.mubuf(aco_opcode::buffer_load_dword, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
             .lds = true;
 
-         //~gfx11! buffer_load_lds_i8 off, s[32:35], 0                         ; e0b80000 80080080
+         //~gfx11! buffer_load_lds_i8 off, s[32:35]                            ; e0b80000 80080080
          bld.mubuf(aco_opcode::buffer_load_sbyte, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
             .lds = true;
 
-         //~gfx11! buffer_load_lds_i16 off, s[32:35], 0                        ; e0c00000 80080080
+         //~gfx11! buffer_load_lds_i16 off, s[32:35]                           ; e0c00000 80080080
          bld.mubuf(aco_opcode::buffer_load_sshort, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
             .lds = true;
 
-         //~gfx11! buffer_load_lds_u8 off, s[32:35], 0                         ; e0b40000 80080080
+         //~gfx11! buffer_load_lds_u8 off, s[32:35]                            ; e0b40000 80080080
          bld.mubuf(aco_opcode::buffer_load_ubyte, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
             .lds = true;
 
-         //~gfx11! buffer_load_lds_u16 off, s[32:35], 0                        ; e0bc0000 80080080
+         //~gfx11! buffer_load_lds_u16 off, s[32:35]                           ; e0bc0000 80080080
          bld.mubuf(aco_opcode::buffer_load_ushort, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
             .lds = true;
 
-         //~gfx11! buffer_load_lds_format_x off, s[32:35], 0                   ; e0c80000 80080080
+         //~gfx11! buffer_load_lds_format_x off, s[32:35]                      ; e0c80000 80080080
          bld.mubuf(aco_opcode::buffer_load_format_x, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
                    false)
             ->mubuf()
@@ -694,10 +691,7 @@ BEGIN_TEST(assembler.mtbuf)
          ->mtbuf()
          .cache = cache_sys_coherent;
 
-      //; if llvm_ver >= 16 and variant == 'gfx11':
-      //;    insert_pattern('tbuffer_load_format_x v42, off, s[32:35], 0 format:[BUF_FMT_32_32_FLOAT] ; e9900000 80282a80')
-      //; elif variant == 'gfx11':
-      //;    insert_pattern('tbuffer_load_format_x v42, off, s[32:35], 0 format:[BUF_FMT_32_32_FLOAT] tfe ; e9900000 80282a80')
+      //~gfx11! tbuffer_load_format_x v[42:43], off, s[32:35], 0 format:[BUF_FMT_32_32_FLOAT] tfe ; e9900000 80282a80
       //~gfx12! tbuffer_load_format_x v42, off, s[32:35], null format:[BUF_FMT_32_32_FLOAT] ; c460007c 1900402a 00000080
       bld.mtbuf(aco_opcode::tbuffer_load_format_x, dst, op_s4, Operand(v1), Operand::zero(), dfmt,
                 nfmt, 0, false)
@@ -801,9 +795,9 @@ BEGIN_TEST(assembler.mimg)
       bld.mimg(aco_opcode::image_sample, dst_v4, op_s8, op_s4, Operand(v1), op_v1)->mimg().lwe =
          true;
 
-      //~gfx11! image_sample v[84:87], v10, s[64:71], s[32:35] dmask:0xf dim:SQ_RSRC_IMG_1D r128 ; f06c8f00 2010540a
-      //~gfx12! image_sample v[84:87], v10, s[64:71], s[32:35] dmask:0xf dim:SQ_RSRC_IMG_1D r128 ; e7c6c010 10008054 0000000a
-      bld.mimg(aco_opcode::image_sample, dst_v4, op_s8, op_s4, Operand(v1), op_v1)->mimg().r128 =
+      //~gfx11! image_sample v[84:87], v10, s[32:35], s[32:35] dmask:0xf dim:SQ_RSRC_IMG_1D ; f06c8f00 2008540a
+      //~gfx12! image_sample v[84:87], v10, s[32:35], s[32:35] dmask:0xf dim:SQ_RSRC_IMG_1D ; e7c6c010 10008054 0000000a
+      bld.mimg(aco_opcode::image_sample, dst_v4, op_s4, op_s4, Operand(v1), op_v1)->mimg().r128 =
          true;
 
       //~gfx11! image_sample v[84:87], v10, s[64:71], s[32:35] dmask:0xf dim:SQ_RSRC_IMG_1D a16 ; f06d0f00 2010540a
@@ -847,7 +841,7 @@ BEGIN_TEST(assembler.mimg)
       //~gfx12! image_store v[30:33], v10, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_1D ; d3c18000 0000801e 0000000a
       bld.mimg(aco_opcode::image_store, op_s8, Operand(s4), op_v4, op_v1);
 
-      //~gfx11! image_atomic_add v10, v20, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D ; f0300f04 00100a14
+      //~gfx11! image_atomic_add v10, v[20:21], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D ; f0300f04 00100a14
       //~gfx12! image_atomic_add_uint v10, [v20, v21, v0, v0], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D ; d3c30001 0000800a 00001514
       bld.mimg(aco_opcode::image_atomic_add, Definition(op_v1.physReg(), v1), op_s8, Operand(s4),
                op_v1, op_v2)
@@ -855,7 +849,7 @@ BEGIN_TEST(assembler.mimg)
          .dim = ac_image_2d;
 
       /* Atomic with return */
-      //~gfx11! image_atomic_add v10, v20, s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D glc ; f0304f04 00100a14
+      //~gfx11! image_atomic_add v10, v[20:21], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D glc ; f0304f04 00100a14
       //~gfx12! image_atomic_add_uint v10, [v20, v21, v0, v0], s[64:71] dmask:0xf dim:SQ_RSRC_IMG_2D th:TH_ATOMIC_RETURN ; d3c30001 0010800a 00001514
       bld.mimg(aco_opcode::image_atomic_add, Definition(op_v1.physReg(), v1), op_s8, Operand(s4),
                op_v1, op_v2, 0xf, false, false, false, cache_atomic_rtn)
@@ -1164,10 +1158,7 @@ BEGIN_TEST(assembler.vop12c_v128)
       fprintf(output, "llvm_version: %u\n", LLVM_VERSION_MAJOR);
 
       //>> BB0:
-      //; if llvm_ver == 16:
-      //;    insert_pattern('v_mul_f16_e32 v0, v1, v2 ; Error: VGPR_32_Lo128: unknown register 128 ; 6a000501')
-      //; else:
-      //;    insert_pattern('v_mul_f16_e32 v0, v1, v2                                    ; 6a000501')
+      //! v_mul_f16_e32 v0.l, v1.l, v2.l                              ; 6a000501
       bld.vop2(aco_opcode::v_mul_f16, dst_v0, op_v1, op_v2);
 
       //! v_mul_f16_e64 v128, v1, v2                                  ; d5350080 00020501

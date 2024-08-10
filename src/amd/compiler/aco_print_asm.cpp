@@ -404,6 +404,14 @@ check_print_asm_support(Program* program)
 bool
 print_asm(Program* program, std::vector<uint32_t>& binary, unsigned exec_size, FILE* output)
 {
+   if (!(debug_flags & DEBUG_LLVM_DISASM) && program->gfx_level <= GFX11) {
+      char* string = NULL;
+      bool result = disasm_program(program, binary, exec_size, &string);
+      fprintf(output, "%s", string);
+      free(string);
+      return result;
+   }
+
 #if AMD_LLVM_AVAILABLE
    if (program->gfx_level >= GFX8) {
       return print_asm_llvm(program, binary, exec_size, output);

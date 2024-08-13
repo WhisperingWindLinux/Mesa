@@ -2077,13 +2077,8 @@ anv_image_is_pat_compressible(struct anv_device *device, struct anv_image *image
     *    the VkImageCreateInfo structure passed to vkCreateImage.
     */
 
-   /* There are no compression-enabled modifiers on Xe2, and all legacy
-    * modifiers are not defined with compression. We simply disable
-    * compression on all modifiers.
-    *
-    * We disable this in anv_AllocateMemory() as well.
-    */
-   if (image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
+   if (image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+       !isl_drm_modifier_has_aux(image->vk.drm_format_mod))
       return false;
 
    return true;

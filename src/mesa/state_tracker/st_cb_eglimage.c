@@ -453,6 +453,13 @@ st_bind_egl_image(struct gl_context *ctx,
       }
    } else {
       texFormat = st_pipe_format_to_mesa_format(stimg->format);
+
+      /* If needed and the gallium driver supports it, ask for a fallback format. */
+      if (texFormat == MESA_FORMAT_NONE && st->screen->get_fallback_format_for) {
+         enum pipe_format fallback = st->screen->get_fallback_format_for(st->screen, stimg->format);
+         texFormat = st_pipe_format_to_mesa_format(fallback);
+      }
+
       /* Use previously derived internalformat as specified by
        * EXT_EGL_image_storage.
        */

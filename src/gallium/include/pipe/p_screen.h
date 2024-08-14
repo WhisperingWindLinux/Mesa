@@ -225,6 +225,12 @@ struct pipe_screen {
                                   bool cpu);
 
    /**
+    * Get a fallback format.
+    */
+   enum pipe_format (*get_fallback_format_for)(struct pipe_screen *,
+                                               enum pipe_format format);
+
+   /**
     * Check if the given pipe_format is supported as a texture or
     * drawing surface.
     * \param bindings  bitmask of PIPE_BIND_*

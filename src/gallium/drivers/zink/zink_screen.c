@@ -492,6 +492,8 @@ zink_get_compute_param(struct pipe_screen *pscreen, enum pipe_shader_ir ir_type,
       RET((uint32_t []) { 1 });
 
    case PIPE_COMPUTE_CAP_MAX_SUBGROUPS:
+      RET((uint32_t []) { screen->info.props13.maxComputeWorkgroupSubgroups });
+
    case PIPE_COMPUTE_CAP_MAX_CLOCK_FREQUENCY:
    case PIPE_COMPUTE_CAP_MAX_PRIVATE_SIZE:
    case PIPE_COMPUTE_CAP_MAX_INPUT_SIZE:
@@ -1053,6 +1055,15 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 
    case PIPE_CAP_STRING_MARKER:
       return screen->instance_info.have_EXT_debug_utils;
+
+   case PIPE_CAP_SHADER_SUBGROUP_SIZE:
+      return screen->info.subgroup.subgroupSize;
+   case PIPE_CAP_SHADER_SUBGROUP_SUPPORTED_STAGES:
+      return screen->info.subgroup.supportedStages;
+   case PIPE_CAP_SHADER_SUBGROUP_SUPPORTED_FEATURES:
+      return screen->info.subgroup.supportedOperations;
+   case PIPE_CAP_SHADER_SUBGROUP_QUAD_ALL_STAGES:
+      return screen->info.subgroup.quadOperationsInAllStages;
 
    default:
       return u_pipe_screen_get_param_defaults(pscreen, param);

@@ -1032,7 +1032,11 @@ anv_pipeline_lower_nir(struct anv_pipeline *pipeline,
       NIR_PASS(_, nir, nir_lower_compute_system_values, &options);
    }
 
-   NIR_PASS(_, nir, nir_vk_lower_ycbcr_tex, lookup_ycbcr_conversion, layout);
+   NIR_PASS(_, nir, nir_vk_lower_ycbcr_tex,
+            &(struct nir_vk_lower_ycbcr_tex_options){
+               .lookup_cb = lookup_ycbcr_conversion,
+               .lookup_cb_data = layout,
+            });
 
    if (pipeline->type == ANV_PIPELINE_GRAPHICS ||
        pipeline->type == ANV_PIPELINE_GRAPHICS_LIB) {

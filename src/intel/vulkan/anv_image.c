@@ -692,6 +692,38 @@ add_compression_control_buffer(struct anv_device *device,
                              &image->planes[plane].compr_ctrl_memory_range);
 }
 
+static bool
+want_hiz_wt_for_image(const struct intel_device_info *devinfo,
+                      const struct anv_image *image, uint32_t plane)
+{
+   /* From Wa_14020040029:
+    *
+    * For multi-LOD surfaces with non-pow2 base height when using Tile4 Depth
+    * due to necessity (for MIP’s not starting on 8-row boundaries):
+    * disable Depth write-through, and do Depth-resolve before sampling
+    */
+   if (intel_needs_workaround(devinfo, 14020040029) &&
+       (image->planes[plane].primary_surface.isl.tiling == ISL_TILING_4) &&
+       (image->vk.samples > 1 && anv_is_aligned(image->vk.extent.height, 8)))
+      return false;
+
+   /* Gen12 only supports single-sampled while Gen20+ supports
+    * multi-sampled images.
+    */
+   if (devinfo->ver < 20 && image->vk.samples > 1)
+      return false;
+
+   if ((image->vk.usage & (VK_IMAGE_USAGE_SAMPLED_BIT |
+                           VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) == 0)
+      return false;
+
+   /* If this image has the maximum number of samples supported by
+    * running platform and will be used as a texture, put the HiZ surface
+    * in write-through mode so that we can sample from it.
+    */
+   return true;
+}
+
 /**
  * The return code indicates whether creation of the VkImage should continue
  * or fail, not whether the creation of the aux surface succeeded.  If the aux
@@ -746,9 +778,7 @@ add_aux_surface_if_supported(struct anv_device *device,
                                  &image->planes[plane].primary_surface.isl,
                                  &image->planes[plane].aux_surface.isl)) {
          image->planes[plane].aux_usage = ISL_AUX_USAGE_HIZ;
-      } else if (image->vk.usage & (VK_IMAGE_USAGE_SAMPLED_BIT |
-                                    VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) &&
-                 image->vk.samples == 1) {
+      } else if (want_hiz_wt_for_image(device->info, image, plane)) {
          /* If it's used as an input attachment or a texture and it's
           * single-sampled (this is a requirement for HiZ+CCS write-through
           * mode), use write-through mode so that we don't need to resolve

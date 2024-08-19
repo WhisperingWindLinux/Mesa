@@ -1855,6 +1855,7 @@ pack_blit_event_clear_value(const VkClearValue *val, enum pipe_format format, ui
 
 static void
 event_blit_setup(struct tu_cs *cs,
+                 uint32_t buffer_id,
                  const struct tu_render_pass_attachment *att,
                  enum a6xx_blit_event_type blit_event_type,
                  uint32_t clear_mask)
@@ -1872,7 +1873,8 @@ event_blit_setup(struct tu_cs *cs,
                            vk_format_is_int(att->format) ||
                            vk_format_is_depth_or_stencil(att->format),
                         .depth = vk_format_is_depth_or_stencil(att->format),
-                        .clear_mask = clear_mask, ));
+                        .clear_mask = clear_mask,
+                        .buffer_id = buffer_id));
 }
 
 struct event_blit_dst_view {
@@ -1957,6 +1959,7 @@ event_blit_run(struct tu_cmd_buffer *cmd,
 static void
 tu7_generic_layer_clear(struct tu_cmd_buffer *cmd,
                         struct tu_cs *cs,
+                        uint32_t buffer_id,
                         enum pipe_format format,
                         uint8_t clear_mask,
                         bool separate_stencil,
@@ -1976,7 +1979,11 @@ tu7_generic_layer_clear(struct tu_cmd_buffer *cmd,
 
    event_blit_dst_view blt_view = blt_view_from_tu_view(iview, layer);
 
-   event_blit_setup(cs, att, BLIT_EVENT_CLEAR, clear_mask);
+   cmd->state.resolve_group.pending_resolves = true;
+   if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE) || TU_DEBUG(CONCURRENT_RESOLVE_BUFFER_ID_ZERO))
+      buffer_id = 0;
+
+   event_blit_setup(cs, buffer_id, att, BLIT_EVENT_CLEAR, clear_mask);
    event_blit_run<A7XX>(cmd, cs, att, &blt_view, separate_stencil);
 }
 
@@ -3078,6 +3085,23 @@ TU_GENX(tu_resolve_sysmem);
 
 template <chip CHIP>
 static void
+tu_emit_end_resolve_group(struct tu_cmd_buffer *cmd,
+                          struct tu_cs *cs)
+{
+   if (!cmd->state.resolve_group.pending_resolves)
+      return;
+
+   cmd->state.resolve_group.pending_resolves = false;
+   cmd->state.resolve_group.buffer_id = 0;
+
+   if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE))
+      return;
+
+   tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_END_RESOLVE_GROUP);
+}
+
+template <chip CHIP>
+static void
 clear_image_cp_blit(struct tu_cmd_buffer *cmd,
                     struct tu_image *image,
                     const VkClearValue *clear_value,
@@ -3146,13 +3170,26 @@ clear_image_event_blit(struct tu_cmd_buffer *cmd,
 {
    uint32_t level_count = vk_image_subresource_level_count(&image->vk, range);
    uint32_t layer_count = vk_image_subresource_layer_count(&image->vk, range);
+   uint32_t buffer_id = 0;
    VkFormat vk_format = image->vk.format;
    if (vk_format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
-      if (aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT)
+      if (aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT) {
+         buffer_id = 0x9;
          vk_format = VK_FORMAT_S8_UINT;
-      else
+      } else {
+         buffer_id = 0x8;
          vk_format = VK_FORMAT_D32_SFLOAT;
+      }
    }
+
+   if (!buffer_id) {
+      buffer_id = cmd->state.resolve_group.buffer_id % TU_CONCURRENT_RESOLVE_NUM_BUFFERS;
+      ++cmd->state.resolve_group.buffer_id;
+   }
+
+   cmd->state.resolve_group.pending_resolves = true;
+   if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE) || TU_DEBUG(CONCURRENT_RESOLVE_BUFFER_ID_ZERO))
+      buffer_id = 0;
 
    enum pipe_format format = vk_format_to_pipe_format(vk_format);
 
@@ -3175,7 +3212,8 @@ clear_image_event_blit(struct tu_cmd_buffer *cmd,
                 .sample_0 = vk_format_is_int(vk_format) ||
                             vk_format_is_depth_or_stencil(vk_format),
                 .depth = vk_format_is_depth_or_stencil(vk_format),
-                .clear_mask = aspect_write_mask_generic_clear(format, aspect_mask)));
+                .clear_mask = aspect_write_mask_generic_clear(format, aspect_mask),
+                .buffer_id = buffer_id));
 
    uint32_t clear_vals[4] = {};
    pack_blit_event_clear_value(clear_value, format, clear_vals);
@@ -3285,6 +3323,9 @@ tu_CmdClearColorImage(VkCommandBuffer commandBuffer,
    for (unsigned i = 0; i < rangeCount; i++) {
       clear_image<CHIP>(cmd, image, (const VkClearValue*) pColor, pRanges + i, VK_IMAGE_ASPECT_COLOR_BIT);
    }
+
+   if (use_generic_clear_for_image_clear(cmd, image))
+      tu_emit_end_resolve_group<CHIP>(cmd, &cmd->cs);
 }
 TU_GENX(tu_CmdClearColorImage);
 
@@ -3320,6 +3361,9 @@ tu_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
 
       clear_image<CHIP>(cmd, image, (const VkClearValue*) pDepthStencil, range, range->aspectMask);
    }
+
+   if (use_generic_clear_for_image_clear(cmd, image))
+      tu_emit_end_resolve_group<CHIP>(cmd, &cmd->cs);
 
    tu_lrz_clear_depth_image<CHIP>(cmd, image, pDepthStencil, rangeCount, pRanges);
 }
@@ -3508,6 +3552,7 @@ template <chip CHIP>
 static void
 clear_gmem_attachment(struct tu_cmd_buffer *cmd,
                       struct tu_cs *cs,
+                      uint32_t buffer_id,
                       enum pipe_format format,
                       uint8_t clear_mask,
                       uint32_t gmem_offset,
@@ -3517,8 +3562,13 @@ clear_gmem_attachment(struct tu_cmd_buffer *cmd,
    tu_cs_emit(cs, A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT(
             blit_base_format<CHIP>(format, false, true)));
 
+   cmd->state.resolve_group.pending_resolves = true;
+   if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE) || TU_DEBUG(CONCURRENT_RESOLVE_BUFFER_ID_ZERO))
+      buffer_id = 0;
+
    tu_cs_emit_regs(cs, A6XX_RB_BLIT_INFO(.type = BLIT_EVENT_CLEAR,
-                                         .clear_mask = clear_mask));
+                                         .clear_mask = clear_mask,
+                                         .buffer_id = buffer_id));
 
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_BLIT_BASE_GMEM, 1);
    tu_cs_emit(cs, gmem_offset);
@@ -3559,20 +3609,23 @@ tu_emit_clear_gmem_attachment(struct tu_cmd_buffer *cmd,
       uint32_t layer = i + base_layer;
       if (att->format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
          if (mask & VK_IMAGE_ASPECT_DEPTH_BIT) {
-            clear_gmem_attachment<CHIP>(cmd, cs, PIPE_FORMAT_Z32_FLOAT, 0xf,
+            clear_gmem_attachment<CHIP>(cmd, cs, 0x8, PIPE_FORMAT_Z32_FLOAT, 0xf,
                                   tu_attachment_gmem_offset(cmd, att, layer), value);
          }
          if (mask & VK_IMAGE_ASPECT_STENCIL_BIT) {
-            clear_gmem_attachment<CHIP>(cmd, cs, PIPE_FORMAT_S8_UINT, 0xf,
+            clear_gmem_attachment<CHIP>(cmd, cs, 0x9, PIPE_FORMAT_S8_UINT, 0xf,
                                   tu_attachment_gmem_offset_stencil(cmd, att, layer), value);
          }
       } else {
-         clear_gmem_attachment<CHIP>(cmd, cs, format, aspect_write_mask(format, mask),
+         uint32_t buffer_id = cmd->state.resolve_group.buffer_id % TU_CONCURRENT_RESOLVE_NUM_BUFFERS;
+         ++cmd->state.resolve_group.buffer_id;
+         clear_gmem_attachment<CHIP>(cmd, cs, buffer_id, format, aspect_write_mask(format, mask),
                                tu_attachment_gmem_offset(cmd, att, layer), value);
       }
    }
 
    tu_flush_for_access(&cmd->state.renderpass_cache, TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
+   tu_emit_end_resolve_group<CHIP>(cmd, cs);
 
    trace_end_gmem_clear(&cmd->trace, cs);
 }
@@ -3711,17 +3764,21 @@ tu7_clear_attachment_generic_single_rect(
 
       if (att->format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
          if (clear_att->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
-            tu7_generic_layer_clear(cmd, cs, PIPE_FORMAT_Z32_FLOAT, mask,
+            tu7_generic_layer_clear(cmd, cs, 0x8, PIPE_FORMAT_Z32_FLOAT, mask,
                                     false, layer, value, a);
          }
          if (clear_att->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) {
-            tu7_generic_layer_clear(cmd, cs, PIPE_FORMAT_S8_UINT, mask, true,
+            tu7_generic_layer_clear(cmd, cs, 0x9, PIPE_FORMAT_S8_UINT, mask, true,
                                     layer, value, a);
          }
       } else {
-         tu7_generic_layer_clear(cmd, cs, format, mask, false, layer, value, a);
+         uint32_t buffer_id = cmd->state.resolve_group.buffer_id % TU_CONCURRENT_RESOLVE_NUM_BUFFERS;
+         ++cmd->state.resolve_group.buffer_id;
+         tu7_generic_layer_clear(cmd, cs, buffer_id, format, mask, false, layer, value, a);
       }
    }
+
+   tu_emit_end_resolve_group<A7XX>(cmd, cs);
 }
 
 static void
@@ -3938,20 +3995,24 @@ tu7_generic_clear_attachment(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint32
          aspect_write_mask_generic_clear(format, att->clear_mask);
       if (att->format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
          if (att->clear_mask & VK_IMAGE_ASPECT_DEPTH_BIT) {
-            tu7_generic_layer_clear(cmd, cs, PIPE_FORMAT_Z32_FLOAT, mask,
+            tu7_generic_layer_clear(cmd, cs, 0x8, PIPE_FORMAT_Z32_FLOAT, mask,
                                     false, layer, value, a);
          }
          if (att->clear_mask & VK_IMAGE_ASPECT_STENCIL_BIT) {
-            tu7_generic_layer_clear(cmd, cs, PIPE_FORMAT_S8_UINT, mask, true,
+            tu7_generic_layer_clear(cmd, cs, 0x9, PIPE_FORMAT_S8_UINT, mask, true,
                                     layer, value, a);
          }
       } else {
-         tu7_generic_layer_clear(cmd, cs, format, mask, false, layer, value, a);
+         uint32_t buffer_id = cmd->state.resolve_group.buffer_id % TU_CONCURRENT_RESOLVE_NUM_BUFFERS;
+         ++cmd->state.resolve_group.buffer_id;
+         tu7_generic_layer_clear(cmd, cs, buffer_id, format, mask, false, layer, value, a);
       }
    }
 
    tu_flush_for_access(&cmd->state.renderpass_cache,
                        TU_ACCESS_BLIT_WRITE_GMEM, TU_ACCESS_NONE);
+
+   TU_CALLX(cmd->device, tu_emit_end_resolve_group)(cmd, cs);
 
    trace_end_generic_clear(&cmd->trace, cs);
 }
@@ -3967,7 +4028,18 @@ tu_emit_blit(struct tu_cmd_buffer *cmd,
              bool separate_stencil)
 {
    assert(blit_event_type != BLIT_EVENT_CLEAR);
+   uint32_t buffer_id = 0;
    uint32_t clear_mask = 0;
+
+   if (attachment->format == VK_FORMAT_D32_SFLOAT_S8_UINT) {
+      if (!separate_stencil)
+         buffer_id = 0x8;
+      else
+         buffer_id = 0x9;
+   } else {
+      buffer_id = cmd->state.resolve_group.buffer_id % TU_CONCURRENT_RESOLVE_NUM_BUFFERS;
+      ++cmd->state.resolve_group.buffer_id;
+   }
 
    /* BLIT_EVENT_STORE_AND_CLEAR would presumably swallow the
     * BLIT_EVENT_CLEAR at the start of a renderpass, and be more efficient.
@@ -4001,7 +4073,11 @@ tu_emit_blit(struct tu_cmd_buffer *cmd,
       tu_cs_emit_array(cs, clear_vals, 4);
    }
 
-   event_blit_setup(cs, attachment, blit_event_type, clear_mask);
+   cmd->state.resolve_group.pending_resolves = true;
+   if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE) || TU_DEBUG(CONCURRENT_RESOLVE_BUFFER_ID_ZERO))
+      buffer_id = 0;
+
+   event_blit_setup(cs, buffer_id, attachment, blit_event_type, clear_mask);
 
    for_each_layer(i, attachment->clear_views, cmd->state.framebuffer->layers) {
       event_blit_dst_view blt_view = blt_view_from_tu_view(iview, i);
@@ -4238,6 +4314,8 @@ tu_load_gmem_attachment(struct tu_cmd_buffer *cmd,
 
       if (load_stencil)
          tu_emit_blit<CHIP>(cmd, cs, iview, attachment, NULL, BLIT_EVENT_LOAD, true);
+
+      tu_emit_end_resolve_group<CHIP>(cmd, cs);
    }
 
    if (cond_exec)
@@ -4560,6 +4638,8 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
          tu_emit_blit<CHIP>(cmd, cs, iview, src, clear_value, BLIT_EVENT_STORE, false);
       if (store_separate_stencil)
          tu_emit_blit<CHIP>(cmd, cs, iview, src, clear_value, BLIT_EVENT_STORE, true);
+
+      tu_emit_end_resolve_group<CHIP>(cmd, cs);
 
       if (cond_exec) {
          tu_end_load_store_cond_exec(cmd, cs, false);

@@ -48,7 +48,11 @@ enum tu_debug_flags
    TU_DEBUG_FDM = 1 << 23,
    TU_DEBUG_NOCONFORM = 1 << 24,
    TU_DEBUG_RD = 1 << 25,
+   TU_DEBUG_CONCURRENT_RESOLVE_DISABLE = 1 << 26,
+   TU_DEBUG_CONCURRENT_RESOLVE_BUFFER_ID_ZERO = 1 << 27,
 };
+
+#define TU_CONCURRENT_RESOLVE_NUM_BUFFERS 8
 
 struct tu_env {
     uint32_t debug;

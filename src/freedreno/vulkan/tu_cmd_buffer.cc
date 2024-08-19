@@ -1293,11 +1293,17 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
        * change per-RP and don't require a WFI to take effect, only CCU inval/flush
        * events are required.
        */
-      tu_cs_emit_regs(cs, RB_CCU_CNTL(CHIP,
-         .gmem_fast_clear_disable =
-            !dev->physical_device->info->a6xx.has_gmem_fast_clear,
-         .concurrent_resolve = dev->physical_device->info->a6xx.concurrent_resolve,
-      ));
+      if (TU_DEBUG(CONCURRENT_RESOLVE_DISABLE)) {
+         tu_cs_emit_regs(cs, RB_CCU_CNTL(CHIP,
+            .gmem_fast_clear_disable =
+               !dev->physical_device->info->a6xx.has_gmem_fast_clear,
+            .concurrent_resolve = dev->physical_device->info->a6xx.concurrent_resolve,
+         ));
+      } else {
+         tu_cs_emit_regs(cs, RB_CCU_CNTL(CHIP,
+            .unknown = 0x68,
+         ));
+      }
       tu_cs_emit_wfi(cs);
    }
 

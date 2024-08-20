@@ -812,20 +812,53 @@ radv_amdgpu_cs_execute_ib(struct radeon_cmdbuf *_cs, struct radeon_winsys_bo *bo
       radeon_emit(&cs->base, ib_va >> 32);
       radeon_emit(&cs->base, cdw);
    } else {
+      const enum amd_ip_type ip_type = cs->hw_ip;
+      const uint32_t ib_pad_dw_mask = cs->ws->info.ip[ip_type].ib_pad_dw_mask;
+      const uint32_t ib_alignment = cs->ws->info.ip[ip_type].ib_alignment;
+      const uint32_t postamble_dw_size = ib_pad_dw_mask + 1;
       const uint32_t ib_size = radv_amdgpu_cs_get_initial_size(cs->ws, cs->hw_ip);
       VkResult result;
+
+      const uint32_t chain_data[] = {
+         PKT3(PKT3_INDIRECT_BUFFER, 2, 0),
+         0,
+         0,
+         S_3F2_CHAIN(1) | S_3F2_VALID(1) | postamble_dw_size,
+      };
+      const uint32_t jump_trailer_size = align(sizeof(chain_data), (ib_pad_dw_mask + 1) * 4);
+      const uint32_t jump_trailer_offset = align(jump_trailer_size, ib_alignment);
+      const uint64_t jump_trailer_va = ib_va - jump_trailer_offset + sizeof(chain_data);
+
+      /* Patch the DGC IB */
+      radeon_emit(&cs->base, PKT3(PKT3_WRITE_DATA, 2 + ARRAY_SIZE(chain_data), predicate));
+      radeon_emit(&cs->base, S_370_DST_SEL(V_370_MEM) | S_370_WR_CONFIRM(1) | S_370_ENGINE_SEL(V_370_ME));
+      radeon_emit(&cs->base, jump_trailer_va);
+      radeon_emit(&cs->base, jump_trailer_va >> 32);
+      radeon_emit_array(&cs->base, chain_data, ARRAY_SIZE(chain_data));
+
+      uint64_t *ib_va_ptr = (uint64_t *)(cs->base.buf + cs->base.cdw - 3);
 
       /* Finalize the current CS without chaining to execute the external IB. */
       radv_amdgpu_cs_finalize(_cs);
 
-      radv_amdgpu_cs_add_ib_buffer(cs, bo, ib_va, cdw);
+      /* Chain this CS to the DGC CS. */
+      _cs->buf[_cs->cdw - 4] = PKT3(PKT3_INDIRECT_BUFFER, 2, 0);
+      _cs->buf[_cs->cdw - 3] = ib_va;
+      _cs->buf[_cs->cdw - 2] = ib_va >> 32;
+      _cs->buf[_cs->cdw - 1] = S_3F2_CHAIN(1) | S_3F2_VALID(1) | cdw;
 
-      /* Start a new CS which isn't chained to any previous CS. */
+      /* Start a new CS which which is the postamble for the DGC CS. */
       result = radv_amdgpu_cs_get_new_ib(_cs, ib_size);
       if (result != VK_SUCCESS) {
          cs->base.cdw = 0;
          cs->status = result;
       }
+
+      /* Set the postamble IB VA in the DGC CS. */
+      *ib_va_ptr = radv_amdgpu_winsys_bo(cs->ib_buffer)->base.va;
+
+      /* Grow this postamble CS to continue. */
+      radv_amdgpu_cs_grow(_cs, ib_size);
    }
 }
 

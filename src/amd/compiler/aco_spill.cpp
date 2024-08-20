@@ -1227,7 +1227,7 @@ spill_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& inst
    assert(temp.type() == RegType::vgpr && !temp.is_linear());
 
    Builder bld(ctx.program, &instructions);
-   if (temp.size() > 1) {
+   if (temp.size() > 4) {
       Instruction* split{
          create_instruction(aco_opcode::p_split_vector, Format::PSEUDO, 1, temp.size())};
       split->operands[0] = Operand(temp);
@@ -1246,11 +1246,36 @@ spill_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& inst
             instr->mubuf().cache.value = ac_swizzled;
          }
       }
-   } else if (ctx.program->gfx_level >= GFX9) {
-      bld.scratch(aco_opcode::scratch_store_dword, Operand(v1), ctx.scratch_rsrc, temp, offset,
+      return;
+   }
+
+   aco_opcode opcode;
+   switch (temp.size()) {
+   case 4:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx4
+                                              : aco_opcode::buffer_store_dwordx4;
+      break;
+   case 3:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx3
+                                              : aco_opcode::buffer_store_dwordx3;
+      break;
+   case 2:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx2
+                                              : aco_opcode::buffer_store_dwordx2;
+      break;
+   case 1:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dword
+                                              : aco_opcode::buffer_store_dword;
+      break;
+   default:
+      unreachable("Unhandled vector size!\n");
+   }
+
+   if (ctx.program->gfx_level >= GFX9) {
+      bld.scratch(opcode, Operand(v1), ctx.scratch_rsrc, temp, offset,
                   memory_sync_info(storage_vgpr_spill, semantic_private));
    } else {
-      Instruction* instr = bld.mubuf(aco_opcode::buffer_store_dword, ctx.scratch_rsrc, Operand(v1),
+      Instruction* instr = bld.mubuf(opcode, ctx.scratch_rsrc, Operand(v1),
                                      scratch_offset, temp, offset, false);
       instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
       instr->mubuf().cache.value = ac_swizzled;
@@ -1291,11 +1316,36 @@ reload_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& ins
          }
       }
       bld.insert(vec);
-   } else if (ctx.program->gfx_level >= GFX9) {
-      bld.scratch(aco_opcode::scratch_load_dword, def, Operand(v1), ctx.scratch_rsrc, offset,
+      return;
+   }
+
+   aco_opcode opcode;
+   switch (def.size()) {
+   case 4:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx4
+                                              : aco_opcode::buffer_load_dwordx4;
+      break;
+   case 3:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx3
+                                              : aco_opcode::buffer_load_dwordx3;
+      break;
+   case 2:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx2
+                                              : aco_opcode::buffer_load_dwordx2;
+      break;
+   case 1:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dword
+                                              : aco_opcode::buffer_load_dword;
+      break;
+   default:
+      unreachable("Unhandled vector size!\n");
+   }
+
+   if (ctx.program->gfx_level >= GFX9) {
+      bld.scratch(opcode, def, Operand(v1), ctx.scratch_rsrc, offset,
                   memory_sync_info(storage_vgpr_spill, semantic_private));
    } else {
-      Instruction* instr = bld.mubuf(aco_opcode::buffer_load_dword, def, ctx.scratch_rsrc,
+      Instruction* instr = bld.mubuf(opcode, def, ctx.scratch_rsrc,
                                      Operand(v1), scratch_offset, offset, false);
       instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
       instr->mubuf().cache.value = ac_swizzled;

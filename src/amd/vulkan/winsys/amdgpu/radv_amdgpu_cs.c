@@ -606,9 +606,9 @@ radv_amdgpu_cs_chain(struct radeon_cmdbuf *cs, struct radeon_cmdbuf *next_cs, bo
    acs->chained_to = next_acs;
 
    cs->buf[cs->cdw - 4] = PKT3(PKT3_INDIRECT_BUFFER, 2, 0);
-   cs->buf[cs->cdw - 3] = next_acs->ib.ib_mc_address;
-   cs->buf[cs->cdw - 2] = next_acs->ib.ib_mc_address >> 32;
-   cs->buf[cs->cdw - 1] = S_3F2_CHAIN(1) | S_3F2_VALID(1) | S_3F2_PRE_ENA(pre_ena) | next_acs->ib.size;
+   cs->buf[cs->cdw - 3] = next_acs->ib_buffers[0].va;
+   cs->buf[cs->cdw - 2] = next_acs->ib_buffers[0].va >> 32;
+   cs->buf[cs->cdw - 1] = S_3F2_CHAIN(1) | S_3F2_VALID(1) | S_3F2_PRE_ENA(pre_ena) | next_acs->ib_buffers[0].cdw;
 
    return true;
 }

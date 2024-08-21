@@ -391,6 +391,9 @@ midgard_preprocess_nir(nir_shader *nir, unsigned gpu_id)
    /* lower MSAA image operations to 3D load before coordinate lowering */
    NIR_PASS_V(nir, pan_nir_lower_image_ms);
 
+   NIR_PASS_V(nir, pan_lower_buf_image_coords);
+   NIR_PASS_V(nir, pan_lower_buf_tex_coords);
+
    /* Midgard image ops coordinates are 16-bit instead of 32-bit */
    NIR_PASS_V(nir, midgard_nir_lower_image_bitsize);
 

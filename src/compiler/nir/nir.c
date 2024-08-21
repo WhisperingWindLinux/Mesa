@@ -2541,21 +2541,51 @@ nir_get_single_slot_attribs_mask(uint64_t attribs, uint64_t dual_slot)
    return attribs;
 }
 
+
+static nir_alu_type
+image_type_for_format(enum pipe_format format, unsigned bit_size)
+{
+   if (util_format_is_pure_uint(format))
+      return nir_type_uint | bit_size;
+   else if (util_format_is_pure_sint(format))
+      return nir_type_int | bit_size;
+   else
+      return nir_type_float | bit_size;
+}
+
+bool
+util_format_is_pure_uint(enum pipe_format format) ATTRIBUTE_CONST;
+
 void
 nir_rewrite_image_intrinsic(nir_intrinsic_instr *intrin, nir_def *src,
                             bool bindless)
 {
    enum gl_access_qualifier access = nir_intrinsic_access(intrin);
 
+   nir_variable *var = nir_intrinsic_get_var(intrin, 0);
+
    /* Image intrinsics only have one of these */
    assert(!nir_intrinsic_has_src_type(intrin) ||
           !nir_intrinsic_has_dest_type(intrin));
 
    nir_alu_type data_type = nir_type_invalid;
-   if (nir_intrinsic_has_src_type(intrin))
+   if (nir_intrinsic_has_src_type(intrin)) {
+      assert(intrin->intrinsic == nir_intrinsic_image_deref_store);
       data_type = nir_intrinsic_src_type(intrin);
-   if (nir_intrinsic_has_dest_type(intrin))
+      if (data_type == nir_type_invalid &&
+          var->data.image.format != PIPE_FORMAT_NONE) {
+         data_type = image_type_for_format(var->data.image.format,
+                                           nir_src_bit_size(intrin->src[1]));
+      }
+   }
+   if (nir_intrinsic_has_dest_type(intrin)) {
       data_type = nir_intrinsic_dest_type(intrin);
+      if (data_type == nir_type_invalid &&
+          var->data.image.format != PIPE_FORMAT_NONE) {
+         data_type = image_type_for_format(var->data.image.format,
+                                           intrin->def.bit_size);
+      }
+   }
 
    nir_atomic_op atomic_op = 0;
    if (nir_intrinsic_has_atomic_op(intrin))
@@ -2581,8 +2611,6 @@ nir_rewrite_image_intrinsic(nir_intrinsic_instr *intrin, nir_def *src,
    default:
       unreachable("Unhanded image intrinsic");
    }
-
-   nir_variable *var = nir_intrinsic_get_var(intrin, 0);
 
    /* Only update the format if the intrinsic doesn't have one set */
    if (nir_intrinsic_format(intrin) == PIPE_FORMAT_NONE)

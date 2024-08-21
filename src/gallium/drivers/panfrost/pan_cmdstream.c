@@ -1004,7 +1004,6 @@ panfrost_upload_txs_sysval(struct panfrost_batch *batch,
    assert(dim);
 
    if (tex->target == PIPE_BUFFER) {
-      assert(dim == 1);
       unsigned buf_size = tex->u.buf.size / util_format_get_blocksize(tex->format);
       uniform->i[0] = MIN2(buf_size, PAN_MAX_TEXEL_BUFFER_ELEMENTS);
       return;
@@ -1839,10 +1838,15 @@ emit_image_bufs(struct panfrost_batch *batch, enum pipe_shader_type shader,
       }
 
       if (is_buffer) {
+         unsigned width = rsrc->base.width0 / util_format_get_blocksize(image->format);
+
+         const int max_width = 1 << 16;
+
          pan_pack(bufs + (i * 2) + 1, ATTRIBUTE_BUFFER_CONTINUATION_3D, cfg) {
-            cfg.s_dimension =
-               rsrc->base.width0 / util_format_get_blocksize(image->format);
-            cfg.t_dimension = cfg.r_dimension = 1;
+            cfg.s_dimension = MIN2(width, max_width);
+            cfg.t_dimension = DIV_ROUND_UP(width, max_width);
+            cfg.r_dimension = 1;
+            cfg.row_stride = max_width * util_format_get_blocksize(image->format);
          }
 
          continue;
@@ -1889,8 +1893,9 @@ panfrost_emit_image_attribs(struct panfrost_batch *batch, mali_ptr *buffers,
       return 0;
    }
 
+   /* Gaps in the mask will be filled with empty descriptors */
+   unsigned attr_count = util_last_bit(ctx->image_mask[type]);
    /* Images always need a MALI_ATTRIBUTE_BUFFER_CONTINUATION_3D */
-   unsigned attr_count = shader->info.attribute_count;
    unsigned buf_count = (attr_count * 2) + (PAN_ARCH >= 6 ? 1 : 0);
 
    struct panfrost_ptr bufs =

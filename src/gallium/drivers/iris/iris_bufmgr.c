@@ -1983,9 +1983,29 @@ iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd,
    bo->index = -1;
    bo->real.reusable = false;
    bo->real.imported = true;
-   /* Xe KMD expects at least 1-way coherency for imports */
-   bo->real.heap = IRIS_HEAP_SYSTEM_MEMORY_CACHED_COHERENT;
-   bo->real.mmap_mode = IRIS_MMAP_NONE;
+
+   /* Xe2+: A bo's heap determines its PAT entry, being scanout or not in the
+    * vm_binding step later. Unlike allocation time, we don't know about if
+    * the imported bo will be used for scanout.
+    *
+    * Modifiers supporting compression are compatible
+    * with the display engine, no matter if they are not actually for scanout,
+    * referring to the comment in isl_drm_modifier_needs_display_layout().
+    *
+    * We can simply assume the imported buffer will be to display and assign
+    * compressed + scanout heap to it.
+    */
+   if (modifier == I915_FORMAT_MOD_4_TILED_BMG_CCS) {
+      bo->real.heap = IRIS_HEAP_DEVICE_LOCAL_COMPRESSED_SCANOUT;
+      bo->real.mmap_mode = heap_to_mmap_mode(bufmgr, bo->real.heap);
+   } else if (modifier == I915_FORMAT_MOD_4_TILED_LNL_CCS) {
+      bo->real.heap = IRIS_HEAP_SYSTEM_MEMORY_UNCACHED_COMPRESSED_SCANOUT;
+      bo->real.mmap_mode = heap_to_mmap_mode(bufmgr, bo->real.heap);
+   } else {
+      bo->real.heap = IRIS_HEAP_SYSTEM_MEMORY_CACHED_COHERENT;
+      bo->real.mmap_mode = IRIS_MMAP_NONE;
+   }
+
    if (INTEL_DEBUG(DEBUG_CAPTURE_ALL))
       bo->real.capture = true;
    bo->gem_handle = handle;

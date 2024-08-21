@@ -238,6 +238,11 @@ llvmpipe_fs_variant_linear_llvm(struct llvmpipe_context *lp,
                                 struct lp_fragment_shader *shader,
                                 struct lp_fragment_shader_variant *variant);
 
+struct lp_fragment_shader_variant *
+lp_generate_variant(struct llvmpipe_context *lp,
+                    struct lp_fragment_shader *shader,
+                    const struct lp_fragment_shader_variant_key *key);
+
 void
 lp_debug_fs_variant(struct lp_fragment_shader_variant *variant);
 

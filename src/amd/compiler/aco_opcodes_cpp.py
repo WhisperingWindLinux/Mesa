@@ -14,8 +14,6 @@ namespace aco {
 
 <%
 opcode_names = sorted(instructions.keys())
-can_use_input_modifiers = "".join([instructions[name].input_mod for name in reversed(opcode_names)])
-can_use_output_modifiers = "".join([instructions[name].output_mod for name in reversed(opcode_names)])
 is_atomic = "".join([instructions[name].is_atomic for name in reversed(opcode_names)])
 %>
 
@@ -45,8 +43,6 @@ extern const aco::Info instr_info = {
       ${instructions[name].op.gfx12},
       % endfor
    },
-   std::bitset<${len(opcode_names)}>("${can_use_input_modifiers}"),
-   std::bitset<${len(opcode_names)}>("${can_use_output_modifiers}"),
    std::bitset<${len(opcode_names)}>("${is_atomic}"),
    {
       % for name in opcode_names:
@@ -60,22 +56,49 @@ extern const aco::Info instr_info = {
    },
    {
       % for name in opcode_names:
-      ${instructions[name].operand_size},
-      % endfor
-   },
-   {
-      % for name in opcode_names:
       instr_class::${instructions[name].cls.value},
       % endfor
    },
    {
       % for name in opcode_names:
-      ${hex(instructions[name].definitions)},
+      {
+         % for definition in instructions[name].definitions:
+         {
+            ${definition.alu_type.name},
+            ${definition.bitsize},
+            ${definition.components},
+            ${int(definition.fixed_reg is not None)},
+            ${definition.fixed_reg if definition.fixed_reg is not None else "PhysReg{0}"},
+            ${int(definition.mods)},
+         },
+         % endfor
+      },
       % endfor
    },
    {
       % for name in opcode_names:
-      ${hex(instructions[name].operands)},
+      {
+         % for operand in instructions[name].operands:
+         {
+            ${operand.alu_type.name},
+            ${operand.bitsize},
+            ${operand.components},
+            ${int(operand.fixed_reg is not None)},
+            ${operand.fixed_reg if operand.fixed_reg is not None else "PhysReg{0}"},
+            ${int(operand.mods)},
+         },
+         % endfor
+      },
+      % endfor
+   },
+   {
+      % for (opcode, info) in mimg_opcodes:
+      {aco_opcode::${opcode}, (aco_mimg_op_info)${info}},
+      % endfor
+   },
+   {
+      % for (opcode, info) in mimg_opcodes:
+      {(aco_mimg_op_info)${info}, aco_opcode::${opcode}},
       % endfor
    },
 };
@@ -83,7 +106,7 @@ extern const aco::Info instr_info = {
 }
 """
 
-from aco_opcodes import instructions
+from aco_opcodes import instructions, mimg_opcodes
 from mako.template import Template
 
-print(Template(template).render(instructions=instructions))
+print(Template(template).render(instructions=instructions, mimg_opcodes=mimg_opcodes))

@@ -6,6 +6,7 @@
 
 #include "aco_ir.h"
 
+#include "util/memstream.h"
 #include "util/u_debug.h"
 
 #if AMD_LLVM_AVAILABLE
@@ -404,9 +405,64 @@ check_print_asm_support(Program* program)
 bool
 print_asm(Program* program, std::vector<uint32_t>& binary, unsigned exec_size, FILE* output)
 {
+   if (!(debug_flags & DEBUG_LLVM_DISASM) && program->gfx_level <= GFX11) {
+      char* string = NULL;
+      bool result = disasm_program(program, binary, exec_size, &string);
+      fprintf(output, "%s", string);
+      free(string);
+      return result;
+   }
+
 #if AMD_LLVM_AVAILABLE
    if (program->gfx_level >= GFX8) {
+#if 1
       return print_asm_llvm(program, binary, exec_size, output);
+#else
+      char* string1 = NULL;
+      char* string2 = NULL;
+
+      bool result = disasm_program(program, binary, exec_size, &string1);
+
+      size_t disasm_size = 0;
+      struct u_memstream mem;
+      if (!u_memstream_open(&mem, &string2, &disasm_size))
+         return true;
+
+      bool invalid = print_asm_llvm(program, binary, exec_size, u_memstream_get(&mem));
+      u_memstream_close(&mem);
+
+      if (!invalid && strcmp(string1, string2)) {
+         char* tmp_str1 = string1;
+         char* tmp_str2 = string2;
+         while (tmp_str1 < string1 + strlen(string1) && tmp_str2 < string2 + strlen(string2) &&
+                strchr(tmp_str1, '\n') && strchr(tmp_str2, '\n')) {
+            char* line1 = strchr(tmp_str1, '\n') + 1;
+            char* line2 = strchr(tmp_str2, '\n') + 1;
+            uintptr_t len1 = (uintptr_t)strchr(line1, '\n');
+            uintptr_t len2 = (uintptr_t)strchr(line2, '\n');
+            if (!len1 || !len2)
+               break;
+            len1 -= (uintptr_t)line1;
+            len2 -= (uintptr_t)line2;
+            if (len1 != len2 || strncmp(line1, line2, len1)) {
+               char tmp[1024];
+               memset(tmp, 0, sizeof(tmp));
+               strncpy(tmp, line2, len2);
+               printf("\n- %s\n", tmp);
+               memset(tmp, 0, sizeof(tmp));
+               strncpy(tmp, line1, len1);
+               printf("+ %s\n", tmp);
+            }
+            tmp_str1 += len1;
+            tmp_str2 += len2;
+         }
+      }
+
+      free(string1);
+      free(string2);
+
+      return result;
+#endif
    }
 #endif
 

@@ -88,6 +88,17 @@ $ADB shell rm /vendor/lib64/egl/libGLESv1_CM_emulation.so
 $ADB shell rm /vendor/lib64/egl/libGLESv2_angle.so
 $ADB shell rm /vendor/lib64/egl/libGLESv2_emulation.so
 
+# Check what GLES implementation Surfaceflinger is using before copying the new mesa libraries
+while [ "`$ADB shell dumpsys SurfaceFlinger | grep GLES`" = "" ] ; do sleep 1; done
+$ADB shell dumpsys SurfaceFlinger | grep GLES
+
+# restart Android shell, so that surfaceflinger uses the new libraries
+$ADB shell stop
+$ADB shell start
+
+# Check what GLES implementation Surfaceflinger is using after copying the new mesa libraries
+while [ "`$ADB shell dumpsys SurfaceFlinger | grep GLES`" = "" ] ; do sleep 1; done
+$ADB shell dumpsys SurfaceFlinger | grep GLES
 
 AOSP_RESULTS=/data/results
 uncollapsed_section_switch cuttlefish_test "cuttlefish: testing"

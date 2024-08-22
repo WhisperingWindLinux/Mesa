@@ -81,6 +81,8 @@ typedef struct {
    unsigned padding_for_no_dest;
 
    nir_debug_info_instr **debug_info;
+
+   bool divergence_valid;
 } print_state;
 
 static void
@@ -110,7 +112,7 @@ static const char *sizes[] = { "x??", "   ", "x2 ", "x3 ", "x4 ",
 static const char *
 divergence_status(print_state *state, bool divergent)
 {
-   if (state->shader->info.divergence_analysis_run)
+   if (state->divergence_valid)
       return divergent ? "div " : "con ";
 
    return "";
@@ -140,7 +142,7 @@ print_def(nir_def *def, print_state *state)
 static unsigned
 calculate_padding_for_no_dest(print_state *state)
 {
-   const unsigned div = state->shader->info.divergence_analysis_run ? 4 : 0;
+   const unsigned div = state->divergence_valid ? 4 : 0;
    const unsigned ssa_size = 5;
    const unsigned percent = 1;
    const unsigned ssa_index = count_digits(state->max_dest_index);
@@ -2253,6 +2255,7 @@ print_function_impl(nir_function_impl *impl, print_state *state)
    FILE *fp = state->fp;
 
    state->max_dest_index = impl->ssa_alloc;
+   state->divergence_valid = impl->valid_metadata & nir_metadata_divergence;
 
    fprintf(fp, "\nimpl %s ", impl->function->name);
 
@@ -2559,7 +2562,6 @@ print_shader_info(const struct shader_info *info, FILE *fp)
    print_nz_bool(fp, "uses_texture_gather", info->uses_texture_gather);
    print_nz_bool(fp, "uses_resource_info_query", info->uses_resource_info_query);
    print_nz_bool(fp, "uses_fddx_fddy", info->uses_fddx_fddy);
-   print_nz_bool(fp, "divergence_analysis_run", info->divergence_analysis_run);
 
    print_nz_x8(fp, "bit_sizes_float", info->bit_sizes_float);
    print_nz_x8(fp, "bit_sizes_int", info->bit_sizes_int);

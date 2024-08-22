@@ -1355,7 +1355,6 @@ nir_divergence_analysis(nir_function_impl *impl)
    nir_metadata_require(impl, nir_metadata_block_index);
 
    nir_shader *shader = impl->function->shader;
-   shader->info.divergence_analysis_run = true;
 
    struct divergence_state state = {
       .stage = shader->info.stage,
@@ -1377,8 +1376,6 @@ nir_divergence_analysis(nir_function_impl *impl)
 void
 nir_vertex_divergence_analysis(nir_shader *shader)
 {
-   shader->info.divergence_analysis_run = false;
-
    struct divergence_state state = {
       .stage = shader->info.stage,
       .shader = shader,

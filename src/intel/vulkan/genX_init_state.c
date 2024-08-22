@@ -740,7 +740,7 @@ init_compute_queue_state(struct anv_queue *queue)
 
    anv_batch_emit(batch, GENX(STATE_COMPUTE_MODE), cm) {
 #if GFX_VER < 20
-      cm.PixelAsyncComputeThreadLimit = PACTL_Max24;
+      cm.PixelAsyncComputeThreadLimit = PACTL_Max8;
       cm.ZPassAsyncComputeThreadLimit = ZPACTL_Max60;
       cm.ZAsyncThrottlesettings = ZATS_DefertoPixelAsyncComputeThreadLimit;
       cm.PixelAsyncComputeThreadLimitMask = 0x7;

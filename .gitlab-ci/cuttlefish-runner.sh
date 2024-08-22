@@ -21,6 +21,7 @@ cd /cuttlefish
 trap '$ROOT_PATH/cuttlefish/bin/stop_cvd' EXIT
 trap 'exit 2' HUP INT PIPE TERM
 
+ulimit -S -n 32768
 launch_cvd --verbosity=DEBUG --report_anonymous_usage_stats=n --cpus=8 --memory_mb=8192 --gpu_mode="$ANDROID_GPU_MODE" --daemon --enable_minimal_mode=true --guest_enforce_security=false --use_overlay=false
 sleep 1
 

@@ -1967,9 +1967,19 @@ fn enqueue_fill_image(
     // description for origin and region.
     validate_image_bounds(&i, origin, region)?;
 
-    // we have to copy memory and it's always a 4 component int value
-    // TODO but not for CL_DEPTH
-    let fill_color = unsafe { slice::from_raw_parts(fill_color.cast(), 4).to_vec() };
+    // The fill color is a single floating-point value if the channel order is CL_DEPTH. Otherwise,
+    // the fill color is a four component RGBA floating-point color value if the image channel data
+    // type is not an unnormalized signed or unsigned integer type, is a four component signed
+    // integer value if the image channel data type is an unnormalized signed integer type and is a
+    // four component unsigned integer value if the image channel data type is an unnormalized
+    // unsigned integer type.
+    let fill_color = if i.image_format.image_channel_order == CL_DEPTH {
+        let value = unsafe { fill_color.cast::<u32>().read() };
+        [value, 0, 0, 0].to_vec()
+    } else {
+        unsafe { slice::from_raw_parts(fill_color.cast(), 4) }.to_vec()
+    };
+
     create_and_queue(
         q,
         CL_COMMAND_FILL_BUFFER,

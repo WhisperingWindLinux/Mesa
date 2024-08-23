@@ -1305,15 +1305,13 @@ impl Image {
         let pixel_size: usize = self.image_format.pixel_size().unwrap().into();
         let mut new_pattern: Vec<u32> = vec![0; pixel_size.div_ceil(size_of::<u32>())];
 
-        // we don't support CL_DEPTH for now
-        assert!(pattern.len() == 4);
-
         // SAFETY: pointers have to be valid for read/writes of exactly one pixel of their
         // respective format.
         // `new_pattern` has the correct size due to the `size` above.
         // `pattern` is validated through the CL API and allows undefined behavior if not followed
         // by CL API rules. It's expected to be a 4 component array of 32 bit values, except for
         // CL_DEPTH where it's just one value.
+        debug_assert_eq!(pattern.len(), 4);
         unsafe {
             util_format_pack_rgba(
                 self.pipe_format,

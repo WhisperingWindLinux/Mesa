@@ -183,9 +183,9 @@ cl_format_table!([
 // broken
 //  (CL_sRGBx,     CL_UNORM_INT8)         => pipe_format::PIPE_FORMAT_R8G8B8X8_SRGB,
 
-// broken
-//  (CL_DEPTH,     CL_FLOAT)              => pipe_format::PIPE_FORMAT_Z32_FLOAT,
-//  (CL_DEPTH,     CL_UNORM_INT16)        => pipe_format::PIPE_FORMAT_Z16_UNORM,
+    // yes, we use non depth formats here...
+    (CL_DEPTH,     CL_FLOAT)              => pipe_format::PIPE_FORMAT_R32_FLOAT,
+    (CL_DEPTH,     CL_UNORM_INT16)        => pipe_format::PIPE_FORMAT_R16_UNORM,
 
     (CL_LUMINANCE, CL_HALF_FLOAT)         => pipe_format::PIPE_FORMAT_L16_FLOAT,
     (CL_LUMINANCE, CL_FLOAT)              => pipe_format::PIPE_FORMAT_L32_FLOAT,

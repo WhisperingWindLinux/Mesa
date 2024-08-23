@@ -115,9 +115,13 @@ bool
 intel_nir_blockify_uniform_loads(nir_shader *shader,
                                  const struct intel_device_info *devinfo)
 {
+   nir_foreach_function_impl(impl, shader)
+      nir_metadata_require(impl, nir_metadata_divergence);
+
    return nir_shader_instructions_pass(shader,
                                        intel_nir_blockify_uniform_loads_instr,
                                        nir_metadata_control_flow |
-                                       nir_metadata_live_defs,
+                                       nir_metadata_live_defs |
+                                       nir_metadata_divergence,
                                        (void *) devinfo);
 }

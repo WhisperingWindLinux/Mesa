@@ -184,6 +184,8 @@ apply_nuw_to_ssa(isel_context* ctx, nir_def* ssa)
 void
 apply_nuw_to_offsets(isel_context* ctx, nir_function_impl* impl)
 {
+   nir_metadata_require(impl, nir_metadata_divergence);
+
    nir_foreach_block (block, impl) {
       nir_foreach_instr (instr, block) {
          if (instr->type != nir_instr_type_intrinsic)
@@ -213,6 +215,8 @@ apply_nuw_to_offsets(isel_context* ctx, nir_function_impl* impl)
          }
       }
    }
+
+   nir_metadata_preserve(impl, nir_metadata_all);
 }
 
 RegClass
@@ -281,20 +285,19 @@ init_context(isel_context* ctx, nir_shader* shader)
    ctx->ub_config.max_workgroup_size[1] = 2048;
    ctx->ub_config.max_workgroup_size[2] = 2048;
 
-   nir_divergence_analysis(shader);
    if (nir_opt_uniform_atomics(shader, false)) {
       nir_lower_int64(shader);
-      nir_divergence_analysis(shader);
    }
 
    apply_nuw_to_offsets(ctx, impl);
 
    /* sanitize control flow */
    sanitize_cf_list(impl, &impl->body);
-   nir_metadata_preserve(impl, nir_metadata_none);
+   nir_metadata_preserve(impl, nir_metadata_divergence);
 
    /* we'll need these for isel */
-   nir_metadata_require(impl, nir_metadata_block_index | nir_metadata_dominance);
+   nir_metadata_require(
+      impl, nir_metadata_block_index | nir_metadata_dominance | nir_metadata_divergence);
 
    if (ctx->options->dump_preoptir) {
       fprintf(stderr, "NIR shader before instruction selection:\n");

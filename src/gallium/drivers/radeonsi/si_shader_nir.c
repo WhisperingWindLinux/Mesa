@@ -372,8 +372,6 @@ static void si_lower_nir(struct si_screen *sscreen, struct nir_shader *nir)
 
 static bool si_mark_divergent_texture_non_uniform(struct nir_shader *nir)
 {
-   assert(nir->info.divergence_analysis_run);
-
    /* sampler_non_uniform and texture_non_uniform are always false in GLSL,
     * but this can lead to unexpected behavior if texture/sampler index come from
     * a vertex attribute.
@@ -392,6 +390,8 @@ static bool si_mark_divergent_texture_non_uniform(struct nir_shader *nir)
    bool divergence_changed = false;
 
    nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+   nir_metadata_require(impl, nir_metadata_divergence);
+
    nir_foreach_block_safe(block, impl) {
       nir_foreach_instr_safe(instr, block) {
          if (instr->type != nir_instr_type_tex)
@@ -421,7 +421,10 @@ static bool si_mark_divergent_texture_non_uniform(struct nir_shader *nir)
       }
    }
 
-   nir_metadata_preserve(impl, nir_metadata_all);
+   if (divergence_changed)
+      nir_metadata_preserve(impl, nir_metadata_all & ~nir_metadata_divergence);
+   else
+      nir_metadata_preserve(impl, nir_metadata_all);
    return divergence_changed;
 }
 
@@ -479,14 +482,10 @@ char *si_finalize_nir(struct pipe_screen *screen, void *nirptr)
    if (progress)
       si_nir_opts(sscreen, nir, false);
 
-   NIR_PASS_V(nir, nir_divergence_analysis); /* to find divergent loops */
+   NIR_PASS(_, nir, si_mark_divergent_texture_non_uniform);
 
-   /* Must be after divergence analysis. */
-   bool divergence_changed = false;
-   NIR_PASS(divergence_changed, nir, si_mark_divergent_texture_non_uniform);
-   /* Re-analysis whole shader if texture instruction divergence changed. */
-   if (divergence_changed)
-      NIR_PASS_V(nir, nir_divergence_analysis);
+   /* Require divergence analysis to identify divergent loops. */
+   nir_metadata_require(nir_shader_get_entrypoint(nir), nir_metadata_divergence);
 
    return NULL;
 }

@@ -231,7 +231,8 @@ nir_opt_non_uniform_access_instr(nir_builder *b, nir_instr *instr, UNUSED void *
 bool
 nir_opt_non_uniform_access(nir_shader *shader)
 {
-   nir_divergence_analysis(shader);
+   nir_foreach_function_impl(impl, shader)
+      nir_metadata_require(impl, nir_metadata_divergence);
 
    bool progress = nir_shader_instructions_pass(shader,
                                                 nir_opt_non_uniform_access_instr,

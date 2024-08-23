@@ -3409,6 +3409,22 @@ typedef enum {
     */
    nir_metadata_instr_index = 0x20,
 
+   /** Indicates that divergence analysis information is valid.
+    *
+    * This includes:
+    *   - nir_def::divergent
+    *   - nir_def::loop_invariant
+    *   - nir_block::divergent
+    *   - nir_loop::divergent_break
+    *   - nir_loop::divergent_continue
+    *
+    * A pass can preserve this metadata type if it never adds any instructions
+    * or moves them out of loops, as well as if it only removes instructions.
+    * CF modifications usually invalidate this metadata.  Most passes
+    * shouldn't preserve this metadata type.
+    */
+   nir_metadata_divergence = 0x40,
+
    /** All control flow metadata
     *
     * This includes all metadata preserved by a pass that preserves control flow
@@ -6627,7 +6643,7 @@ bool nir_repair_ssa(nir_shader *shader);
 
 void nir_convert_loop_to_lcssa(nir_loop *loop);
 bool nir_convert_to_lcssa(nir_shader *shader, bool skip_invariants, bool skip_bool_invariants);
-void nir_divergence_analysis(nir_shader *shader);
+void nir_divergence_analysis(nir_function_impl *impl);
 void nir_vertex_divergence_analysis(nir_shader *shader);
 bool nir_has_divergent_loop(nir_shader *shader);
 

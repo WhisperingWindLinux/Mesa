@@ -1347,8 +1347,14 @@ visit_cf_list(struct exec_list *list, struct divergence_state *state)
 }
 
 void
-nir_divergence_analysis(nir_shader *shader)
+nir_divergence_analysis(nir_function_impl *impl)
 {
+   if (impl->valid_metadata & nir_metadata_divergence)
+      return;
+
+   nir_metadata_require(impl, nir_metadata_block_index);
+
+   nir_shader *shader = impl->function->shader;
    shader->info.divergence_analysis_run = true;
 
    struct divergence_state state = {
@@ -1361,10 +1367,7 @@ nir_divergence_analysis(nir_shader *shader)
       .first_visit = true,
    };
 
-   nir_metadata_require(nir_shader_get_entrypoint(shader),
-                        nir_metadata_block_index);
-   visit_cf_list(&nir_shader_get_entrypoint(shader)->body, &state);
-   nir_metadata_preserve(nir_shader_get_entrypoint(shader), nir_metadata_all);
+   visit_cf_list(&impl->body, &state);
 }
 
 /* Compute divergence between vertices of the same primitive. This uses

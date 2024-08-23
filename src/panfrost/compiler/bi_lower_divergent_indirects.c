@@ -111,6 +111,9 @@ bi_lower_divergent_indirects_impl(nir_builder *b, nir_intrinsic_instr *intr,
 bool
 bi_lower_divergent_indirects(nir_shader *shader, unsigned lanes)
 {
+   nir_foreach_function_impl(impl, shader)
+      nir_metadata_require(impl, nir_metadata_divergence);
+
    return nir_shader_intrinsics_pass(shader, bi_lower_divergent_indirects_impl,
                                      nir_metadata_none, &lanes);
 }

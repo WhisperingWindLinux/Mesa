@@ -2806,7 +2806,6 @@ agx_optimize_nir(nir_shader *nir, bool soft_fault, unsigned *preamble_size)
             });
    NIR_PASS(_, nir, nir_lower_pack);
 
-   NIR_PASS_V(nir, nir_divergence_analysis);
    bool progress = false;
 
    static const nir_lower_subgroups_options subgroups_options = {

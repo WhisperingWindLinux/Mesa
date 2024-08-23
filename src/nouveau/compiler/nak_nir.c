@@ -779,7 +779,7 @@ nak_nir_remove_barriers(nir_shader *nir)
    nir->info.uses_control_barrier = false;
 
    return nir_shader_intrinsics_pass(nir, nak_nir_remove_barrier_intrin,
-                                     nir_metadata_control_flow,
+                                     nir_metadata_control_flow | nir_metadata_divergence,
                                      NULL);
 }
 
@@ -1011,13 +1011,11 @@ nak_postprocess_nir(nir_shader *nir,
       OPT(nir, nak_nir_split_64bit_conversions);
 
    nir_convert_to_lcssa(nir, true, true);
-   nir_divergence_analysis(nir);
 
    if (nak->sm >= 75) {
       if (OPT(nir, nak_nir_lower_non_uniform_ldcx)) {
          OPT(nir, nir_copy_prop);
          OPT(nir, nir_opt_dce);
-         nir_divergence_analysis(nir);
       }
    }
 

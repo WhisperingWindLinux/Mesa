@@ -3497,7 +3497,7 @@ Converter::run()
    NIR_PASS_V(nir, nir_lower_bool_to_int32);
    NIR_PASS_V(nir, nir_lower_bit_size, Converter::lowerBitSizeCB, this);
 
-   NIR_PASS_V(nir, nir_divergence_analysis);
+   nir_divergence_analysis(nir_shader_get_entrypoint(nir));
    NIR_PASS_V(nir, nir_convert_from_ssa, true);
 
    // Garbage collect dead instructions

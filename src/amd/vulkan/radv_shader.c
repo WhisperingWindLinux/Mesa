@@ -2194,6 +2194,35 @@ radv_shader_combine_cfg_tes_gs(const struct radv_shader *tes, const struct radv_
    }
 }
 
+struct radv_shader_binary_data {
+   void *stats;
+   void *code;
+   void *ir;
+   void *disasm;
+};
+
+static struct radv_shader_binary_data
+radv_shader_binary_get_data(struct radv_shader_binary_legacy *binary)
+{
+   struct radv_shader_binary_data data = {0};
+
+   uint32_t offset = 0;
+
+   data.stats = binary->data + offset;
+   offset += binary->stats_size;
+
+   data.code = binary->data + offset;
+   offset += binary->code_size;
+
+   data.ir = binary->data + offset;
+   offset += binary->ir_size;
+
+   data.disasm = binary->data + offset;
+   offset += binary->disasm_size;
+
+   return data;
+}
+
 static bool
 radv_shader_binary_upload(struct radv_device *device, const struct radv_shader_binary *binary,
                           struct radv_shader *shader, void *dest_ptr)
@@ -2238,10 +2267,12 @@ radv_shader_binary_upload(struct radv_device *device, const struct radv_shader_b
 #endif
    } else {
       struct radv_shader_binary_legacy *bin = (struct radv_shader_binary_legacy *)binary;
-      memcpy(dest_ptr, bin->data + bin->stats_size, bin->code_size);
+      struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
+
+      memcpy(dest_ptr, data.code, bin->code_size);
 
       if (shader->code) {
-         memcpy(shader->code, bin->data + bin->stats_size, bin->code_size);
+         memcpy(shader->code, data.code, bin->code_size);
       }
    }
 
@@ -2511,7 +2542,8 @@ radv_shader_create_uncached(struct radv_device *device, const struct radv_shader
 
       if (bin->stats_size) {
          shader->statistics = calloc(bin->stats_size, 1);
-         memcpy(shader->statistics, bin->data, bin->stats_size);
+         struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
+         memcpy(shader->statistics, data.stats, bin->stats_size);
       }
    }
 
@@ -2750,28 +2782,25 @@ radv_aco_build_shader_binary(void **bin, const struct ac_shader_config *config, 
    legacy_binary->base.type = RADV_BINARY_TYPE_LEGACY;
    legacy_binary->base.total_size = size;
    legacy_binary->base.config = *config;
-
-   if (stats_size)
-      memcpy(legacy_binary->data, statistics, stats_size);
    legacy_binary->stats_size = stats_size;
-
-   memcpy(legacy_binary->data + legacy_binary->stats_size, code, code_dw * sizeof(uint32_t));
    legacy_binary->exec_size = exec_size;
    legacy_binary->code_size = code_dw * sizeof(uint32_t);
-
-   legacy_binary->disasm_size = 0;
    legacy_binary->ir_size = llvm_ir_size;
-
-   if (llvm_ir_size) {
-      memcpy((char *)legacy_binary->data + legacy_binary->stats_size + legacy_binary->code_size, llvm_ir_str,
-             llvm_ir_size);
-   }
-
    legacy_binary->disasm_size = disasm_size;
-   if (disasm_size) {
-      memcpy((char *)legacy_binary->data + legacy_binary->stats_size + legacy_binary->code_size + llvm_ir_size,
-             disasm_str, disasm_size);
-   }
+
+   struct radv_shader_binary_data data = radv_shader_binary_get_data(legacy_binary);
+
+   if (stats_size)
+      memcpy(data.stats, statistics, stats_size);
+
+   memcpy(data.code, code, code_dw * sizeof(uint32_t));
+
+   if (llvm_ir_size)
+      memcpy(data.ir, llvm_ir_str, llvm_ir_size);
+
+   if (disasm_size)
+      memcpy(data.disasm, disasm_str, disasm_size);
+
    *binary = (struct radv_shader_binary *)legacy_binary;
 }
 
@@ -2844,10 +2873,10 @@ radv_capture_shader_executable_info(struct radv_device *device, struct radv_shad
 #endif
    } else {
       struct radv_shader_binary_legacy *bin = (struct radv_shader_binary_legacy *)binary;
+      struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
 
-      shader->ir_string = bin->ir_size ? strdup((const char *)(bin->data + bin->stats_size + bin->code_size)) : NULL;
-      shader->disasm_string =
-         bin->disasm_size ? strdup((const char *)(bin->data + bin->stats_size + bin->code_size + bin->ir_size)) : NULL;
+      shader->ir_string = bin->ir_size ? strdup(data.ir) : NULL;
+      shader->disasm_string = bin->disasm_size ? strdup(data.disasm) : NULL;
    }
 }
 

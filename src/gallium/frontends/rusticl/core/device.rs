@@ -136,7 +136,7 @@ impl<'a> HelperContext<'a> {
         layer_stride: usize,
     ) {
         self.lock
-            .texture_subdata(res, bx, data, stride, layer_stride)
+            .texture_subdata(res, bx, 0, data, stride, layer_stride)
     }
 }
 
@@ -627,6 +627,7 @@ impl Device {
 
         if self.caps.has_images {
             add_feat(1, 0, 0, "__opencl_c_images");
+            add_ext(1, 0, 0, "cl_khr_mipmap_image");
 
             if self.image2d_from_buffer_supported() {
                 add_ext(1, 0, 0, "cl_khr_image2d_from_buffer");
@@ -879,6 +880,10 @@ impl Device {
         }
     }
 
+    pub const fn image_max_mipmaps() -> u32 {
+        PIPE_MAX_TEXTURE_LEVELS
+    }
+
     pub fn image2d_from_buffer_supported(&self) -> bool {
         self.image_pitch_alignment() != 0 && self.image_base_address_alignment() != 0
     }
@@ -1070,6 +1075,7 @@ impl Device {
             fp64: self.fp64_supported(),
             int64: self.int64_supported(),
             images: self.caps.has_images,
+            images_mipmap: self.caps.has_images,
             images_read_write: self.caps.has_rw_images,
             images_write_3d: self.caps.has_3d_image_writes,
             integer_dot_product: true,

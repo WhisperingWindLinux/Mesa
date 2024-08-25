@@ -119,6 +119,12 @@ impl Context {
             .try_into()
             .map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
         let target = cl_mem_type_to_texture_target(desc.image_type);
+        let levels = desc
+            .num_mip_levels
+            // so apparently a num_mip_levels of 1 means 0 mip levels
+            .saturating_sub(1)
+            .try_into()
+            .map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
 
         let mut res = HashMap::new();
         for &dev in &self.devs {
@@ -133,6 +139,7 @@ impl Context {
                     height,
                     depth,
                     array_size,
+                    levels,
                     target,
                     pipe_format,
                     user_ptr,
@@ -146,6 +153,7 @@ impl Context {
                     height,
                     depth,
                     array_size,
+                    levels,
                     target,
                     pipe_format,
                     res_type,
@@ -158,10 +166,12 @@ impl Context {
         }
 
         if !user_ptr.is_null() {
-            let bx = desc.bx()?;
+            let bx = desc.bx(0)?;
             let stride = desc.row_pitch()?;
             let layer_stride = desc.slice_pitch();
 
+            // This isn't supported by the spec
+            debug_assert_eq!(levels, 0);
             res.iter()
                 .filter(|(_, r)| copy || !r.is_user())
                 .map(|(d, r)| {

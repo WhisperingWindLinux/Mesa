@@ -337,6 +337,7 @@ pub struct GLMemProps {
     pub array_size: u16,
     pub pixel_size: u8,
     pub stride: u32,
+    pub mipmap_levels: u32,
 }
 
 impl GLMemProps {
@@ -403,6 +404,7 @@ impl GLExportManager {
             array_size: array_size,
             pixel_size: pixel_size,
             stride: self.export_out.stride,
+            mipmap_levels: self.export_out.view_numlevels,
         })
     }
 
@@ -423,6 +425,7 @@ pub struct GLObject {
     pub gl_object_target: cl_GLenum,
     pub gl_object_type: cl_gl_object_type,
     pub gl_object_name: cl_GLuint,
+    pub gl_miplevel: cl_GLint,
     pub shadow_map: CLGLMappings,
 }
 
@@ -443,6 +446,7 @@ pub fn create_shadow_slice(
                 height,
                 1,
                 1,
+                imported_gl_res.mipmap_levels(),
                 cl_mem_type_to_texture_target(CL_MEM_OBJECT_IMAGE2D),
                 image_format.to_pipe_format().unwrap(),
                 ResourceType::Normal,
@@ -478,7 +482,17 @@ pub fn copy_cube_to_slice(q: &Arc<Queue>, ctx: &PipeContext, mem_objects: &[Mem]
         let cl_res = image.get_res_of_dev(q.device)?;
         let gl_res = gl_obj.shadow_map.as_ref().unwrap().get(cl_res).unwrap();
 
-        ctx.resource_copy_texture(gl_res.as_ref(), cl_res.as_ref(), &dst_offset, &src_bx);
+        debug_assert_eq!(cl_res.mipmap_levels(), gl_res.mipmap_levels());
+        for level in 0..=gl_res.mipmap_levels() {
+            ctx.resource_copy_texture(
+                gl_res.as_ref(),
+                level.into(),
+                cl_res.as_ref(),
+                &dst_offset,
+                level.into(),
+                &src_bx,
+            );
+        }
     }
 
     Ok(())
@@ -506,7 +520,17 @@ pub fn copy_slice_to_cube(q: &Arc<Queue>, ctx: &PipeContext, mem_objects: &[Mem]
         let cl_res = image.get_res_of_dev(q.device)?;
         let gl_res = gl_obj.shadow_map.as_ref().unwrap().get(cl_res).unwrap();
 
-        ctx.resource_copy_texture(cl_res.as_ref(), gl_res.as_ref(), &dst_offset, &src_bx);
+        debug_assert_eq!(cl_res.mipmap_levels(), gl_res.mipmap_levels());
+        for level in 0..=gl_res.mipmap_levels() {
+            ctx.resource_copy_texture(
+                cl_res.as_ref(),
+                level.into(),
+                gl_res.as_ref(),
+                &dst_offset,
+                level.into(),
+                &src_bx,
+            );
+        }
     }
 
     Ok(())

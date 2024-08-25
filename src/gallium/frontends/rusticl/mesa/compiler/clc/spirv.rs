@@ -278,6 +278,7 @@ impl SPIRVBin {
             Int64: true,
             Kernel: true,
             ImageBasic: true,
+            ImageMipmap: true,
             ImageReadWrite: true,
             Linkage: true,
             LiteralSampler: true,

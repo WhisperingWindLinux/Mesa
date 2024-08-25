@@ -103,6 +103,10 @@ impl PipeResource {
         unsafe { self.pipe.as_ref().unwrap().array_size }
     }
 
+    pub fn mipmap_levels(&self) -> u8 {
+        unsafe { self.pipe.as_ref().unwrap().last_level }
+    }
+
     pub fn is_buffer(&self) -> bool {
         self.as_ref().target() == pipe_texture_target::PIPE_BUFFER
     }

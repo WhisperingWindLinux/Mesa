@@ -604,6 +604,7 @@ impl MemBase {
             export_out.modifier,
             mem_type,
             export_in.target,
+            image_format,
             pipe_format,
             gl_mem_props.clone(),
         )?;

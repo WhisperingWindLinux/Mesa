@@ -209,25 +209,33 @@ impl Context {
         modifier: u64,
         image_type: cl_mem_object_type,
         gl_target: cl_GLenum,
-        format: pipe_format,
+        cl_format: cl_image_format,
+        pipe_format: pipe_format,
         gl_props: GLMemProps,
     ) -> CLResult<HashMap<&'static Device, Arc<PipeResource>>> {
         let mut res = HashMap::new();
         let target = cl_mem_type_to_texture_target_gl(image_type, gl_target);
 
         for dev in &self.devs {
+            let enable_bind_as_image = if target != pipe_texture_target::PIPE_BUFFER {
+                dev.formats[&cl_format][&image_type] as u32 & CL_MEM_WRITE_ONLY != 0
+            } else {
+                false
+            };
+
             let resource = dev
                 .screen()
                 .resource_import_dmabuf(
                     handle,
                     modifier,
                     target,
-                    format,
+                    pipe_format,
                     gl_props.stride,
                     gl_props.width,
                     gl_props.height,
                     gl_props.depth,
                     gl_props.array_size,
+                    enable_bind_as_image,
                 )
                 .ok_or(CL_OUT_OF_RESOURCES)?;
 

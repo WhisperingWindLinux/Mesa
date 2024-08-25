@@ -1889,6 +1889,10 @@ typedef struct {
    nir_instr instr;
 
    struct nir_function *callee;
+   /* If this function call is indirect, the function pointer to call.
+    * Otherwise, null initialized.
+    */
+   nir_src indirect_callee;
 
    unsigned num_params;
    nir_src params[];
@@ -3562,12 +3566,20 @@ nir_cf_list_is_empty_block(struct exec_list *cf_list)
    return false;
 }
 
-typedef struct {
+typedef struct nir_parameter {
    uint8_t num_components;
    uint8_t bit_size;
-
-   /* True if this paramater is actually the function return variable */
+   /* True if this parameter is a deref used for returning values */
    bool is_return;
+
+   /* Drivers may optionally stash flags here describing the parameter.
+    * For example, this might encode whether the driver expects the value
+    * to be uniform or divergent, if the driver handles divergent parameters
+    * differently from uniform ones.
+    *
+    * NIR will preserve this value but does not interpret it in any way.
+    */
+   uint32_t driver_attributes;
 
    /* The type of the function param */
    const struct glsl_type *type;
@@ -3590,6 +3602,14 @@ typedef struct nir_function {
     * nir_function_set_impl to maintain IR invariants.
     */
    nir_function_impl *impl;
+
+   /* Drivers may optionally stash flags here describing the function call.
+    * For example, this might encode the ABI used for the call if a driver
+    * supports multiple ABIs.
+    *
+    * NIR will preserve this value but does not interpret it in any way.
+    */
+   uint32_t driver_attributes;
 
    bool is_entrypoint;
    /* from SPIR-V linkage, only for libraries */
@@ -4936,6 +4956,8 @@ void nir_instr_clear_src(nir_instr *instr, nir_src *src);
 
 void nir_instr_move_src(nir_instr *dest_instr, nir_src *dest, nir_src *src);
 
+bool nir_instr_is_between(nir_instr *start, nir_instr *end, nir_instr *between);
+
 void nir_def_init(nir_instr *instr, nir_def *def,
                   unsigned num_components, unsigned bit_size);
 static inline void
@@ -5375,10 +5397,10 @@ void nir_group_loads(nir_shader *shader, nir_load_grouping grouping,
                      unsigned max_distance);
 
 bool nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes);
-bool nir_split_array_vars(nir_shader *shader, nir_variable_mode modes);
+bool nir_split_array_vars(nir_shader *shader, nir_variable_mode modes, glsl_type_size_align_func type_info);
 bool nir_split_var_copies(nir_shader *shader);
 bool nir_split_per_member_structs(nir_shader *shader);
-bool nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes);
+bool nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes, glsl_type_size_align_func type_info);
 
 bool nir_lower_returns_impl(nir_function_impl *impl);
 bool nir_lower_returns(nir_shader *shader);
@@ -6607,6 +6629,10 @@ bool nir_opt_combine_barriers(nir_shader *shader,
                               nir_combine_barrier_cb combine_cb,
                               void *data);
 bool nir_opt_barrier_modes(nir_shader *shader);
+
+typedef bool (*can_remat_cb)(nir_instr *instr);
+
+bool nir_minimize_call_live_states(nir_shader *shader);
 
 bool nir_opt_combine_stores(nir_shader *shader, nir_variable_mode modes);
 

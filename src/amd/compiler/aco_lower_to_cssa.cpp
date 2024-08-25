@@ -519,6 +519,7 @@ emit_parallelcopies(cssa_ctx& ctx)
    }
 
    RegisterDemand new_demand;
+   RegisterDemand real_new_demand;
    for (Block& block : ctx.program->blocks) {
       /* Finally, rename coalesced phi operands */
       for (aco_ptr<Instruction>& phi : block.instructions) {
@@ -538,13 +539,18 @@ emit_parallelcopies(cssa_ctx& ctx)
 
       /* Resummarize the block's register demand */
       block.register_demand = block.live_in_demand;
-      for (const aco_ptr<Instruction>& instr : block.instructions)
+      for (const aco_ptr<Instruction>& instr : block.instructions) {
          block.register_demand.update(instr->register_demand);
+         if (instr->isCall())
+            real_new_demand.update(instr->register_demand - instr->call().blocked_abi_demand);
+         else
+            real_new_demand.update(instr->register_demand);
+      }
       new_demand.update(block.register_demand);
    }
 
    /* Update max_reg_demand and num_waves */
-   update_vgpr_sgpr_demand(ctx.program, new_demand);
+   update_vgpr_sgpr_demand(ctx.program, new_demand, real_new_demand);
 
    assert(renames.empty());
 }

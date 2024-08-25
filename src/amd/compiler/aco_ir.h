@@ -23,6 +23,7 @@
 #include <vector>
 
 typedef struct nir_shader nir_shader;
+typedef struct nir_parameter nir_parameter;
 
 namespace aco {
 
@@ -447,6 +448,215 @@ static constexpr PhysReg exec_hi{127};
 static constexpr PhysReg pops_exiting_wave_id{239}; /* GFX9-GFX10.3 */
 static constexpr PhysReg scc{253};
 
+/* Iterator type for making PhysRegInterval compatible with range-based for */
+struct PhysRegIterator {
+   using difference_type = int;
+   using value_type = unsigned;
+   using reference = const unsigned&;
+   using pointer = const unsigned*;
+   using iterator_category = std::bidirectional_iterator_tag;
+
+   PhysReg reg;
+
+   PhysReg operator*() const { return reg; }
+
+   PhysRegIterator& operator++()
+   {
+      reg.reg_b += 4;
+      return *this;
+   }
+
+   PhysRegIterator& operator--()
+   {
+      reg.reg_b -= 4;
+      return *this;
+   }
+
+   bool operator==(PhysRegIterator oth) const { return reg == oth.reg; }
+
+   bool operator!=(PhysRegIterator oth) const { return reg != oth.reg; }
+
+   bool operator<(PhysRegIterator oth) const { return reg < oth.reg; }
+};
+
+/* Half-open register interval used in "sliding window"-style for-loops */
+struct PhysRegInterval {
+   PhysReg lo_;
+   unsigned size;
+
+   /* Inclusive lower bound */
+   PhysReg lo() const { return lo_; }
+
+   /* Exclusive upper bound */
+   PhysReg hi() const { return PhysReg{lo() + size}; }
+
+   PhysRegInterval& operator+=(uint32_t stride)
+   {
+      lo_ = PhysReg{lo_.reg() + stride};
+      return *this;
+   }
+
+   bool operator!=(const PhysRegInterval& oth) const { return lo_ != oth.lo_ || size != oth.size; }
+
+   /* Construct a half-open interval, excluding the end register */
+   static PhysRegInterval from_until(PhysReg first, PhysReg end) { return {first, end - first}; }
+
+   bool contains(PhysReg reg) const { return lo() <= reg && reg < hi(); }
+
+   bool contains(const PhysRegInterval& needle) const
+   {
+      return needle.lo() >= lo() && needle.hi() <= hi();
+   }
+
+   PhysRegIterator begin() const { return {lo_}; }
+
+   PhysRegIterator end() const { return {PhysReg{lo_ + size}}; }
+};
+
+inline bool
+intersects(const PhysRegInterval& a, const PhysRegInterval& b)
+{
+   return a.hi() > b.lo() && b.hi() > a.lo();
+}
+
+struct GPRInterval {
+   PhysRegInterval sgpr;
+   PhysRegInterval vgpr;
+};
+
+struct ABI {
+   GPRInterval parameterSpace;
+   GPRInterval clobberedRegs;
+
+   bool clobbersVCC;
+   bool clobbersSCC;
+};
+
+static constexpr ABI rtRaygenABI = {
+   .parameterSpace =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 32,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 32,
+            },
+      },
+   .clobberedRegs =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 108,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 128,
+            },
+      },
+   .clobbersVCC = true,
+   .clobbersSCC = true,
+};
+
+static constexpr ABI rtTraversalABI = {
+   .parameterSpace =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 32,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 32,
+            },
+      },
+   .clobberedRegs =
+      {
+         /* TODO: maybe find better values */
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 108,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 128,
+            },
+      },
+   .clobbersVCC = true,
+   .clobbersSCC = true,
+};
+
+static constexpr ABI rtAnyHitABI = {
+   .parameterSpace =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 32,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 32,
+            },
+      },
+   .clobberedRegs =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(80),
+               .size = 16,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256 + 80),
+               .size = 32,
+            },
+      },
+   .clobbersVCC = true,
+   .clobbersSCC = true,
+};
+
+static constexpr ABI rtClosestHitMissABI = {
+   .parameterSpace =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 32,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 32,
+            },
+      },
+   .clobberedRegs =
+      {
+         .sgpr =
+            {
+               .lo_ = PhysReg(0),
+               .size = 108,
+            },
+         .vgpr =
+            {
+               .lo_ = PhysReg(256),
+               .size = 128,
+            },
+      },
+   .clobbersVCC = true,
+   .clobbersSCC = true,
+};
+
 /**
  * Operand Class
  * Initially, each Operand refers to either
@@ -458,9 +668,9 @@ static constexpr PhysReg scc{253};
 class Operand final {
 public:
    constexpr Operand()
-       : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isConstant_(false), isKill_(false),
-         isUndef_(true), isFirstKill_(false), constSize(0), isLateKill_(false), is16bit_(false),
-         is24bit_(false), signext(false)
+       : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isPrecolored_(false),
+         isConstant_(false), isKill_(false), isUndef_(true), isFirstKill_(false), constSize(0),
+         isLateKill_(false), is16bit_(false), is24bit_(false), signext(false)
    {}
 
    explicit Operand(Temp r) noexcept
@@ -732,6 +942,11 @@ public:
 
    constexpr bool isFixed() const noexcept { return isFixed_; }
 
+   /* Indicates whether this operand needs to reside in a certain register. */
+   constexpr bool isPrecolored() const noexcept { return isPrecolored_; }
+
+   constexpr void setPrecolored(bool precolored) noexcept { isPrecolored_ = precolored; }
+
    constexpr PhysReg physReg() const noexcept { return reg_; }
 
    constexpr void setFixed(PhysReg reg) noexcept
@@ -868,6 +1083,7 @@ private:
       struct {
          uint8_t isTemp_ : 1;
          uint8_t isFixed_ : 1;
+         uint8_t isPrecolored_ : 1;
          uint8_t isConstant_ : 1;
          uint8_t isKill_ : 1;
          uint8_t isUndef_ : 1;
@@ -1049,6 +1265,7 @@ struct FLAT_instruction;
 struct Pseudo_branch_instruction;
 struct Pseudo_barrier_instruction;
 struct Pseudo_reduction_instruction;
+struct Pseudo_call_instruction;
 struct VALU_instruction;
 struct VINTERP_inreg_instruction;
 struct VINTRP_instruction;
@@ -1249,6 +1466,17 @@ struct Instruction {
       return *(Pseudo_reduction_instruction*)this;
    }
    constexpr bool isReduction() const noexcept { return format == Format::PSEUDO_REDUCTION; }
+   Pseudo_call_instruction& call() noexcept
+   {
+      assert(isCall());
+      return *(Pseudo_call_instruction*)this;
+   }
+   const Pseudo_call_instruction& call() const noexcept
+   {
+      assert(isCall());
+      return *(Pseudo_call_instruction*)this;
+   }
+   constexpr bool isCall() const noexcept { return format == Format::PSEUDO_CALL; }
    constexpr bool isVOP3P() const noexcept { return (uint16_t)format & (uint16_t)Format::VOP3P; }
    VINTERP_inreg_instruction& vinterp_inreg() noexcept
    {
@@ -1727,6 +1955,16 @@ struct Pseudo_reduction_instruction : public Instruction {
 static_assert(sizeof(Pseudo_reduction_instruction) == sizeof(Instruction) + 4,
               "Unexpected padding");
 
+struct Pseudo_call_instruction : public Instruction {
+   ABI abi;
+   /*
+    * Register demand that's exclusively used for blocking registers for ABI compatibility.
+    * Set by live var analysis.
+    */
+   RegisterDemand blocked_abi_demand;
+};
+static_assert(sizeof(Pseudo_call_instruction) == sizeof(Instruction) + 40, "Unexpected padding");
+
 inline bool
 Instruction::accessesLDS() const noexcept
 {
@@ -1799,9 +2037,11 @@ memory_sync_info get_sync_info(const Instruction* instr);
 inline bool
 is_dead(const std::vector<uint16_t>& uses, const Instruction* instr)
 {
-   if (instr->definitions.empty() || instr->isBranch() || instr->opcode == aco_opcode::p_startpgm ||
-       instr->opcode == aco_opcode::p_init_scratch ||
-       instr->opcode == aco_opcode::p_dual_src_export_gfx11)
+   if (instr->definitions.empty() || instr->isBranch() || instr->isCall() ||
+       instr->opcode == aco_opcode::p_startpgm || instr->opcode == aco_opcode::p_init_scratch ||
+       instr->opcode == aco_opcode::p_dual_src_export_gfx11 ||
+       instr->opcode == aco_opcode::p_spill_preserved_vgpr ||
+       instr->opcode == aco_opcode::p_reload_preserved_vgpr)
       return false;
 
    if (std::any_of(instr->definitions.begin(), instr->definitions.end(),
@@ -1909,6 +2149,7 @@ struct Block {
    /* this information is needed for predecessors to blocks with phis when
     * moving out of ssa */
    bool scc_live_out = false;
+   bool contains_call = true;
 
    Block() : index(0) {}
 };
@@ -2035,6 +2276,7 @@ public:
    std::vector<Block> blocks;
    std::vector<RegClass> temp_rc = {s1};
    RegisterDemand max_reg_demand = RegisterDemand();
+   RegisterDemand max_real_reg_demand = RegisterDemand();
    ac_shader_config* config;
    struct aco_shader_info info;
    enum amd_gfx_level gfx_level;
@@ -2054,6 +2296,7 @@ public:
    std::vector<uint8_t> constant_data;
    Temp private_segment_buffer;
    Temp scratch_offset;
+   Temp stack_ptr = {};
 
    uint16_t num_waves = 0;
    uint16_t min_waves = 0;
@@ -2076,6 +2319,13 @@ public:
 
    /* For shader part with previous shader part that has lds access. */
    bool pending_lds_access = false;
+
+   bool is_callee = false;
+   bool bypass_reg_preservation = false;
+   ABI callee_abi = {};
+   unsigned short arg_sgpr_count;
+   unsigned short arg_vgpr_count;
+   unsigned scratch_arg_size = 0;
 
    struct {
       monotonic_buffer_resource memory;
@@ -2153,7 +2403,8 @@ void select_trap_handler_shader(Program* program, struct nir_shader* shader,
 void select_rt_prolog(Program* program, ac_shader_config* config,
                       const struct aco_compiler_options* options,
                       const struct aco_shader_info* info, const struct ac_shader_args* in_args,
-                      const struct ac_shader_args* out_args);
+                      const struct ac_shader_args* out_args, unsigned raygen_param_count,
+                      nir_parameter* raygen_params);
 void select_vs_prolog(Program* program, const struct aco_vs_prolog_info* pinfo,
                       ac_shader_config* config, const struct aco_compiler_options* options,
                       const struct aco_shader_info* info, const struct ac_shader_args* args);
@@ -2169,7 +2420,8 @@ void select_ps_prolog(Program* program, void* pinfo, ac_shader_config* config,
 void lower_phis(Program* program);
 void lower_subdword(Program* program);
 void calc_min_waves(Program* program);
-void update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand);
+void update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand,
+                             const RegisterDemand new_real_demand);
 void live_var_analysis(Program* program);
 std::vector<uint16_t> dead_code_analysis(Program* program);
 void dominator_tree(Program* program);
@@ -2180,6 +2432,7 @@ void optimize_postRA(Program* program);
 void setup_reduce_temp(Program* program);
 void lower_to_cssa(Program* program);
 void register_allocation(Program* program, ra_test_policy = {});
+void spill_preserved(Program* program);
 void ssa_elimination(Program* program);
 void lower_to_hw_instr(Program* program);
 void schedule_program(Program* program);
@@ -2192,6 +2445,7 @@ void combine_delay_alu(Program* program);
 bool dealloc_vgprs(Program* program);
 void insert_NOPs(Program* program);
 void form_hard_clauses(Program* program);
+void vectorize_spills(Program* program);
 unsigned emit_program(Program* program, std::vector<uint32_t>& code,
                       std::vector<struct aco_symbol>* symbols = NULL, bool append_endpgm = true);
 /**
@@ -2241,6 +2495,9 @@ int get_op_fixed_to_def(Instruction* instr);
 /* utilities for dealing with register demand */
 RegisterDemand get_live_changes(Instruction* instr);
 RegisterDemand get_temp_registers(Instruction* instr);
+RegisterDemand get_temp_reg_changes(Instruction* instr);
+void compute_blocked_abi_demand(Program* program, unsigned linear_vgpr_demand,
+                                Pseudo_call_instruction& instr);
 
 /* number of sgprs that need to be allocated but might notbe addressable as s0-s105 */
 uint16_t get_extra_sgprs(Program* program);
@@ -2293,5 +2550,11 @@ typedef struct {
 extern const Info instr_info;
 
 } // namespace aco
+
+namespace std {
+template <> struct hash<aco::PhysReg> {
+   size_t operator()(aco::PhysReg temp) const noexcept { return std::hash<uint32_t>{}(temp.reg_b); }
+};
+} // namespace std
 
 #endif /* ACO_IR_H */

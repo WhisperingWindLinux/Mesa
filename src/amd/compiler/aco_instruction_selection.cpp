@@ -10,6 +10,8 @@
 #include "aco_builder.h"
 #include "aco_interface.h"
 #include "aco_ir.h"
+#include "aco_nir_call_attribs.h"
+#include "aco_scratch_rsrc.h"
 
 #include "common/ac_descriptors.h"
 #include "common/ac_gpu_info.h"
@@ -104,9 +106,21 @@ append_logical_start(Block* b)
 }
 
 static void
-append_logical_end(Block* b)
+append_logical_end(isel_context* ctx)
 {
-   Builder(NULL, b).pseudo(aco_opcode::p_logical_end);
+   Builder bld(ctx->program, ctx->block);
+
+   Operand stack_ptr_op;
+   if (ctx->program->gfx_level >= GFX9)
+      stack_ptr_op = Operand(ctx->callee_info.stack_ptr.def.getTemp());
+   else
+      stack_ptr_op = Operand(load_scratch_resource(ctx->program, bld, true, true));
+   stack_ptr_op.setLateKill(true);
+   if (ctx->program->is_callee)
+      bld.pseudo(aco_opcode::p_reload_preserved_vgpr, bld.def(s1), bld.def(bld.lm),
+                 bld.def(s1, scc), stack_ptr_op);
+
+   bld.pseudo(aco_opcode::p_logical_end);
 }
 
 Temp
@@ -7633,41 +7647,6 @@ visit_access_shared2_amd(isel_context* ctx, nir_intrinsic_instr* instr)
    }
 }
 
-Temp
-get_scratch_resource(isel_context* ctx)
-{
-   Builder bld(ctx->program, ctx->block);
-   Temp scratch_addr = ctx->program->private_segment_buffer;
-   if (!scratch_addr.bytes()) {
-      Temp addr_lo =
-         bld.sop1(aco_opcode::p_load_symbol, bld.def(s1), Operand::c32(aco_symbol_scratch_addr_lo));
-      Temp addr_hi =
-         bld.sop1(aco_opcode::p_load_symbol, bld.def(s1), Operand::c32(aco_symbol_scratch_addr_hi));
-      scratch_addr = bld.pseudo(aco_opcode::p_create_vector, bld.def(s2), addr_lo, addr_hi);
-   } else if (ctx->stage.hw != AC_HW_COMPUTE_SHADER) {
-      scratch_addr =
-         bld.smem(aco_opcode::s_load_dwordx2, bld.def(s2), scratch_addr, Operand::zero());
-   }
-
-   struct ac_buffer_state ac_state = {0};
-   uint32_t desc[4];
-
-   ac_state.size = 0xffffffff;
-   ac_state.format = PIPE_FORMAT_R32_FLOAT;
-   for (int i = 0; i < 4; i++)
-      ac_state.swizzle[i] = PIPE_SWIZZLE_0;
-   /* older generations need element size = 4 bytes. element size removed in GFX9 */
-   ac_state.element_size = ctx->program->gfx_level <= GFX8 ? 1u : 0u;
-   ac_state.index_stride = ctx->program->wave_size == 64 ? 3u : 2u;
-   ac_state.add_tid = true;
-   ac_state.gfx10_oob_select = V_008F0C_OOB_SELECT_RAW;
-
-   ac_build_buffer_descriptor(ctx->program->gfx_level, &ac_state, desc);
-
-   return bld.pseudo(aco_opcode::p_create_vector, bld.def(s4), scratch_addr, Operand::c32(desc[2]),
-                     Operand::c32(desc[3]));
-}
-
 void
 visit_load_scratch(isel_context* ctx, nir_intrinsic_instr* instr)
 {
@@ -7683,17 +7662,34 @@ visit_load_scratch(isel_context* ctx, nir_intrinsic_instr* instr)
    if (ctx->program->gfx_level >= GFX9) {
       if (nir_src_is_const(instr->src[0])) {
          uint32_t max = ctx->program->dev.scratch_global_offset_max + 1;
-         info.offset =
-            bld.copy(bld.def(s1), Operand::c32(ROUND_DOWN_TO(nir_src_as_uint(instr->src[0]), max)));
+         if (ctx->callee_info.stack_ptr.is_reg)
+            info.offset =
+               bld.sop2(aco_opcode::s_add_u32, bld.def(s1), bld.def(s1, scc),
+                        Operand(ctx->callee_info.stack_ptr.def.getTemp()),
+                        Operand::c32(ROUND_DOWN_TO(nir_src_as_uint(instr->src[0]), max)));
+         else
+            info.offset = bld.copy(
+               bld.def(s1), Operand::c32(ROUND_DOWN_TO(nir_src_as_uint(instr->src[0]), max)));
          info.const_offset = nir_src_as_uint(instr->src[0]) % max;
       } else {
-         info.offset = Operand(get_ssa_temp(ctx, instr->src[0].ssa));
+         if (ctx->callee_info.stack_ptr.is_reg) {
+            Temp store_offset = get_ssa_temp(ctx, instr->src[0].ssa);
+            if (store_offset.type() == RegType::sgpr)
+               info.offset = bld.sop2(aco_opcode::s_add_u32, bld.def(s1), bld.def(s1, scc),
+                                      Operand(ctx->callee_info.stack_ptr.def.getTemp()),
+                                      Operand(store_offset));
+            else
+               info.offset = bld.vop2(aco_opcode::v_add_u32, bld.def(v1),
+                                      Operand(ctx->callee_info.stack_ptr.def.getTemp()),
+                                      Operand(store_offset));
+         } else
+            info.offset = Operand(get_ssa_temp(ctx, instr->src[0].ssa));
       }
       EmitLoadParameters params = scratch_flat_load_params;
       params.max_const_offset_plus_one = ctx->program->dev.scratch_global_offset_max + 1;
       emit_load(ctx, bld, info, params);
    } else {
-      info.resource = get_scratch_resource(ctx);
+      info.resource = load_scratch_resource(ctx->program, bld, false, true);
       info.offset = Operand(as_vgpr(ctx, get_ssa_temp(ctx, instr->src[0].ssa)));
       info.soffset = ctx->program->scratch_offset;
       emit_load(ctx, bld, info, scratch_mubuf_load_params);
@@ -7706,6 +7702,15 @@ visit_store_scratch(isel_context* ctx, nir_intrinsic_instr* instr)
    Builder bld(ctx->program, ctx->block);
    Temp data = as_vgpr(ctx, get_ssa_temp(ctx, instr->src[0].ssa));
    Temp offset = get_ssa_temp(ctx, instr->src[1].ssa);
+
+   if (ctx->callee_info.stack_ptr.is_reg && ctx->program->gfx_level >= GFX9) {
+      if (offset.type() == RegType::sgpr)
+         offset = bld.sop2(aco_opcode::s_add_u32, bld.def(s1), bld.def(s1, scc),
+                           Operand(ctx->callee_info.stack_ptr.def.getTemp()), Operand(offset));
+      else
+         offset = bld.vop2(aco_opcode::v_add_u32, bld.def(v1),
+                           Operand(ctx->callee_info.stack_ptr.def.getTemp()), Operand(offset));
+   }
 
    unsigned elem_size_bytes = instr->src[0].ssa->bit_size / 8;
    unsigned writemask = util_widen_mask(nir_intrinsic_write_mask(instr), elem_size_bytes);
@@ -7747,7 +7752,7 @@ visit_store_scratch(isel_context* ctx, nir_intrinsic_instr* instr)
                      memory_sync_info(storage_scratch, semantic_private));
       }
    } else {
-      Temp rsrc = get_scratch_resource(ctx);
+      Temp rsrc = load_scratch_resource(ctx->program, bld, false, true);
       offset = as_vgpr(ctx, offset);
       for (unsigned i = 0; i < write_count; i++) {
          aco_opcode op = get_buffer_store_op(write_datas[i].bytes());
@@ -8245,6 +8250,107 @@ visit_cmat_muladd(isel_context* ctx, nir_intrinsic_instr* instr)
    vop3p.clamp = clamp;
 
    emit_split_vector(ctx, dst, instr->def.num_components);
+}
+
+void
+load_scratch_param(isel_context* ctx, Builder& bld, const parameter_info& param, Temp stack_ptr,
+                   unsigned scratch_param_size, Temp dst)
+{
+   int32_t const_offset = param.scratch_offset - scratch_param_size;
+   unsigned byte_size = dst.bytes();
+   if (ctx->program->gfx_level < GFX9) {
+      Temp scratch_rsrc = load_scratch_resource(ctx->program, bld, true, false);
+
+      Temp soffset = bld.sop2(aco_opcode::s_sub_i32, bld.def(s1), bld.def(s1, scc),
+                              stack_ptr == Temp() ? Operand::c32(0) : Operand(stack_ptr),
+                              Operand::c32(-const_offset * ctx->program->wave_size));
+
+      aco_opcode op;
+      switch (byte_size) {
+      case 4: op = aco_opcode::buffer_load_dword; break;
+      case 8: op = aco_opcode::buffer_load_dwordx2; break;
+      case 12: op = aco_opcode::buffer_load_dwordx3; break;
+      case 16: op = aco_opcode::buffer_load_dwordx4; break;
+      default: unreachable("Unexpected param size");
+      }
+
+      Instruction* instr =
+         bld.mubuf(op, Definition(dst), scratch_rsrc, Operand(v1), soffset, 0, false);
+      instr->mubuf().sync = memory_sync_info(storage_scratch);
+      instr->mubuf().cache.value = ac_swizzled;
+      return;
+   }
+
+   if (const_offset < ctx->program->dev.scratch_global_offset_min) {
+      stack_ptr = bld.sop2(aco_opcode::s_add_u32, bld.def(s1), bld.def(s1, scc),
+                           stack_ptr == Temp() ? Operand::c32(0) : Operand(stack_ptr),
+                           Operand::c32(const_offset));
+      const_offset = 0;
+   }
+
+   aco_opcode op;
+   switch (byte_size) {
+   case 4: op = aco_opcode::scratch_load_dword; break;
+   case 8: op = aco_opcode::scratch_load_dwordx2; break;
+   case 12: op = aco_opcode::scratch_load_dwordx3; break;
+   case 16: op = aco_opcode::scratch_load_dwordx4; break;
+   default: unreachable("Unexpected param size");
+   }
+
+   bld.scratch(op, Definition(dst), Operand(v1),
+               stack_ptr == Temp() ? Operand(s1) : Operand(stack_ptr), (int16_t)const_offset,
+               memory_sync_info(storage_scratch));
+}
+
+void
+store_scratch_param(isel_context* ctx, Builder& bld, const parameter_info& param, Temp stack_ptr,
+                    unsigned scratch_param_size, Temp data)
+{
+   int32_t const_offset = param.scratch_offset - scratch_param_size;
+   unsigned byte_size = data.bytes();
+   if (ctx->program->gfx_level < GFX9) {
+      Temp scratch_rsrc = load_scratch_resource(ctx->program, bld, true, false);
+
+      Temp soffset = bld.sop2(aco_opcode::s_sub_i32, bld.def(s1), bld.def(s1, scc),
+                              stack_ptr == Temp() ? Operand::c32(0) : Operand(stack_ptr),
+                              Operand::c32(-const_offset * ctx->program->wave_size));
+
+      assert(-const_offset * ctx->program->wave_size < 0x1ff00);
+
+      aco_opcode op;
+      switch (byte_size) {
+      case 4: op = aco_opcode::buffer_store_dword; break;
+      case 8: op = aco_opcode::buffer_store_dwordx2; break;
+      case 12: op = aco_opcode::buffer_store_dwordx3; break;
+      case 16: op = aco_opcode::buffer_store_dwordx4; break;
+      default: unreachable("Unexpected param size");
+      }
+
+      Instruction* instr =
+         bld.mubuf(op, scratch_rsrc, Operand(v1), Operand(soffset), as_vgpr(bld, data), 0, false);
+      instr->mubuf().sync = memory_sync_info(storage_scratch);
+      instr->mubuf().cache.value = ac_swizzled;
+      return;
+   }
+
+   if (const_offset < ctx->program->dev.scratch_global_offset_min) {
+      stack_ptr = bld.sop2(aco_opcode::s_add_u32, bld.def(s1), bld.def(s1, scc),
+                           stack_ptr == Temp() ? Operand::c32(0) : Operand(stack_ptr),
+                           Operand::c32(const_offset));
+      const_offset = 0;
+   }
+
+   aco_opcode op;
+   switch (byte_size) {
+   case 4: op = aco_opcode::scratch_store_dword; break;
+   case 8: op = aco_opcode::scratch_store_dwordx2; break;
+   case 12: op = aco_opcode::scratch_store_dwordx3; break;
+   case 16: op = aco_opcode::scratch_store_dwordx4; break;
+   default: unreachable("Unexpected param size");
+   }
+
+   bld.scratch(op, Operand(v1), stack_ptr == Temp() ? Operand(s1) : Operand(stack_ptr),
+               as_vgpr(bld, data), (int16_t)const_offset, memory_sync_info(storage_scratch));
 }
 
 void
@@ -9540,6 +9646,71 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       bld.pseudo(aco_opcode::p_unit_test, Definition(get_ssa_temp(ctx, &instr->def)),
                  Operand::c32(nir_intrinsic_base(instr)));
       break;
+   case nir_intrinsic_load_return_param_amd: {
+      call_info& info = ctx->call_infos[nir_intrinsic_call_idx(instr)];
+
+      assert(nir_intrinsic_param_idx(instr) < info.nir_instr->callee->num_params);
+
+      unsigned index_in_return_params = 0u;
+      for (unsigned i = 0; i < info.nir_instr->callee->num_params; ++i) {
+         if (nir_intrinsic_param_idx(instr) == i) {
+            assert(info.nir_instr->callee->params[i].is_return);
+            break;
+         }
+         if (info.nir_instr->callee->params[i].is_return) {
+            ++index_in_return_params;
+         }
+      }
+
+      if (info.return_info[index_in_return_params].is_reg) {
+         bld.copy(Definition(get_ssa_temp(ctx, &instr->def)),
+                  Operand(info.return_info[index_in_return_params].def.getTemp()));
+      } else {
+         Temp stack_ptr;
+         if (ctx->callee_info.stack_ptr.is_reg)
+            stack_ptr = bld.pseudo(aco_opcode::p_callee_stack_ptr, bld.def(s1),
+                                   Operand::c32(info.scratch_param_size),
+                                   Operand(ctx->callee_info.stack_ptr.def.getTemp()));
+         else
+            stack_ptr = bld.pseudo(aco_opcode::p_callee_stack_ptr, bld.def(s1),
+                                   Operand::c32(info.scratch_param_size));
+         load_scratch_param(ctx, bld, info.return_info[index_in_return_params], stack_ptr,
+                            info.scratch_param_size, get_ssa_temp(ctx, &instr->def));
+      }
+      break;
+   }
+   case nir_intrinsic_load_param: {
+      const auto& param = ctx->callee_info.param_infos[nir_intrinsic_param_idx(instr)];
+      if (param.is_reg)
+         bld.copy(Definition(get_ssa_temp(ctx, &instr->def)), Operand(param.def.getTemp()));
+      else
+         load_scratch_param(
+            ctx, bld, param,
+            ctx->callee_info.stack_ptr.is_reg ? ctx->callee_info.stack_ptr.def.getTemp() : Temp(),
+            ctx->callee_info.scratch_param_size, get_ssa_temp(ctx, &instr->def));
+      break;
+   }
+   case nir_intrinsic_store_param_amd: {
+      auto& param = ctx->callee_info.param_infos[nir_intrinsic_param_idx(instr)];
+      if (param.is_reg)
+         param.def.setTemp(as_vgpr(ctx, get_ssa_temp(ctx, instr->src[0].ssa)));
+      else
+         store_scratch_param(
+            ctx, bld, param,
+            ctx->callee_info.stack_ptr.is_reg ? ctx->callee_info.stack_ptr.def.getTemp() : Temp(),
+            ctx->callee_info.scratch_param_size, get_ssa_temp(ctx, instr->src[0].ssa));
+      break;
+   }
+   case nir_intrinsic_load_call_return_address_amd: {
+      bld.copy(Definition(get_ssa_temp(ctx, &instr->def)),
+               Operand(ctx->callee_info.return_address.def.getTemp()));
+      break;
+   }
+   case nir_intrinsic_set_next_call_pc_amd: {
+      ctx->next_divergent_pc = as_vgpr(ctx, get_ssa_temp(ctx, instr->src[0].ssa));
+      ctx->next_pc = get_ssa_temp(ctx, instr->src[1].ssa);
+      break;
+   }
    default:
       isel_err(&instr->instr, "Unimplemented intrinsic instr");
       abort();
@@ -10251,7 +10422,7 @@ void
 begin_loop(isel_context* ctx, loop_context* lc)
 {
    // TODO: we might want to wrap the loop around a branch if exec.potentially_empty=true
-   append_logical_end(ctx->block);
+   append_logical_end(ctx);
    ctx->block->kind |= block_kind_loop_preheader | block_kind_uniform;
    Builder bld(ctx->program, ctx->block);
    bld.branch(aco_opcode::p_branch, bld.def(s2));
@@ -10309,7 +10480,7 @@ end_loop(isel_context* ctx, loop_context* lc)
    if (!ctx->cf_info.has_branch) {
       unsigned loop_header_idx = ctx->cf_info.parent_loop.header_idx;
       Builder bld(ctx->program, ctx->block);
-      append_logical_end(ctx->block);
+      append_logical_end(ctx);
 
       /* No need to check exec.potentially_empty_break/continue originating inside the loop. In the
        * only case where it's possible at this point (divergent break after divergent continue), we
@@ -10376,7 +10547,7 @@ emit_loop_jump(isel_context* ctx, bool is_break)
 {
    Builder bld(ctx->program, ctx->block);
    Block* logical_target;
-   append_logical_end(ctx->block);
+   append_logical_end(ctx);
    unsigned idx = ctx->block->index;
 
    if (is_break) {
@@ -10464,6 +10635,209 @@ visit_jump(isel_context* ctx, nir_jump_instr* instr)
    }
 }
 
+ABI
+make_abi(const ABI& base, const ac_shader_args* args, Program* program)
+{
+   ABI abi = base;
+
+   unsigned sgpr_limit = program->dev.sgpr_limit;
+   /* GFX8- needs a scratch_rsrc that we need to keep around somewhere */
+   if (program->gfx_level < GFX9)
+      sgpr_limit -= (align(sgpr_limit, 4) - sgpr_limit) + 4;
+   unsigned vgpr_limit = program->dev.vgpr_limit;
+
+   abi.parameterSpace.vgpr.lo_ =
+      abi.parameterSpace.vgpr.lo_.advance(align(args->num_vgprs_used, 2) * 4);
+   abi.parameterSpace.sgpr.lo_ =
+      abi.parameterSpace.sgpr.lo_.advance(align(args->num_sgprs_used, 2) * 4);
+   abi.clobberedRegs.vgpr.lo_ = abi.clobberedRegs.vgpr.lo_.advance(args->num_vgprs_used * 4);
+   abi.clobberedRegs.sgpr.lo_ = abi.clobberedRegs.sgpr.lo_.advance(args->num_sgprs_used * 4);
+
+   abi.parameterSpace.sgpr.size =
+      std::min(abi.parameterSpace.sgpr.size, sgpr_limit - abi.parameterSpace.sgpr.lo());
+   abi.parameterSpace.vgpr.size =
+      std::min(abi.parameterSpace.vgpr.size, vgpr_limit - (abi.parameterSpace.vgpr.lo() - 256));
+   abi.clobberedRegs.sgpr.size =
+      std::min(abi.clobberedRegs.sgpr.size, sgpr_limit - abi.clobberedRegs.sgpr.lo());
+   abi.clobberedRegs.vgpr.size =
+      std::min(abi.clobberedRegs.vgpr.size, vgpr_limit - (abi.clobberedRegs.vgpr.lo() - 256));
+
+   return abi;
+}
+
+void
+visit_call(isel_context* ctx, nir_call_instr* instr)
+{
+   Builder bld(ctx->program, ctx->block);
+
+   ABI abi;
+   /* TODO: callable abi? */
+   switch (instr->callee->driver_attributes & ACO_NIR_FUNCTION_ATTRIB_ABI_MASK) {
+   case ACO_NIR_CALL_ABI_RT_RECURSIVE: abi = make_abi(rtRaygenABI, ctx->args, ctx->program); break;
+   case ACO_NIR_CALL_ABI_TRAVERSAL: abi = make_abi(rtTraversalABI, ctx->args, ctx->program); break;
+   case ACO_NIR_CALL_ABI_AHIT_ISEC: abi = make_abi(rtAnyHitABI, ctx->args, ctx->program); break;
+   default: unreachable("invalid abi");
+   }
+
+   int sgpr_reg_byte_offset = 16;
+   int vgpr_reg_byte_offset = 0;
+   int scratch_byte_offset = 0;
+
+   unsigned reg_param_count = 0;
+   unsigned reg_return_param_count = 0;
+   std::unordered_map<unsigned, PhysReg> param_regs;
+   std::unordered_map<unsigned, unsigned> param_scratch_offsets;
+
+   std::vector<parameter_info> return_infos;
+
+   for (unsigned i = 0; i < instr->callee->num_params; ++i) {
+      int* reg_byte_offset;
+      PhysRegInterval interval;
+      if (instr->callee->params[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_UNIFORM) {
+         reg_byte_offset = &sgpr_reg_byte_offset;
+         interval = abi.parameterSpace.sgpr;
+      } else {
+         reg_byte_offset = &vgpr_reg_byte_offset;
+         interval = abi.parameterSpace.vgpr;
+      }
+
+      PhysReg param_reg = interval.lo().advance(*reg_byte_offset);
+      int* byte_offset;
+      unsigned byte_size =
+         align(instr->callee->params[i].bit_size, 32) / 8 * instr->callee->params[i].num_components;
+
+      if (param_reg < interval.hi()) {
+         ++reg_param_count;
+         if (instr->callee->params[i].is_return) {
+            return_infos.emplace_back(parameter_info{
+               .is_reg = true,
+               .def = Definition(),
+            });
+            ++reg_return_param_count;
+         }
+         byte_offset = reg_byte_offset;
+         param_regs.emplace(i, param_reg);
+      } else {
+         if (instr->callee->params[i].is_return) {
+            return_infos.emplace_back(parameter_info{
+               .is_reg = false,
+               .scratch_offset = static_cast<unsigned>(scratch_byte_offset),
+            });
+         }
+         byte_offset = &scratch_byte_offset;
+         param_scratch_offsets.emplace(i, scratch_byte_offset);
+      }
+      *byte_offset += byte_size;
+   }
+
+   Instruction* stack_instr;
+   Definition stack_ptr;
+   if (ctx->callee_info.stack_ptr.is_reg) {
+      stack_instr =
+         bld.pseudo(aco_opcode::p_callee_stack_ptr, bld.def(s1), Operand::c32(scratch_byte_offset),
+                    Operand(ctx->callee_info.stack_ptr.def.getTemp()));
+      stack_ptr = ctx->callee_info.stack_ptr.def;
+   } else {
+      stack_instr =
+         bld.pseudo(aco_opcode::p_callee_stack_ptr, bld.def(s1), Operand::c32(scratch_byte_offset));
+      stack_ptr = bld.pseudo(aco_opcode::p_parallelcopy, bld.def(s1), Operand::c32(0)).def(0);
+   }
+
+   for (auto& pair : param_scratch_offsets) {
+      parameter_info info = {
+         .is_reg = false,
+         .scratch_offset = pair.second,
+      };
+      store_scratch_param(ctx, bld, info, stack_instr->definitions[0].getTemp(),
+                          scratch_byte_offset, get_ssa_temp(ctx, instr->params[pair.first].ssa));
+   }
+
+   unsigned extra_def_count = 1;
+
+   Temp vcc_backup;
+   if (ctx->program->dev.sgpr_limit <= vcc_hi.reg()) {
+      vcc_backup = bld.copy(bld.def(bld.lm), Operand(vcc, bld.lm));
+      --extra_def_count;
+   }
+
+   unsigned extra_param_count = 3;
+   if (ctx->program->gfx_level < GFX9)
+      ++extra_param_count;
+
+   unsigned param_size = scratch_byte_offset;
+   if (ctx->program->gfx_level < GFX9)
+      param_size *= ctx->program->wave_size;
+
+   Instruction* call_instr =
+      create_instruction(aco_opcode::p_call, Format::PSEUDO_CALL,
+                         reg_param_count + ctx->args->arg_count + extra_param_count,
+                         reg_return_param_count + extra_def_count);
+   call_instr->call().abi = abi;
+   call_instr->operands[0] = Operand(ctx->callee_info.return_address.def.getTemp(),
+                                     ctx->callee_info.return_address.def.physReg());
+   call_instr->operands[1] = Operand(stack_ptr.getTemp(), ctx->callee_info.stack_ptr.def.physReg());
+   call_instr->operands[2] = Operand::c32(param_size);
+   if (ctx->program->gfx_level < GFX9) {
+      call_instr->operands[reg_param_count + ctx->args->arg_count + 3] =
+         Operand(load_scratch_resource(ctx->program, bld, true, false));
+      call_instr->operands[reg_param_count + ctx->args->arg_count + 3].setLateKill(true);
+   }
+
+   unsigned reg_return_param_idx = 0;
+   unsigned return_param_idx = 0;
+   for (unsigned i = 0; i < instr->num_params; ++i) {
+      auto param_reg = param_regs.find(i);
+      if (param_reg == param_regs.end()) {
+         if (instr->callee->params[i].is_return)
+            ++return_param_idx;
+         continue;
+      }
+
+      if (instr->callee->params[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_UNIFORM)
+         call_instr->operands[i + 3] = Operand(get_ssa_temp(ctx, instr->params[i].ssa));
+      else
+         call_instr->operands[i + 3] =
+            Operand(as_vgpr(ctx, get_ssa_temp(ctx, instr->params[i].ssa)));
+
+      if (instr->callee->params[i].is_return) {
+         assert(!(instr->callee->params[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_UNIFORM));
+         Definition def =
+            bld.def(RegClass(RegType::vgpr, DIV_ROUND_UP(instr->callee->params[i].bit_size, 32)),
+                    param_reg->second);
+         call_instr->definitions[extra_def_count + reg_return_param_idx++] = def;
+         return_infos[return_param_idx++].def = def;
+      }
+
+      call_instr->operands[i + 3].setFixed(param_reg->second);
+   }
+
+   for (unsigned i = 0; i < ctx->args->arg_count; i++) {
+      enum ac_arg_regfile file = ctx->args->args[i].file;
+      unsigned size = ctx->args->args[i].size;
+      unsigned reg = ctx->args->args[i].offset + (file == AC_ARG_SGPR ? 0 : 256);
+      RegClass type = RegClass(file == AC_ARG_SGPR ? RegType::sgpr : RegType::vgpr, size);
+      Operand op = ctx->arg_temps[i].id() ? Operand(ctx->arg_temps[i], PhysReg{reg})
+                                          : Operand(PhysReg{reg}, type);
+      op.setLateKill(true);
+      call_instr->operands[reg_param_count + 3 + i] = op;
+   }
+
+   if (ctx->program->dev.sgpr_limit <= vcc_hi.reg())
+      bld.copy(bld.def(bld.lm, vcc), Operand(vcc_backup));
+   else
+      call_instr->definitions[0] = bld.def(s2, vcc);
+
+   ctx->block->instructions.emplace_back(static_cast<Instruction*>(call_instr));
+
+   call_info info;
+   info.nir_instr = instr;
+   info.aco_instr = call_instr;
+   info.return_info = std::move(return_infos);
+   info.scratch_param_size = scratch_byte_offset;
+   ctx->call_infos.push_back(info);
+   ctx->block->contains_call = true;
+}
+
 void
 visit_block(isel_context* ctx, nir_block* block)
 {
@@ -10487,6 +10861,7 @@ visit_block(isel_context* ctx, nir_block* block)
       case nir_instr_type_undef: visit_undef(ctx, nir_instr_as_undef(instr)); break;
       case nir_instr_type_deref: break;
       case nir_instr_type_jump: visit_jump(ctx, nir_instr_as_jump(instr)); break;
+      case nir_instr_type_call: visit_call(ctx, nir_instr_as_call(instr)); break;
       default: isel_err(instr, "Unknown NIR instr type");
       }
    }
@@ -10606,7 +10981,7 @@ begin_divergent_if_then(isel_context* ctx, if_context* ic, Temp cond,
 {
    ic->cond = cond;
 
-   append_logical_end(ctx->block);
+   append_logical_end(ctx);
    ctx->block->kind |= block_kind_branch;
 
    /* branch to linear then block */
@@ -10652,7 +11027,7 @@ begin_divergent_if_else(isel_context* ctx, if_context* ic,
                         nir_selection_control sel_ctrl = nir_selection_control_none)
 {
    Block* BB_then_logical = ctx->block;
-   append_logical_end(BB_then_logical);
+   append_logical_end(ctx);
    /* branch from logical then block to invert block */
    aco_ptr<Instruction> branch;
    branch.reset(create_instruction(aco_opcode::p_branch, Format::PSEUDO_BRANCH, 0, 1));
@@ -10711,7 +11086,7 @@ static void
 end_divergent_if(isel_context* ctx, if_context* ic)
 {
    Block* BB_else_logical = ctx->block;
-   append_logical_end(BB_else_logical);
+   append_logical_end(ctx);
 
    /* branch from logical else block to endif block */
    aco_ptr<Instruction> branch;
@@ -10756,7 +11131,7 @@ begin_uniform_if_then(isel_context* ctx, if_context* ic, Temp cond)
 {
    assert(cond.regClass() == s1);
 
-   append_logical_end(ctx->block);
+   append_logical_end(ctx);
    ctx->block->kind |= block_kind_uniform;
 
    aco_ptr<Instruction> branch;
@@ -10791,7 +11166,7 @@ begin_uniform_if_else(isel_context* ctx, if_context* ic)
    Block* BB_then = ctx->block;
 
    if (!ctx->cf_info.has_branch) {
-      append_logical_end(BB_then);
+      append_logical_end(ctx);
       /* branch from then block to endif block */
       aco_ptr<Instruction> branch;
       branch.reset(create_instruction(aco_opcode::p_branch, Format::PSEUDO_BRANCH, 0, 1));
@@ -10825,7 +11200,7 @@ end_uniform_if(isel_context* ctx, if_context* ic)
    Block* BB_else = ctx->block;
 
    if (!ctx->cf_info.has_branch) {
-      append_logical_end(BB_else);
+      append_logical_end(ctx);
       /* branch from then block to endif block */
       aco_ptr<Instruction> branch;
       branch.reset(create_instruction(aco_opcode::p_branch, Format::PSEUDO_BRANCH, 0, 1));
@@ -11344,9 +11719,91 @@ create_fs_end_for_epilog(isel_context* ctx)
    ctx->program->needs_exact = true;
 }
 
-Instruction*
-add_startpgm(struct isel_context* ctx)
+struct callee_info
+get_callee_info(const ABI& abi, unsigned param_count, const nir_parameter* parameters,
+                Program* program)
 {
+   struct callee_info info = {};
+   info.param_infos.reserve(param_count);
+
+   unsigned reg_param_count = 0;
+   unsigned sgpr_reg_byte_offset = 0;
+   unsigned vgpr_reg_byte_offset = 0;
+   unsigned scratch_param_byte_offset = 0;
+
+   Temp stack_ptr = program ? program->allocateTmp(s1) : Temp();
+   Definition stack_def = Definition(stack_ptr);
+   stack_def.setFixed(abi.parameterSpace.sgpr.lo().advance(sgpr_reg_byte_offset));
+   sgpr_reg_byte_offset += 4;
+
+   sgpr_reg_byte_offset = align(sgpr_reg_byte_offset, 8);
+   Temp return_addr = program ? program->allocateTmp(s2) : Temp();
+   Definition return_def = Definition(return_addr);
+   return_def.setFixed(abi.parameterSpace.sgpr.lo().advance(sgpr_reg_byte_offset));
+   sgpr_reg_byte_offset += 8;
+
+   info.stack_ptr = parameter_info{
+      .discardable = false,
+      .is_reg = true,
+      .def = stack_def,
+   };
+   info.return_address = parameter_info{
+      .discardable = false,
+      .is_reg = true,
+      .def = return_def,
+   };
+
+   for (unsigned i = 0; i < param_count; ++i) {
+      unsigned* reg_byte_offset;
+      PhysRegInterval interval;
+      RegType type;
+      if (parameters[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_UNIFORM) {
+         reg_byte_offset = &sgpr_reg_byte_offset;
+         interval = abi.parameterSpace.sgpr;
+         type = RegType::sgpr;
+      } else {
+         reg_byte_offset = &vgpr_reg_byte_offset;
+         interval = abi.parameterSpace.vgpr;
+         type = RegType::vgpr;
+      }
+
+      unsigned byte_size = align(parameters[i].bit_size, 32) / 8 * parameters[i].num_components;
+      RegClass rc = RegClass(type, byte_size / 4);
+      PhysReg param_reg = interval.lo().advance(*reg_byte_offset);
+
+      if (param_reg < interval.hi()) {
+         ++reg_param_count;
+         Temp dst = program ? program->allocateTmp(rc) : Temp();
+         Definition def = Definition(dst);
+         def.setFixed(param_reg);
+         *reg_byte_offset += byte_size;
+         info.param_infos.emplace_back(parameter_info{
+            .discardable = !!(parameters[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_DISCARDABLE),
+            .is_reg = true,
+            .def = def,
+         });
+      } else {
+         info.param_infos.emplace_back(parameter_info{
+            .discardable = !!(parameters[i].driver_attributes & ACO_NIR_PARAM_ATTRIB_DISCARDABLE),
+            .is_reg = false,
+            .scratch_offset = scratch_param_byte_offset,
+         });
+         scratch_param_byte_offset += byte_size;
+      }
+   }
+
+   info.reg_param_count = reg_param_count;
+   info.scratch_param_size = scratch_param_byte_offset;
+   return info;
+}
+
+Instruction*
+add_startpgm(struct isel_context* ctx, bool is_callee = false)
+{
+   ctx->program->arg_sgpr_count = ctx->args->num_sgprs_used;
+   ctx->program->arg_vgpr_count = ctx->args->num_vgprs_used;
+   ctx->program->scratch_arg_size += ctx->callee_info.scratch_param_size;
+
    unsigned def_count = 0;
    for (unsigned i = 0; i < ctx->args->arg_count; i++) {
       if (ctx->args->args[i].skip)
@@ -11357,6 +11814,9 @@ add_startpgm(struct isel_context* ctx)
       else
          def_count++;
    }
+   unsigned used_arg_count = def_count;
+   def_count +=
+      ctx->callee_info.reg_param_count + (is_callee ? 2 : 0); /* parameters + return address */
 
    if (ctx->stage.hw == AC_HW_COMPUTE_SHADER && ctx->program->gfx_level >= GFX12)
       def_count += 3;
@@ -11420,6 +11880,20 @@ add_startpgm(struct isel_context* ctx)
       const struct ac_arg* ids = ctx->args->workgroup_ids;
       for (unsigned i = 0; i < 3; i++)
          ctx->workgroup_id[i] = ids[i].used ? Operand(get_arg(ctx, ids[i])) : Operand::zero();
+   }
+
+   if (is_callee) {
+      unsigned def_idx = used_arg_count;
+
+      ctx->program->stack_ptr = ctx->callee_info.stack_ptr.def.getTemp();
+      startpgm->definitions[def_idx++] = ctx->callee_info.stack_ptr.def;
+      startpgm->definitions[def_idx++] = ctx->callee_info.return_address.def;
+
+      for (auto& info : ctx->callee_info.param_infos) {
+         if (!info.is_reg)
+            continue;
+         startpgm->definitions[def_idx++] = info.def;
+      }
    }
 
    /* epilog has no scratch */
@@ -11636,63 +12110,129 @@ merged_wave_info_to_mask(isel_context* ctx, unsigned i)
    return lanecount_to_mask(ctx, count);
 }
 
-static void
-insert_rt_jump_next(isel_context& ctx, const struct ac_shader_args* args)
+void
+insert_return(isel_context& ctx)
 {
-   unsigned src_count = 0;
-   for (unsigned i = 0; i < ctx.args->arg_count; i++)
-      src_count += !!BITSET_TEST(ctx.output_args, i);
-
+   unsigned return_param_count = 0;
+   for (auto& param_def : ctx.callee_info.param_infos) {
+      if (!param_def.is_reg || param_def.discardable)
+         continue;
+      ++return_param_count;
+   }
+   unsigned src_count = return_param_count + 2;
+   if (ctx.next_pc != Temp())
+      src_count += ctx.args->arg_count;
    Instruction* ret = create_instruction(aco_opcode::p_return, Format::PSEUDO, src_count, 0);
    ctx.block->instructions.emplace_back(ret);
 
-   src_count = 0;
-   for (unsigned i = 0; i < ctx.args->arg_count; i++) {
-      if (!BITSET_TEST(ctx.output_args, i))
-         continue;
-
-      enum ac_arg_regfile file = ctx.args->args[i].file;
-      unsigned size = ctx.args->args[i].size;
-      unsigned reg = ctx.args->args[i].offset + (file == AC_ARG_SGPR ? 0 : 256);
-      RegClass type = RegClass(file == AC_ARG_SGPR ? RegType::sgpr : RegType::vgpr, size);
-      Operand op = ctx.arg_temps[i].id() ? Operand(ctx.arg_temps[i], PhysReg{reg})
-                                         : Operand(PhysReg{reg}, type);
-      ret->operands[src_count] = op;
-      src_count++;
+   if (ctx.next_pc != Temp()) {
+      for (unsigned i = 0; i < ctx.args->arg_count; i++) {
+         enum ac_arg_regfile file = ctx.args->args[i].file;
+         unsigned size = ctx.args->args[i].size;
+         unsigned reg = ctx.args->args[i].offset + (file == AC_ARG_SGPR ? 0 : 256);
+         RegClass type = RegClass(file == AC_ARG_SGPR ? RegType::sgpr : RegType::vgpr, size);
+         Operand op = ctx.arg_temps[i].id() ? Operand(ctx.arg_temps[i], PhysReg{reg})
+                                            : Operand(PhysReg{reg}, type);
+         ret->operands[i] = op;
+      }
    }
 
-   Builder bld(ctx.program, ctx.block);
-   bld.sop1(aco_opcode::s_setpc_b64, get_arg(&ctx, ctx.args->rt.uniform_shader_addr));
+   unsigned def_idx = ctx.next_pc != Temp() ? ctx.args->arg_count : 0;
+   for (unsigned i = 0; i < ctx.callee_info.param_infos.size(); ++i) {
+      const auto& param_info = ctx.callee_info.param_infos[i];
+      if (!param_info.is_reg || param_info.discardable)
+         continue;
+      Temp param_temp = param_info.def.getTemp();
+      if (i == 0 && ctx.next_pc != Temp())
+         param_temp = ctx.next_divergent_pc;
+      else if (i == 1 && ctx.next_pc != Temp())
+         param_temp = ctx.next_pc;
+      Operand op = Operand(param_temp);
+      op.setFixed(param_info.def.physReg());
+      ret->operands[def_idx++] = op;
+   }
+   Operand op = Operand(ctx.callee_info.return_address.def.getTemp());
+   op.setFixed(ctx.callee_info.return_address.def.physReg());
+   ret->operands[def_idx++] = op;
+   Operand stack_op = Operand(ctx.callee_info.stack_ptr.def.getTemp());
+   stack_op.setFixed(ctx.callee_info.stack_ptr.def.physReg());
+   ret->operands[def_idx++] = stack_op;
 }
 
 void
 select_program_rt(isel_context& ctx, unsigned shader_count, struct nir_shader* const* shaders,
                   const struct ac_shader_args* args)
 {
+   bool first_block = true;
    for (unsigned i = 0; i < shader_count; i++) {
-      if (i) {
-         ctx.block = ctx.program->create_and_insert_block();
-         ctx.block->kind = block_kind_top_level | block_kind_resume;
+      nir_foreach_function_impl (impl, shaders[i]) {
+         if (!first_block) {
+            ctx.block = ctx.program->create_and_insert_block();
+            ctx.block->kind = block_kind_top_level | block_kind_resume;
+         }
+         nir_shader* nir = shaders[i];
+
+         init_context(&ctx, nir);
+         setup_fp_mode(&ctx, nir);
+
+         ABI abi;
+         /* TODO: callable abi? */
+         switch (shaders[i]->info.stage) {
+         case MESA_SHADER_RAYGEN:
+         case MESA_SHADER_CLOSEST_HIT:
+         case MESA_SHADER_MISS:
+         case MESA_SHADER_CALLABLE: abi = rtRaygenABI; break;
+         case MESA_SHADER_INTERSECTION: abi = rtTraversalABI; break;
+         case MESA_SHADER_ANY_HIT: abi = rtAnyHitABI; break;
+         default: unreachable("invalid RT shader stage");
+         }
+
+         ctx.callee_abi = make_abi(abi, args, ctx.program);
+         ctx.program->callee_abi = ctx.callee_abi;
+         ctx.callee_info = get_callee_info(ctx.callee_abi, impl->function->num_params,
+                                           impl->function->params, ctx.program);
+         ctx.program->is_callee = true;
+
+         Instruction* startpgm = add_startpgm(&ctx, true);
+
+         Builder bld(ctx.program, ctx.block);
+
+         Operand stack_ptr_op;
+         if (ctx.program->gfx_level >= GFX9)
+            stack_ptr_op = Operand(ctx.callee_info.stack_ptr.def.getTemp());
+         else
+            stack_ptr_op = Operand(load_scratch_resource(ctx.program, bld, true, true));
+         stack_ptr_op.setLateKill(true);
+         bld.pseudo(aco_opcode::p_spill_preserved_vgpr, bld.def(s1), bld.def(bld.lm),
+                    bld.def(s1, scc), stack_ptr_op);
+
+         append_logical_start(ctx.block);
+         split_arguments(&ctx, startpgm);
+         visit_cf_list(&ctx, &impl->body);
+         append_logical_end(&ctx);
+         ctx.block->kind |= block_kind_uniform;
+
+         if (ctx.next_pc != Temp()) {
+            bld = Builder(ctx.program, ctx.block);
+            if (ctx.program->gfx_level >= GFX9)
+               stack_ptr_op = Operand(ctx.callee_info.stack_ptr.def.getTemp());
+            else
+               stack_ptr_op = Operand(load_scratch_resource(ctx.program, bld, true, true));
+            stack_ptr_op.setLateKill(true);
+            bld.pseudo(aco_opcode::p_reload_preserved_vgpr, bld.def(s1), bld.def(bld.lm),
+                       bld.def(s1, scc), stack_ptr_op);
+
+            insert_return(ctx);
+
+            Builder(ctx.program, ctx.block).sop1(aco_opcode::s_setpc_b64, Operand(ctx.next_pc));
+         } else {
+            ctx.program->bypass_reg_preservation = true;
+            Builder(ctx.program, ctx.block).sopp(aco_opcode::s_endpgm);
+         }
+
+         cleanup_context(&ctx);
+         first_block = false;
       }
-
-      nir_shader* nir = shaders[i];
-      init_context(&ctx, nir);
-      setup_fp_mode(&ctx, nir);
-
-      Instruction* startpgm = add_startpgm(&ctx);
-      append_logical_start(ctx.block);
-      split_arguments(&ctx, startpgm);
-      visit_cf_list(&ctx, &nir_shader_get_entrypoint(nir)->body);
-      append_logical_end(ctx.block);
-      ctx.block->kind |= block_kind_uniform;
-
-      /* Fix output registers and jump to next shader. We can skip this when dealing with a raygen
-       * shader without shader calls.
-       */
-      if (shader_count > 1 || shaders[i]->info.stage != MESA_SHADER_RAYGEN)
-         insert_rt_jump_next(ctx, args);
-
-      cleanup_context(&ctx);
    }
 
    ctx.program->config->float_mode = ctx.program->blocks[0].fp_mode.val;
@@ -11962,7 +12502,7 @@ select_shader(isel_context& ctx, nir_shader* nir, const bool need_startpgm, cons
    if (need_endpgm) {
       program->config->float_mode = program->blocks[0].fp_mode.val;
 
-      append_logical_end(ctx.block);
+      append_logical_end(&ctx);
       ctx.block->kind |= block_kind_uniform;
 
       if ((!program->info.has_epilog && !is_first_stage_of_merged_shader) ||
@@ -12377,7 +12917,7 @@ select_trap_handler_shader(Program* program, struct nir_shader* shader, ac_shade
 
    program->config->float_mode = program->blocks[0].fp_mode.val;
 
-   append_logical_end(ctx.block);
+   append_logical_end(&ctx);
    ctx.block->kind |= block_kind_uniform;
    bld.sopp(aco_opcode::s_endpgm);
 
@@ -12504,7 +13044,8 @@ calc_nontrivial_instance_id(Builder& bld, const struct ac_shader_args* args,
 void
 select_rt_prolog(Program* program, ac_shader_config* config,
                  const struct aco_compiler_options* options, const struct aco_shader_info* info,
-                 const struct ac_shader_args* in_args, const struct ac_shader_args* out_args)
+                 const struct ac_shader_args* in_args, const struct ac_shader_args* out_args,
+                 unsigned raygen_param_count, nir_parameter* raygen_params)
 {
    init_program(program, compute_cs, info, options->gfx_level, options->family, options->wgp_mode,
                 config);
@@ -12515,8 +13056,11 @@ select_rt_prolog(Program* program, ac_shader_config* config,
    calc_min_waves(program);
    Builder bld(program, block);
    block->instructions.reserve(32);
-   unsigned num_sgprs = MAX2(in_args->num_sgprs_used, out_args->num_sgprs_used);
-   unsigned num_vgprs = MAX2(in_args->num_vgprs_used, out_args->num_vgprs_used);
+   unsigned num_sgprs = MAX2(in_args->num_sgprs_used, align(out_args->num_sgprs_used, 2) + 4);
+   unsigned num_vgprs = MAX2(in_args->num_vgprs_used, align(out_args->num_vgprs_used, 2) + 4);
+
+   struct callee_info raygen_info = get_callee_info(make_abi(rtRaygenABI, out_args, program),
+                                                    raygen_param_count, raygen_params, NULL);
 
    /* Inputs:
     * Ring offsets:                s[0-1]
@@ -12567,7 +13111,6 @@ select_rt_prolog(Program* program, ac_shader_config* config,
     * Shader VA:                   v[4-5]
     * Shader Record Ptr:           v[6-7]
     */
-   PhysReg out_uniform_shader_addr = get_arg_reg(out_args, out_args->rt.uniform_shader_addr);
    PhysReg out_launch_size_x = get_arg_reg(out_args, out_args->rt.launch_sizes[0]);
    PhysReg out_launch_size_y = get_arg_reg(out_args, out_args->rt.launch_sizes[1]);
    PhysReg out_launch_size_z = get_arg_reg(out_args, out_args->rt.launch_sizes[2]);
@@ -12575,10 +13118,24 @@ select_rt_prolog(Program* program, ac_shader_config* config,
    for (unsigned i = 0; i < 3; i++)
       out_launch_ids[i] = get_arg_reg(out_args, out_args->rt.launch_ids[i]);
    PhysReg out_stack_ptr = get_arg_reg(out_args, out_args->rt.dynamic_callable_stack_base);
-   PhysReg out_record_ptr = get_arg_reg(out_args, out_args->rt.shader_record);
+   PhysReg out_payload_offset = get_arg_reg(out_args, out_args->rt.payload_offset);
+
+   assert(raygen_info.stack_ptr.is_reg);
+   assert(raygen_info.return_address.is_reg);
+   assert(raygen_info.param_infos[0].is_reg);
+   assert(raygen_info.param_infos[1].is_reg);
+   assert(raygen_info.param_infos[2].is_reg);
+   PhysReg out_stack_ptr_param = raygen_info.stack_ptr.def.physReg();
+   PhysReg out_return_shader_addr = raygen_info.return_address.def.physReg();
+   PhysReg out_divergent_shader_addr = raygen_info.param_infos[0].def.physReg();
+   PhysReg out_uniform_shader_addr = raygen_info.param_infos[1].def.physReg();
+   PhysReg out_record_ptr = raygen_info.param_infos[2].def.physReg();
+
+   num_sgprs = std::max(num_sgprs, out_uniform_shader_addr.reg());
 
    /* Temporaries: */
    num_sgprs = align(num_sgprs, 2);
+   num_sgprs += 2;
    PhysReg tmp_raygen_sbt = PhysReg{num_sgprs};
    num_sgprs += 2;
    PhysReg tmp_ring_offsets = PhysReg{num_sgprs};
@@ -12589,7 +13146,6 @@ select_rt_prolog(Program* program, ac_shader_config* config,
    PhysReg tmp_invocation_idx = PhysReg{256 + num_vgprs++};
 
    /* Confirm some assumptions about register aliasing */
-   assert(in_ring_offsets == out_uniform_shader_addr);
    assert(get_arg_reg(in_args, in_args->push_constants) ==
           get_arg_reg(out_args, out_args->push_constants));
    assert(get_arg_reg(in_args, in_args->rt.sbt_descriptors) ==
@@ -12703,6 +13259,17 @@ select_rt_prolog(Program* program, ac_shader_config* config,
       bld.sop1(aco_opcode::s_mov_b64, Definition(get_arg_reg(out_args, out_args->ring_offsets), s2),
                Operand(tmp_ring_offsets, s2));
    }
+
+   if (program->gfx_level < GFX8)
+      bld.vop3(aco_opcode::v_lshr_b64, Definition(out_divergent_shader_addr, v2),
+               Operand(out_uniform_shader_addr, s2), Operand::c32(0));
+   else
+      bld.vop3(aco_opcode::v_lshrrev_b64, Definition(out_divergent_shader_addr, v2),
+               Operand::c32(0), Operand(out_uniform_shader_addr, s2));
+   bld.sop1(aco_opcode::s_mov_b64, Definition(out_return_shader_addr, s2), Operand::c32(0));
+   bld.vop1(aco_opcode::v_mov_b32, Definition(out_payload_offset, v1), Operand::c32(0));
+
+   bld.sopk(aco_opcode::s_movk_i32, Definition(out_stack_ptr_param, s1), 0);
 
    /* jump to raygen */
    bld.sop1(aco_opcode::s_setpc_b64, Operand(out_uniform_shader_addr, s2));
@@ -13274,7 +13841,7 @@ select_ps_epilog(Program* program, void* pinfo, ac_shader_config* config,
 
    program->config->float_mode = program->blocks[0].fp_mode.val;
 
-   append_logical_end(ctx.block);
+   append_logical_end(&ctx);
    ctx.block->kind |= block_kind_export_end;
    bld.reset(ctx.block);
    bld.sopp(aco_opcode::s_endpgm);
@@ -13310,7 +13877,7 @@ select_ps_prolog(Program* program, void* pinfo, ac_shader_config* config,
 
    program->config->float_mode = program->blocks[0].fp_mode.val;
 
-   append_logical_end(ctx.block);
+   append_logical_end(&ctx);
 
    build_end_with_regs(&ctx, regs);
 

@@ -88,6 +88,10 @@ typedef struct radv_nir_opt_tid_function_options {
 
 bool radv_nir_opt_tid_function(nir_shader *shader, const radv_nir_opt_tid_function_options *options);
 
+void radv_nir_lower_callee_signature(nir_function *function, struct set *visited_funcs);
+
+bool radv_nir_lower_call_abi(nir_shader *shader, unsigned wave_size);
+
 #ifdef __cplusplus
 }
 #endif

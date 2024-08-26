@@ -252,7 +252,9 @@ static bool lower_resinfo(nir_builder *b, nir_instr *instr, void *data)
          dim = nir_intrinsic_image_dim(intr);
          is_array = nir_intrinsic_image_array(intr);
          desc = nir_image_descriptor_amd(b, dim == GLSL_SAMPLER_DIM_BUF ? 4 : 8,
-                                         32, intr->src[0].ssa);
+                                         32, intr->src[0].ssa,
+                                         .image_dim = dim,
+                                         .image_array = is_array);
          break;
 
       case nir_intrinsic_image_deref_size:
@@ -261,7 +263,9 @@ static bool lower_resinfo(nir_builder *b, nir_instr *instr, void *data)
          dim = glsl_get_sampler_dim(type);
          is_array = glsl_sampler_type_is_array(type);
          desc = nir_image_deref_descriptor_amd(b, dim == GLSL_SAMPLER_DIM_BUF ? 4 : 8,
-                                               32, intr->src[0].ssa);
+                                               32, intr->src[0].ssa,
+                                               .image_dim = dim,
+                                               .image_array = is_array);
          break;
 
       case nir_intrinsic_bindless_image_size:
@@ -269,7 +273,9 @@ static bool lower_resinfo(nir_builder *b, nir_instr *instr, void *data)
          dim = nir_intrinsic_image_dim(intr);
          is_array = nir_intrinsic_image_array(intr);
          desc = nir_bindless_image_descriptor_amd(b, dim == GLSL_SAMPLER_DIM_BUF ? 4 : 8,
-                                                  32, intr->src[0].ssa);
+                                                  32, intr->src[0].ssa,
+                                                  .image_dim = dim,
+                                                  .image_array = is_array);
          break;
 
       default:
@@ -314,6 +320,8 @@ static bool lower_resinfo(nir_builder *b, nir_instr *instr, void *data)
                new_tex->op = nir_texop_descriptor_amd;
                new_tex->sampler_dim = tex->sampler_dim;
                new_tex->is_array = tex->is_array;
+               new_tex->is_shadow = tex->is_shadow; /* to match the deref type */
+               new_tex->array_is_lowered_cube = tex->array_is_lowered_cube;
                new_tex->texture_index = tex->texture_index;
                new_tex->sampler_index = tex->sampler_index;
                new_tex->dest_type = nir_type_int32;

@@ -991,6 +991,8 @@ static int si_get_video_param(struct pipe_screen *screen, enum pipe_video_profil
          return PIPE_FORMAT_P010;
       else if (profile == PIPE_VIDEO_PROFILE_VP9_PROFILE2)
          return PIPE_FORMAT_P010;
+      else if (profile == PIPE_VIDEO_PROFILE_AV1_PROFILE2_420)
+         return PIPE_FORMAT_P012;
       else
          return PIPE_FORMAT_NV12;
 
@@ -1088,6 +1090,13 @@ static bool si_vid_is_format_supported(struct pipe_screen *screen, enum pipe_for
    if (profile == PIPE_VIDEO_PROFILE_AV1_MAIN && entrypoint == PIPE_VIDEO_ENTRYPOINT_BITSTREAM)
       return (format == PIPE_FORMAT_P010) || (format == PIPE_FORMAT_P016) ||
              (format == PIPE_FORMAT_NV12);
+
+   if (profile == PIPE_VIDEO_PROFILE_AV1_PROFILE2_420 && entrypoint == PIPE_VIDEO_ENTRYPOINT_BITSTREAM) {
+      if (sscreen->info.vcn_ip_version < VCN_5_0_0 && sscreen->info.vcn_ip_version != VCN_4_0_0)
+         return false;
+      return (format == PIPE_FORMAT_P010) || (format == PIPE_FORMAT_P016) ||
+             (format == PIPE_FORMAT_P012) || (format == PIPE_FORMAT_NV12);
+   }
 
    /* JPEG supports YUV400 and YUV444 */
    if (profile == PIPE_VIDEO_PROFILE_JPEG_BASELINE) {

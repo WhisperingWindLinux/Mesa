@@ -60,7 +60,7 @@
 #define VL_VA_DRIVER(ctx) ((vlVaDriver *)ctx->pDriverData)
 #define VL_VA_PSCREEN(ctx) (VL_VA_DRIVER(ctx)->vscreen->pscreen)
 
-#define VL_VA_MAX_IMAGE_FORMATS 21
+#define VL_VA_MAX_IMAGE_FORMATS 22
 #define VL_VA_ENC_GOP_COEFF 16
 
 #define UINT_TO_PTR(x) ((void*)(uintptr_t)(x))
@@ -124,6 +124,8 @@ VaFourccToPipeFormat(unsigned format)
       return PIPE_FORMAT_NV12;
    case VA_FOURCC('P','0','1','0'):
       return PIPE_FORMAT_P010;
+   case VA_FOURCC('P','0','1','2'):
+      return PIPE_FORMAT_P012;
    case VA_FOURCC('P','0','1','6'):
       return PIPE_FORMAT_P016;
    case VA_FOURCC('I','4','2','0'):
@@ -175,6 +177,8 @@ PipeFormatToVaFourcc(enum pipe_format p_format)
       return VA_FOURCC('N','V','1','2');
    case PIPE_FORMAT_P010:
       return VA_FOURCC('P','0','1','0');
+   case PIPE_FORMAT_P012:
+      return VA_FOURCC('P','0','1','2');
    case PIPE_FORMAT_P016:
       return VA_FOURCC('P','0','1','6');
    case PIPE_FORMAT_IYUV:
@@ -259,6 +263,12 @@ PipeToProfile(enum pipe_video_profile profile)
       return VAProfileVP9Profile2;
    case PIPE_VIDEO_PROFILE_AV1_MAIN:
       return VAProfileAV1Profile0;
+   case PIPE_VIDEO_PROFILE_AV1_PROFILE2_420:
+#if VA_CHECK_VERSION(1, 23, 0)
+      return VAProfileAV1Profile2_420;
+#else
+      return VAProfileNone;
+#endif
    case PIPE_VIDEO_PROFILE_MPEG4_AVC_EXTENDED:
    case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH422:
    case PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH444:
@@ -314,6 +324,10 @@ ProfileToPipe(VAProfile profile)
       return PIPE_VIDEO_PROFILE_VP9_PROFILE2;
    case VAProfileAV1Profile0:
       return PIPE_VIDEO_PROFILE_AV1_MAIN;
+#if VA_CHECK_VERSION(1, 23, 0)
+   case VAProfileAV1Profile2_420:
+      return PIPE_VIDEO_PROFILE_AV1_PROFILE2_420;
+#endif
    case VAProfileNone:
        return PIPE_VIDEO_PROFILE_UNKNOWN;
    default:

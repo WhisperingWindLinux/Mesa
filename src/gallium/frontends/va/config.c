@@ -53,7 +53,7 @@ vlVaQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_
    *num_profiles = 0;
 
    pscreen = VL_VA_PSCREEN(ctx);
-   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p <= PIPE_VIDEO_PROFILE_AV1_MAIN; ++p) {
+   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p < PIPE_VIDEO_PROFILE_MAX; ++p) {
       if (u_reduce_video_profile(p) == PIPE_VIDEO_FORMAT_MPEG4 && !debug_get_option_mpeg4())
          continue;
 
@@ -140,6 +140,12 @@ static unsigned int get_screen_supported_va_rt_formats(struct pipe_screen *pscre
                                           profile,
                                           entrypoint))
       supported_rt_formats |= VA_RT_FORMAT_YUV420_10BPP;
+
+   if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P012,
+                                          profile,
+                                          entrypoint)){
+      supported_rt_formats |= VA_RT_FORMAT_YUV420_12;
+    }
 
    if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_Y8_400_UNORM,
                                           profile,

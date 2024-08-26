@@ -688,6 +688,7 @@ vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *contex
    /* Try other post proc implementations */
    if (context->target->buffer_format != PIPE_FORMAT_NV12 &&
        context->target->buffer_format != PIPE_FORMAT_P010 &&
+       context->target->buffer_format != PIPE_FORMAT_P012 &&
        context->target->buffer_format != PIPE_FORMAT_P016)
       ret = vlVaPostProcCompositor(drv, context, src_region, dst_region,
                                    src, context->target, deinterlace);

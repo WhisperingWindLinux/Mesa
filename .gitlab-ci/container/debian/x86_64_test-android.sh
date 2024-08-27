@@ -17,6 +17,7 @@ EPHEMERAL=(
    dpkg-dev
    ninja-build
    unzip
+   sudo
 )
 
 DEPS=(
@@ -103,6 +104,7 @@ usermod -a -G kvm,cvdnetwork root
 
 rm -rf "/${ndk:?}"
 
+export SUDO_FORCE_REMOVE=yes
 apt-get purge -y "${EPHEMERAL[@]}"
 
 . .gitlab-ci/container/container_post_build.sh

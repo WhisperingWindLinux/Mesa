@@ -295,6 +295,27 @@ regs_intersect(const T& a, const U& b)
    return a_hi > b_lo && b_hi > a_lo;
 }
 
+template <typename T>
+bool
+instr_accesses(Instruction* instr, const T& a, bool ignore_reads)
+{
+   if (!ignore_reads) {
+      for (const Operand& op : instr->operands)
+         if (regs_intersect(a, op))
+            return true;
+   }
+
+   for (const Definition& def : instr->definitions)
+      if (regs_intersect(a, def))
+         return true;
+
+   if (instr->isPseudo() && instr->pseudo().needs_scratch_reg &&
+       regs_intersect(a, Definition(instr->pseudo().scratch_sgpr, s1)))
+      return true;
+
+   return false;
+}
+
 void
 try_optimize_branching_sequence(ssa_elimination_ctx& ctx, Block& block, const int exec_val_idx,
                                 const int exec_copy_idx)
@@ -373,16 +394,7 @@ try_optimize_branching_sequence(ssa_elimination_ctx& ctx, Block& block, const in
          }
          /* exec_copy_def is clobbered or exec written before we found a copy. */
          if ((i != exec_val_idx || !vcmpx_exec_only) &&
-             std::any_of(instr->definitions.begin(), instr->definitions.end(),
-                         [&exec_copy_def, &ctx](const Definition& def) -> bool
-                         {
-                            return regs_intersect(exec_copy_def, def) ||
-                                   regs_intersect(Definition(exec, ctx.program->lane_mask), def);
-                         }))
-            break;
-
-         if (instr->isPseudo() && instr->pseudo().needs_scratch_reg &&
-             regs_intersect(exec_copy_def, Definition(instr->pseudo().scratch_sgpr, s1)))
+             (instr_accesses(instr.get(), exec_copy_def, true) || instr_writes_exec(instr.get())))
             break;
       }
    }
@@ -415,19 +427,9 @@ try_optimize_branching_sequence(ssa_elimination_ctx& ctx, Block& block, const in
    for (int idx = exec_val_idx + 1; idx < exec_copy_idx; ++idx) {
       aco_ptr<Instruction>& instr = block.instructions[idx];
 
-      if (save_original_exec) {
-         /* Check if the instruction uses the exec_copy_def register, in which case we can't
-          * optimize. */
-         for (const Operand& op : instr->operands)
-            if (regs_intersect(exec_copy_def, op))
-               return;
-         for (const Definition& def : instr->definitions)
-            if (regs_intersect(exec_copy_def, def))
-               return;
-         if (instr->isPseudo() && instr->pseudo().needs_scratch_reg &&
-             regs_intersect(exec_copy_def, Definition(instr->pseudo().scratch_sgpr, s1)))
-            return;
-      }
+      /* Check if the instruction uses the exec_copy_def register, in which case we can't optimize. */
+      if (save_original_exec && instr_accesses(instr.get(), exec_copy_def, false))
+         return;
 
       /* Check if the instruction may implicitly read VCC, eg. v_cndmask or add with carry.
        * Rewriting these operands may require format conversion because of encoding limitations.

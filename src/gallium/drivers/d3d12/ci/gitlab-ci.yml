@@ -49,3 +49,9 @@ test-d3d12-vainfo:
     - .d3d12-test
   script:
     - . _install/vainfo_run.ps1
+
+test-d3d12-test_va_api:
+  extends:
+    - .d3d12-test
+  script:
+    - . _install/test_va_api_run.ps1

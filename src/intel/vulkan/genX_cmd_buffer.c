@@ -1542,16 +1542,17 @@ genX(invalidate_aux_map)(struct anv_batch *batch,
     *
     *    "Render target Cache Flush + L3 Fabric Flush + State Invalidation + CS Stall"
     *
-    * Notice we don't set the L3 Fabric Flush here, because we have
-    * ANV_PIPE_END_OF_PIPE_SYNC_BIT which inserts a CS stall. The
-    * PIPE_CONTROL::L3 Fabric Flush documentation says :
+    * From Bspec 43904 (Register_CCSAuxiliaryTableInvalidate):
+    * RCS engine idle sequence:
     *
-    *    "L3 Fabric Flush will ensure all the pending transactions in the L3
-    *     Fabric are flushed to global observation point. HW does implicit L3
-    *     Fabric Flush on all stalling flushes (both explicit and implicit)
-    *     and on PIPECONTROL having Post Sync Operation enabled."
+    *    Gfx12+:
+    *       PIPE_CONTROL:- DC Flush + L3 Fabric Flush + CS Stall + Render
+    *                      Target Cache Flush + Depth Cache
     *
-    * Therefore setting L3 Fabric Flush here would be redundant.
+    *    Gfx125+:
+    *       PIPE_CONTROL:- DC Flush + L3 Fabric Flush + CS Stall + Render
+    *                      Target Cache Flush + Depth Cache + CCS flush
+    *
     */
    enum anv_pipe_bits aux_inv_bits = 0;
    uint32_t current_pipeline =
@@ -1560,12 +1561,17 @@ genX(invalidate_aux_map)(struct anv_batch *batch,
    if (GFX_VER == 12 && (bits & ANV_PIPE_AUX_TABLE_INVALIDATE_BIT)) {
       if (current_pipeline == GPGPU) {
          aux_inv_bits |= (ANV_PIPE_CS_STALL_BIT |
+                          ANV_PIPE_L3_FABRIC_FLUSH_BIT |
                           ANV_PIPE_DATA_CACHE_FLUSH_BIT |
                           (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
       } else if (current_pipeline == _3D) {
         aux_inv_bits |= (ANV_PIPE_CS_STALL_BIT |
+                         ANV_PIPE_L3_FABRIC_FLUSH_BIT |
                          ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
                          ANV_PIPE_STATE_CACHE_INVALIDATE_BIT |
+                         (GFX_VERx10 >= 120 ?
+                          ANV_PIPE_DEPTH_CACHE_FLUSH_BIT |
+                          ANV_PIPE_DATA_CACHE_FLUSH_BIT : 0) |
                          (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
       }
 

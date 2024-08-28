@@ -2741,26 +2741,57 @@ radv_shader_part_cache_get(struct radv_device *device, struct radv_shader_part_c
 }
 
 char *
-radv_dump_nir_shaders(struct nir_shader *const *shaders, int shader_count)
+radv_dump_nir_shaders(const struct radv_instance *instance, struct nir_shader *const *shaders, int shader_count)
 {
-   char *data = NULL;
-   char *ret = NULL;
-   size_t size = 0;
-   struct u_memstream mem;
-   if (u_memstream_open(&mem, &data, &size)) {
-      FILE *const memf = u_memstream_get(&mem);
-      for (int i = 0; i < shader_count; ++i)
-         nir_print_shader(shaders[i], memf);
-      u_memstream_close(&mem);
-   }
+   if (instance->debug_flags & RADV_DEBUG_NIR_DEBUG_INFO) {
+      char **strings = malloc(shader_count * sizeof(char *));
+      uint32_t total_size = 1;
+      uint32_t first_line = 1;
 
-   ret = malloc(size + 1);
-   if (ret) {
-      memcpy(ret, data, size);
-      ret[size] = 0;
+      for (uint32_t i = 0; i < shader_count; i++) {
+         char *string = nir_shader_gather_debug_info(shaders[i], "", first_line);
+         strings[i] = string;
+
+         uint32_t length = strlen(string);
+         total_size += length;
+
+         for (uint32_t c = 0; c < length; c++) {
+            if (string[c] == '\n')
+               first_line++;
+         }
+      }
+
+      char *ret = calloc(total_size, sizeof(char));
+      if (ret) {
+         for (uint32_t i = 0; i < shader_count; i++)
+            strcat(ret, strings[i]);
+      }
+
+      for (uint32_t i = 0; i < shader_count; i++)
+         ralloc_free(strings[i]);
+      free(strings);
+
+      return ret;
+   } else {
+      char *data = NULL;
+      char *ret = NULL;
+      size_t size = 0;
+      struct u_memstream mem;
+      if (u_memstream_open(&mem, &data, &size)) {
+         FILE *const memf = u_memstream_get(&mem);
+         for (int i = 0; i < shader_count; ++i)
+            nir_print_shader(shaders[i], memf);
+         u_memstream_close(&mem);
+      }
+
+      ret = malloc(size + 1);
+      if (ret) {
+         memcpy(ret, data, size);
+         ret[size] = 0;
+      }
+      free(data);
+      return ret;
    }
-   free(data);
-   return ret;
 }
 
 static void

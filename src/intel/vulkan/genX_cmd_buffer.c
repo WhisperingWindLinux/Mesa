@@ -1532,6 +1532,47 @@ genX(invalidate_aux_map)(struct anv_batch *batch,
                          enum anv_pipe_bits bits)
 {
 #if GFX_VER == 12
+   /* HSD 1209978178: docs say that before programming the aux table:
+    *
+    *    "Driver must ensure that the engine is IDLE but ensure it doesn't
+    *    add extra flushes in the case it knows that the engine is already
+    *    IDLE."
+    *
+    * HSD 22012751911: SW Programming sequence when issuing aux invalidation:
+    *
+    *    "Render target Cache Flush + L3 Fabric Flush + State Invalidation + CS Stall"
+    *
+    * Notice we don't set the L3 Fabric Flush here, because we have
+    * ANV_PIPE_END_OF_PIPE_SYNC_BIT which inserts a CS stall. The
+    * PIPE_CONTROL::L3 Fabric Flush documentation says :
+    *
+    *    "L3 Fabric Flush will ensure all the pending transactions in the L3
+    *     Fabric are flushed to global observation point. HW does implicit L3
+    *     Fabric Flush on all stalling flushes (both explicit and implicit)
+    *     and on PIPECONTROL having Post Sync Operation enabled."
+    *
+    * Therefore setting L3 Fabric Flush here would be redundant.
+    */
+   enum anv_pipe_bits aux_inv_bits = 0;
+   uint32_t current_pipeline =
+      engine_class == INTEL_ENGINE_CLASS_RENDER ? _3D : GPGPU;
+
+   if (GFX_VER == 12 && (bits & ANV_PIPE_AUX_TABLE_INVALIDATE_BIT)) {
+      if (current_pipeline == GPGPU) {
+         aux_inv_bits |= (ANV_PIPE_CS_STALL_BIT |
+                          ANV_PIPE_DATA_CACHE_FLUSH_BIT |
+                          (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
+      } else if (current_pipeline == _3D) {
+        aux_inv_bits |= (ANV_PIPE_CS_STALL_BIT |
+                         ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
+                         ANV_PIPE_STATE_CACHE_INVALIDATE_BIT |
+                         (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
+      }
+
+      genx_batch_emit_pipe_control_write(batch, device->info, current_pipeline,
+                                         NoWrite, ANV_NULL_ADDRESS, 0, aux_inv_bits);
+   }
+
    if ((bits & ANV_PIPE_AUX_TABLE_INVALIDATE_BIT) && device->info->has_aux_map) {
       uint32_t register_addr = 0;
       switch (engine_class) {
@@ -1657,41 +1698,6 @@ genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
     */
    if (bits & ANV_PIPE_FLUSH_BITS)
       bits |= ANV_PIPE_NEEDS_END_OF_PIPE_SYNC_BIT;
-
-
-   /* HSD 1209978178: docs say that before programming the aux table:
-    *
-    *    "Driver must ensure that the engine is IDLE but ensure it doesn't
-    *    add extra flushes in the case it knows that the engine is already
-    *    IDLE."
-    *
-    * HSD 22012751911: SW Programming sequence when issuing aux invalidation:
-    *
-    *    "Render target Cache Flush + L3 Fabric Flush + State Invalidation + CS Stall"
-    *
-    * Notice we don't set the L3 Fabric Flush here, because we have
-    * ANV_PIPE_END_OF_PIPE_SYNC_BIT which inserts a CS stall. The
-    * PIPE_CONTROL::L3 Fabric Flush documentation says :
-    *
-    *    "L3 Fabric Flush will ensure all the pending transactions in the L3
-    *     Fabric are flushed to global observation point. HW does implicit L3
-    *     Fabric Flush on all stalling flushes (both explicit and implicit)
-    *     and on PIPECONTROL having Post Sync Operation enabled."
-    *
-    * Therefore setting L3 Fabric Flush here would be redundant.
-    */
-   if (GFX_VER == 12 && (bits & ANV_PIPE_AUX_TABLE_INVALIDATE_BIT)) {
-      if (current_pipeline == GPGPU) {
-         bits |= (ANV_PIPE_NEEDS_END_OF_PIPE_SYNC_BIT |
-                  ANV_PIPE_DATA_CACHE_FLUSH_BIT |
-                  (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
-      } else if (current_pipeline == _3D) {
-         bits |= (ANV_PIPE_NEEDS_END_OF_PIPE_SYNC_BIT |
-                  ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
-                  ANV_PIPE_STATE_CACHE_INVALIDATE_BIT |
-                  (GFX_VERx10 == 125 ? ANV_PIPE_CCS_CACHE_FLUSH_BIT: 0));
-      }
-   }
 
    /* If we're going to do an invalidate and we have a pending end-of-pipe
     * sync that has yet to be resolved, we do the end-of-pipe sync now.

@@ -472,6 +472,9 @@ instr_try_combine_alu(struct set *instr_set, nir_alu_instr *alu1, nir_alu_instr 
          nir_const_value *c1 = nir_src_as_const_value(alu1->src[i].src);
          nir_const_value *c2 = nir_src_as_const_value(alu2->src[i].src);
          assert(c1 && c2);
+         if (!c1 || !c2)
+            return NULL;
+
          nir_const_value value[NIR_MAX_VEC_COMPONENTS];
          unsigned bit_size = alu1->src[i].src.ssa->bit_size;
 

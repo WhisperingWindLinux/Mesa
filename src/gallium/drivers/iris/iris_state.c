@@ -10025,6 +10025,7 @@ iris_emit_raw_pipe_control(struct iris_batch *batch,
 #endif
 #if GFX_VER == 12
       pc.TileCacheFlushEnable = flags & PIPE_CONTROL_TILE_CACHE_FLUSH;
+      pc.L3FabricFlush = flags & PIPE_CONTROL_L3_FABRIC_FLUSH;
 #endif
 #if GFX_VER > 11
       pc.HDCPipelineFlushEnable = flags & PIPE_CONTROL_FLUSH_HDC;

@@ -55,6 +55,23 @@ $env:LIBVA_DRIVERS_PATH="$testing_dir"
 Write-Host "LIBVA_DRIVER_NAME: $env:LIBVA_DRIVER_NAME"
 Write-Host "LIBVA_DRIVERS_PATH: $env:LIBVA_DRIVERS_PATH"
 
+# Check H264 encode or decode video entrypoint is supported
+$entrypoint = "VAProfileH264Main"
+
+# First run without app verifier
+Write-Host "Disabling appverifier for $vainfo_app_path and checking for the presence of $entrypoint supported..."
+appverif.exe /disable * -for "$vainfo_app_path"
+$result_without_appverifier = Check-VAInfo-Entrypoint -vainfo_app_path $vainfo_app_path -entrypoint $entrypoint
+if ($result_without_appverifier -eq 1) {
+  Write-Host "Process exited successfully."
+} else {
+  $successful_run=0
+  Write-Error "Process exit not successful for $vainfo_run_cmd. Please see vainfo verbose output below for diagnostics..."
+  # verbose run to print more info on error (helpful to investigate issues from the CI output)
+  Invoke-Expression "$vainfo_app_path -a --display win32 --device help"
+  Invoke-Expression "$vainfo_app_path -a --display win32 --device 0"
+}
+
 # Check video processing entrypoint is supported
 # Inbox WARP/D3D12 supports this entrypoint with VA frontend shaders support (e.g no video APIs support required)
 $entrypoint = "VAEntrypointVideoProc"

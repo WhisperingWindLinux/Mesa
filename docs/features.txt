@@ -503,7 +503,7 @@ Vulkan 1.3 -- all DONE: anv, lvp, nvk, radv, tu, vn, v3dv
 
 Khronos extensions that are not part of any Vulkan version:
 
-  VK_KHR_acceleration_structure                         DONE (anv/gfx12.5+, lvp, radv/gfx10.3+)
+  VK_KHR_acceleration_structure                         DONE (anv/gfx12.5+, lvp, radv/gfx10.3+, tu/a740+)
   VK_KHR_android_surface                                not started
   VK_KHR_calibrated_timestamps                          DONE (anv, nvk, radv)
   VK_KHR_cooperative_matrix                             DONE (anv, radv/gfx11+)
@@ -534,8 +534,8 @@ Khronos extensions that are not part of any Vulkan version:
   VK_KHR_pipeline_library                               DONE (anv, lvp, nvk, panvk, radv, tu, vn)
   VK_KHR_present_wait                                   DONE (anv, nvk, radv, tu, x11/display)
   VK_KHR_push_descriptor                                DONE (anv, hasvk, lvp, nvk, radv, tu, vn)
-  VK_KHR_ray_query                                      DONE (anv/gfx12.5+, lvp, radv/gfx10.3+)
-  VK_KHR_ray_tracing_maintenance1                       DONE (anv/gfx12.5+, radv/gfx10.3+)
+  VK_KHR_ray_query                                      DONE (anv/gfx12.5+, lvp, radv/gfx10.3+, tu/a740+)
+  VK_KHR_ray_tracing_maintenance1                       DONE (anv/gfx12.5+, radv/gfx10.3+, tu/a740+)
   VK_KHR_ray_tracing_pipeline                           DONE (anv/gfx12.5+, lvp, radv/gfx10.3+)
   VK_KHR_ray_tracing_position_fetch                     DONE (anv, radv/gfx10.3+)
   VK_KHR_shader_clock                                   DONE (anv, hasvk, lvp, nvk, radv, vn)

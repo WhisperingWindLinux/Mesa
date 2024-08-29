@@ -1888,6 +1888,39 @@ get_bindless_samp_src(struct ir3_context *ctx, nir_src *tex,
    return info;
 }
 
+static void
+emit_readonly_load_uav(struct ir3_context *ctx,
+                       nir_intrinsic_instr *intr,
+                       nir_src *index,
+                       struct ir3_instruction *coords,
+                       unsigned imm_offset,
+                       bool uav_load,
+                       struct ir3_instruction **dst)
+{
+   struct ir3_block *b = ctx->block;
+   struct tex_src_info info = get_image_ssbo_samp_tex_src(ctx, index, false);
+
+   unsigned num_components = intr->def.num_components;
+   struct ir3_instruction *sam =
+      emit_sam(ctx, OPC_ISAM, info, utype_for_size(intr->def.bit_size),
+               MASK(num_components), coords, create_immed(b, imm_offset));
+
+   ir3_handle_nonuniform(sam, intr);
+
+   sam->barrier_class = IR3_BARRIER_BUFFER_R;
+   sam->barrier_conflict = IR3_BARRIER_BUFFER_W;
+
+   ir3_split_dest(b, dst, sam, 0, num_components);
+
+   if (ctx->compiler->has_isam_v && !uav_load) {
+      sam->flags |= (IR3_INSTR_V | IR3_INSTR_INV_1D);
+
+      if (imm_offset) {
+         sam->flags |= IR3_INSTR_IMM_OFFSET;
+      }
+   }
+}
+
 /* src[] = { buffer_index, offset }. No const_index */
 static void
 emit_intrinsic_load_ssbo(struct ir3_context *ctx,
@@ -1918,29 +1951,26 @@ emit_intrinsic_load_ssbo(struct ir3_context *ctx,
          ir3_collect(b, ir3_get_src(ctx, offset_src)[0], create_immed(b, 0));
    }
 
-   struct tex_src_info info = get_image_ssbo_samp_tex_src(ctx, &intr->src[0], false);
+   emit_readonly_load_uav(ctx, intr, &intr->src[0], coords, imm_offset, false, dst);
+}
 
-   unsigned num_components = intr->def.num_components;
-   assert(num_components == 1 || ctx->compiler->has_isam_v);
-
-   struct ir3_instruction *sam =
-      emit_sam(ctx, OPC_ISAM, info, utype_for_size(intr->def.bit_size),
-               MASK(num_components), coords, create_immed(b, imm_offset));
-
-   if (ctx->compiler->has_isam_v) {
-      sam->flags |= (IR3_INSTR_V | IR3_INSTR_INV_1D);
-
-      if (imm_offset) {
-         sam->flags |= IR3_INSTR_IMM_OFFSET;
-      }
+static void
+emit_intrinsic_load_uav(struct ir3_context *ctx,
+                        nir_intrinsic_instr *intr,
+                        struct ir3_instruction **dst)
+{
+   /* Note: isam currently can't handle vectorized loads/stores */
+   if (!(nir_intrinsic_access(intr) & ACCESS_CAN_REORDER) ||
+       intr->def.num_components > 1 ||
+       !ctx->compiler->has_isam_ssbo) {
+      ctx->funcs->emit_intrinsic_load_uav(ctx, intr, dst);
+      return;
    }
 
-   ir3_handle_nonuniform(sam, intr);
-
-   sam->barrier_class = IR3_BARRIER_BUFFER_R;
-   sam->barrier_conflict = IR3_BARRIER_BUFFER_W;
-
-   ir3_split_dest(b, dst, sam, 0, num_components);
+   struct ir3_block *b = ctx->block;
+   struct ir3_instruction *coords =
+      ir3_create_collect(b, ir3_get_src(ctx, &intr->src[1]), 2);
+   emit_readonly_load_uav(ctx, intr, &intr->src[0], coords, 0, true, dst);
 }
 
 static void
@@ -2477,6 +2507,34 @@ emit_intrinsic_brcst_active(struct ir3_context *ctx, nir_intrinsic_instr *intr)
                            brcst_val, default_src);
 }
 
+static void
+emit_ray_intersection(struct ir3_context *ctx, nir_intrinsic_instr *intr,
+                      struct ir3_instruction **dst)
+{
+   struct ir3_block *b = ctx->block;
+
+   ctx->so->info.uses_ray_intersection = true;
+
+   struct ir3_instruction *bvh_base =
+      ir3_create_collect(b, ir3_get_src(ctx, &intr->src[0]), 2);
+   struct ir3_instruction *idx = ir3_get_src(ctx, &intr->src[1])[0];
+
+   struct ir3_instruction *ray_info =
+      ir3_create_collect(b, ir3_get_src(ctx, &intr->src[2]), 8);
+   struct ir3_instruction *flags = ir3_get_src(ctx, &intr->src[3])[0];
+
+   struct ir3_instruction *dst_init =
+      ir3_collect(b, NULL, NULL, NULL, create_immed(b, 0), NULL);
+
+   struct ir3_instruction *ray_intersection =
+      ir3_RAY_INTERSECTION(b, bvh_base, 0, idx, 0, ray_info, 0, flags, 0,
+                           dst_init, 0);
+   ray_intersection->dsts[0]->wrmask = MASK(5);
+   ir3_reg_tie(ray_intersection->dsts[0], ray_intersection->srcs[4]);
+
+   ir3_split_dest(b, dst, ray_intersection, 0, 5);
+}
+
 static void setup_input(struct ir3_context *ctx, nir_intrinsic_instr *intr);
 static void setup_output(struct ir3_context *ctx, nir_intrinsic_instr *intr);
 
@@ -2711,6 +2769,9 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
     */
    case nir_intrinsic_load_ssbo_ir3:
       emit_intrinsic_load_ssbo(ctx, intr, dst);
+      break;
+   case nir_intrinsic_load_uav_ir3:
+      emit_intrinsic_load_uav(ctx, intr, dst);
       break;
    case nir_intrinsic_store_ssbo_ir3:
       ctx->funcs->emit_intrinsic_store_ssbo(ctx, intr);
@@ -3258,6 +3319,9 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
       array_insert(ctx->block, ctx->block->keeps, ldc);
       break;
    }
+   case nir_intrinsic_ray_intersection_ir3:
+      emit_ray_intersection(ctx, intr, dst);
+      break;
    default:
       ir3_context_error(ctx, "Unhandled intrinsic type: %s\n",
                         nir_intrinsic_infos[intr->intrinsic].name);
@@ -4435,6 +4499,32 @@ emit_if(struct ir3_context *ctx, nir_if *nif)
    emit_cf_list(ctx, &nif->else_list);
 }
 
+static bool
+has_nontrivial_continue(nir_loop *nloop)
+{
+   struct nir_block *nstart = nir_loop_first_block(nloop);
+
+   /* There's always one incoming edge from outside the loop, and if there
+    * is more than one backedge from inside the loop (so more than 2 total
+    * edges) then one must be a nontrivial continue.
+    */
+   if (nstart->predecessors->entries > 2)
+      return true;
+
+   /* Check whether the one backedge is a nontrivial continue. This can happen
+    * if the loop ends with a break.
+    */
+   set_foreach (nstart->predecessors, entry) {
+      nir_block *pred = (nir_block*)entry->key;
+      if (pred == nir_loop_last_block(nloop) ||
+          pred == nir_cf_node_as_block(nir_cf_node_prev(&nloop->cf_node)))
+         continue;
+      return true;
+   }
+
+   return false;
+}
+
 static void
 emit_loop(struct ir3_context *ctx, nir_loop *nloop)
 {
@@ -4444,12 +4534,11 @@ emit_loop(struct ir3_context *ctx, nir_loop *nloop)
    struct nir_block *nstart = nir_loop_first_block(nloop);
    struct ir3_block *continue_blk = NULL;
 
-   /* There's always one incoming edge from outside the loop, and if there
-    * is more than one backedge from inside the loop (so more than 2 total
-    * edges) then we need to create a continue block after the loop to ensure
-    * that control reconverges at the end of each loop iteration.
+   /* If the loop has a continue statement that isn't at the end, then we need to
+    * create a continue block in order to let control flow reconverge before
+    * entering the next iteration of the loop.
     */
-   if (nstart->predecessors->entries > 2) {
+   if (has_nontrivial_continue(nloop)) {
       continue_blk = create_continue_block(ctx, nstart);
    }
 

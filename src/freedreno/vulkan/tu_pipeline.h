@@ -101,6 +101,7 @@ struct tu_program_state
       unsigned dynamic_descriptor_offsets[MAX_SETS];
 
       bool per_view_viewport;
+      bool uses_ray_intersection;
 };
 
 struct tu_pipeline_executable {

@@ -5,7 +5,7 @@
 # DEBIAN_TEST_GL_TAG
 # KERNEL_ROOTFS_TAG
 
-set -ex
+set -uex
 
 VALIDATION_TAG="v1.3.289"
 

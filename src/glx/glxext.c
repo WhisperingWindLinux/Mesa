@@ -994,6 +994,9 @@ __glXInitialize(Display * dpy)
    Bool dri3 = !debug_get_bool_option("LIBGL_DRI3_DISABLE", false);
    Bool kopper = !debug_get_bool_option("LIBGL_KOPPER_DISABLE", false);
 
+   /* Try to always enable zink */
+      glx_driver |= GLX_DRIVER_ZINK_INFER;
+
    if (env && !strcmp(env, "zink"))
       glx_driver |= GLX_DRIVER_ZINK_YES;
 

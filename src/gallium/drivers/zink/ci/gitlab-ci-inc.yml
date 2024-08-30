@@ -143,6 +143,7 @@
 .zink-lvp-test:
   extends:
     - .zink-lvp-rules
+    - .test-in-situ
     - .zink-test
   variables:
     LIBGL_ALWAYS_SOFTWARE: "true"

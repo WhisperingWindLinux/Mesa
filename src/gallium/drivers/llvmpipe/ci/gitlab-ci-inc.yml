@@ -71,6 +71,7 @@
 .llvmpipe-test:
   extends:
     - .llvmpipe-rules
+    - .test-in-situ
   variables:
     LIBGL_ALWAYS_SOFTWARE: "true"
     GALLIUM_DRIVER: "llvmpipe"

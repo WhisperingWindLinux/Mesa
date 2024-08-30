@@ -46,6 +46,7 @@
 .virpipe-test:
   extends:
     - .test-gl
+    - .test-in-situ
     - .virgl-rules
   variables:
     GALLIVM_PERF: nopt

@@ -20,6 +20,7 @@
 .venus-lavapipe-test:
   extends:
     - .test-vk
+    - .test-in-situ
     - .venus-rules
   variables:
     VK_DRIVER: virtio

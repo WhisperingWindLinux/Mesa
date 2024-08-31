@@ -458,9 +458,9 @@ static constexpr PhysReg scc{253};
 class Operand final {
 public:
    constexpr Operand()
-       : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isConstant_(false), isKill_(false),
-         isUndef_(true), isFirstKill_(false), constSize(0), isLateKill_(false), is16bit_(false),
-         is24bit_(false), signext(false)
+       : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isPrecolored_(false),
+         isConstant_(false), isKill_(false), isUndef_(true), isFirstKill_(false), constSize(0),
+         isLateKill_(false), is16bit_(false), is24bit_(false), signext(false)
    {}
 
    explicit Operand(Temp r) noexcept
@@ -732,6 +732,11 @@ public:
 
    constexpr bool isFixed() const noexcept { return isFixed_; }
 
+   /* Indicates whether this operand needs to reside in a certain register. */
+   constexpr bool isPrecolored() const noexcept { return isPrecolored_; }
+
+   constexpr void setPrecolored(bool precolored) noexcept { isPrecolored_ = precolored; }
+
    constexpr PhysReg physReg() const noexcept { return reg_; }
 
    constexpr void setFixed(PhysReg reg) noexcept
@@ -868,6 +873,7 @@ private:
       struct {
          uint8_t isTemp_ : 1;
          uint8_t isFixed_ : 1;
+         uint8_t isPrecolored_ : 1;
          uint8_t isConstant_ : 1;
          uint8_t isKill_ : 1;
          uint8_t isUndef_ : 1;

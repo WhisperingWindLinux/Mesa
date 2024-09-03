@@ -1,6 +1,6 @@
 use mesa_rust_gen::*;
 
-use std::{mem, ptr};
+use std::{mem, num::NonZeroU64, ptr};
 
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -117,6 +117,15 @@ impl PipeResource {
 
     pub fn is_user(&self) -> bool {
         self.as_ref().flags & PIPE_RESOURCE_FLAG_RUSTICL_IS_USER != 0
+    }
+
+    pub fn resource_get_address(&self) -> Option<NonZeroU64> {
+        let screen_ptr = self.as_ref().screen;
+        // TODO: this should be a method on PipeScreen instead, but sadly it's not transparent.
+        // SAFETY: it's a valid pointer and everything.
+        let screen = unsafe { screen_ptr.as_ref().unwrap_unchecked() };
+
+        NonZeroU64::new(unsafe { screen.resource_get_address?(self.pipe()) })
     }
 
     pub fn pipe_image_view(

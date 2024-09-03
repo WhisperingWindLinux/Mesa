@@ -48,6 +48,7 @@
 #include "util/ralloc.h"
 #include "i915/iris_bufmgr.h"
 #include "iris_batch.h"
+#include "iris_bufmgr.h"
 #include "iris_context.h"
 #include "iris_resource.h"
 #include "iris_screen.h"
@@ -487,6 +488,9 @@ iris_resource_alloc_flags(const struct iris_screen *screen,
 
    if (templ->bind & PIPE_BIND_SCANOUT)
       flags |= BO_ALLOC_SCANOUT;
+
+   if (templ->flags & PIPE_RESOURCE_FLAG_FRONTEND_VM)
+      flags |= BO_ALLOC_NO_SUBALLOC | BO_ALLOC_NO_VMA;
 
    if (templ->flags & (PIPE_RESOURCE_FLAG_MAP_COHERENT |
                        PIPE_RESOURCE_FLAG_MAP_PERSISTENT))
@@ -1956,7 +1960,7 @@ iris_invalidate_buffer(struct iris_context *ice, struct iris_resource *res)
 {
    struct iris_screen *screen = (void *) ice->ctx.screen;
 
-   if (res->base.b.target != PIPE_BUFFER)
+   if (res->base.b.target != PIPE_BUFFER || res->base.b.flags & PIPE_RESOURCE_FLAG_FIXED_ADDRESS)
       return false;
 
    /* If it's already invalidated, don't bother doing anything.
@@ -2849,6 +2853,38 @@ static const struct u_transfer_vtbl transfer_vtbl = {
    .get_stencil           = iris_resource_get_separate_stencil,
 };
 
+static bool
+iris_alloc_vm(struct pipe_screen *pscreen, uint64_t start, uint64_t size)
+{
+   struct iris_screen *screen = (struct iris_screen *)pscreen;
+   return iris_bufmgr_alloc_heap(screen->bufmgr, start, size);
+}
+
+static void
+iris_free_vm(struct pipe_screen *pscreen, uint64_t start, uint64_t size)
+{
+   struct iris_screen *screen = (struct iris_screen *)pscreen;
+   iris_bufmgr_free_heap(screen->bufmgr, start, size);
+}
+
+static bool
+iris_resource_assign_vma(struct pipe_resource *presource, uint64_t address)
+{
+   struct iris_resource *res = (struct iris_resource *)presource;
+   struct iris_screen *screen = (struct iris_screen *)presource->screen;
+
+   assert(presource->flags & PIPE_RESOURCE_FLAG_FRONTEND_VM);
+   return iris_bufmgr_assign_vma(screen->bufmgr, res->bo, address);
+}
+
+static uint64_t
+iris_resource_get_address(struct pipe_resource *presrouce)
+{
+   struct iris_resource *res = (struct iris_resource *)presrouce;
+   assert(presrouce->flags & PIPE_RESOURCE_FLAG_FIXED_ADDRESS);
+   return res->bo->address;
+}
+
 void
 iris_init_screen_resource_functions(struct pipe_screen *pscreen)
 {
@@ -2866,6 +2902,10 @@ iris_init_screen_resource_functions(struct pipe_screen *pscreen)
    pscreen->resource_destroy = u_transfer_helper_resource_destroy;
    pscreen->memobj_create_from_handle = iris_memobj_create_from_handle;
    pscreen->memobj_destroy = iris_memobj_destroy;
+   pscreen->alloc_vm = iris_alloc_vm;
+   pscreen->free_vm = iris_free_vm;
+   pscreen->resource_assign_vma = iris_resource_assign_vma;
+   pscreen->resource_get_address = iris_resource_get_address;
    pscreen->transfer_helper =
       u_transfer_helper_create(&transfer_vtbl,
                                U_TRANSFER_HELPER_SEPARATE_Z32S8 |

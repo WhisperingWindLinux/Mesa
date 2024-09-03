@@ -519,10 +519,8 @@ dgc_load_shader_metadata(struct dgc_cmdbuf *cs, uint32_t bitsize, uint32_t field
    return NULL;
 }
 
-#define load_shader_metadata32(cs, field)                                                                              \
-   dgc_load_shader_metadata(cs, 32, offsetof(struct radv_compute_pipeline_metadata, field))
-#define load_shader_metadata64(cs, field)                                                                              \
-   dgc_load_shader_metadata(cs, 64, offsetof(struct radv_compute_pipeline_metadata, field))
+#define load_shader_metadata32(cs, field) dgc_load_shader_metadata(cs, 32, offsetof(struct radv_shader_metadata, field))
+#define load_shader_metadata64(cs, field) dgc_load_shader_metadata(cs, 64, offsetof(struct radv_shader_metadata, field))
 
 static nir_def *
 dgc_load_vbo_metadata(struct dgc_cmdbuf *cs, uint32_t bitsize, nir_def *idx, uint32_t field_offset)
@@ -1273,7 +1271,7 @@ dgc_get_pc_params(struct dgc_cmdbuf *cs)
    uint32_t offset = 0;
 
    if (layout->pipeline_bind_point == VK_PIPELINE_BIND_POINT_COMPUTE) {
-      offset = layout->bind_pipeline ? 0 : sizeof(struct radv_compute_pipeline_metadata);
+      offset = layout->bind_pipeline ? 0 : sizeof(struct radv_shader_metadata);
    } else {
       if (layout->bind_vbo_mask) {
          offset += MAX_VBS * DGC_VBO_INFO_SIZE;
@@ -1630,7 +1628,7 @@ dgc_get_dispatch_initiator(struct dgc_cmdbuf *cs)
    nir_builder *b = cs->b;
 
    const uint32_t dispatch_initiator = device->dispatch_initiator | S_00B800_FORCE_START_AT_000(1);
-   nir_def *is_wave32 = nir_ieq_imm(b, load_shader_metadata32(cs, wave32), 1);
+   nir_def *is_wave32 = nir_test_mask(b, load_shader_metadata32(cs, flags), RADV_SHADER_METADATA_WAVE32);
    return nir_bcsel(b, is_wave32, nir_imm_int(b, dispatch_initiator | S_00B800_CS_W32_EN(1)),
                     nir_imm_int(b, dispatch_initiator));
 }
@@ -1650,7 +1648,7 @@ dgc_emit_dispatch(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *sequence
 
    nir_push_if(b, nir_iand(b, nir_ine_imm(b, wg_x, 0), nir_iand(b, nir_ine_imm(b, wg_y, 0), nir_ine_imm(b, wg_z, 0))));
    {
-      nir_def *grid_sgpr = load_shader_metadata32(cs, grid_base_sgpr);
+      nir_def *grid_sgpr = load_shader_metadata32(cs, u.cs.grid_size_sgpr);
       nir_push_if(b, nir_ine_imm(b, grid_sgpr, 0));
       {
          if (device->load_grid_size_from_user_sgpr) {
@@ -1850,7 +1848,7 @@ dgc_emit_bind_pipeline(struct dgc_cmdbuf *cs)
 {
    nir_builder *b = cs->b;
 
-   nir_def *va = nir_iadd_imm(b, cs->pipeline_va, sizeof(struct radv_compute_pipeline_metadata));
+   nir_def *va = nir_iadd_imm(b, cs->pipeline_va, sizeof(struct radv_shader_metadata));
    nir_def *num_dw = nir_build_load_global(b, 1, 32, va, .access = ACCESS_NON_WRITEABLE);
    nir_def *cs_va = nir_iadd_imm(b, va, 4);
 
@@ -2481,7 +2479,7 @@ radv_prepare_dgc_compute(struct radv_cmd_buffer *cmd_buffer, const VkGeneratedCo
 {
    VK_FROM_HANDLE(radv_pipeline, pipeline, pGeneratedCommandsInfo->pipeline);
    const struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const uint32_t alloc_size = pipeline ? sizeof(struct radv_compute_pipeline_metadata) : 0;
+   const uint32_t alloc_size = pipeline ? sizeof(struct radv_shader_metadata) : 0;
 
    *upload_size = MAX2(*upload_size + alloc_size, 16);
 
@@ -2499,9 +2497,9 @@ radv_prepare_dgc_compute(struct radv_cmd_buffer *cmd_buffer, const VkGeneratedCo
    if (pipeline) {
       struct radv_compute_pipeline *compute_pipeline = radv_pipeline_to_compute(pipeline);
       struct radv_shader *cs = radv_get_shader(compute_pipeline->base.shaders, MESA_SHADER_COMPUTE);
-      struct radv_compute_pipeline_metadata *metadata = (struct radv_compute_pipeline_metadata *)(*upload_data);
+      struct radv_shader_metadata *metadata = (struct radv_shader_metadata *)(*upload_data);
 
-      radv_get_compute_shader_metadata(device, cs, metadata);
+      radv_get_shader_metadata(device, cs, metadata);
 
       *upload_data = (char *)*upload_data + alloc_size;
    } else {
@@ -2660,7 +2658,7 @@ radv_GetPipelineIndirectMemoryRequirementsNV(VkDevice _device, const VkComputePi
    const struct radv_physical_device *pdev = radv_device_physical(device);
    uint32_t size;
 
-   size = sizeof(struct radv_compute_pipeline_metadata);
+   size = sizeof(struct radv_shader_metadata);
    size += 4 /* num CS DW */;
    size += (pdev->info.gfx_level >= GFX10 ? 19 : 16) * 4;
 

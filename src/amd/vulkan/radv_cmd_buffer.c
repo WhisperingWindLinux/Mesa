@@ -13732,10 +13732,10 @@ radv_CmdUpdatePipelineIndirectBufferNV(VkCommandBuffer commandBuffer, VkPipeline
    const struct radv_compute_pipeline *compute_pipeline = radv_pipeline_to_compute(pipeline);
    const struct radeon_cmdbuf *cs = &compute_pipeline->indirect.cs;
    const uint64_t va = compute_pipeline->indirect.va;
-   struct radv_compute_pipeline_metadata metadata;
+   struct radv_shader_metadata metadata;
    uint32_t offset = 0;
 
-   radv_get_compute_shader_metadata(device, compute_pipeline->base.shaders[MESA_SHADER_COMPUTE], &metadata);
+   radv_get_shader_metadata(device, compute_pipeline->base.shaders[MESA_SHADER_COMPUTE], &metadata);
 
    radv_write_data(cmd_buffer, V_370_ME, va + offset, sizeof(metadata) / 4, (const uint32_t *)&metadata, false);
    offset += sizeof(metadata);

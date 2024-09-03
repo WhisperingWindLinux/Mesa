@@ -2503,6 +2503,8 @@ radv_prepare_dgc_compute(struct radv_cmd_buffer *cmd_buffer, const VkGeneratedCo
       struct radv_shader *cs = radv_get_shader(compute_pipeline->base.shaders, MESA_SHADER_COMPUTE);
       struct radv_shader_metadata *metadata = (struct radv_shader_metadata *)(*upload_data);
 
+      memset(metadata, 0, sizeof(*metadata));
+
       radv_get_shader_metadata(device, cs, metadata);
 
       *upload_data = (char *)*upload_data + alloc_size;

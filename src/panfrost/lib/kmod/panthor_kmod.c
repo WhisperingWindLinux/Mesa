@@ -80,6 +80,7 @@ struct panthor_kmod_dev {
    struct {
       struct drm_panthor_gpu_info gpu;
       struct drm_panthor_csif_info csif;
+      struct drm_panthor_group_priorities_info group_priorities;
    } props;
 };
 
@@ -141,6 +142,27 @@ panthor_kmod_dev_create(int fd, uint32_t flags, drmVersionPtr version,
       goto err_free_dev;
    }
 
+   if (version->version_major > 1 || version->version_minor >= 2) {
+      query = (struct drm_panthor_dev_query){
+         .type = DRM_PANTHOR_DEV_QUERY_GROUP_PRIORITIES_INFO,
+         .size = sizeof(panthor_dev->props.group_priorities),
+         .pointer = (uint64_t)(uintptr_t)&panthor_dev->props.group_priorities,
+      };
+
+      ret = drmIoctl(fd, DRM_IOCTL_PANTHOR_DEV_QUERY, &query);
+      if (ret) {
+         mesa_loge("DRM_IOCTL_PANTHOR_DEV_QUERY failed (err=%d)", errno);
+         goto err_free_dev;
+      }
+   } else {
+      /* If the query isn't available, Panthor always allow LOW and MEDIUM
+       * priority */
+      panthor_dev->props.group_priorities.allowed_mask |=
+         BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_MEDIUM);
+      panthor_dev->props.group_priorities.allowed_mask |=
+         BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_LOW);
+   }
+
    assert(!ret);
    pan_kmod_dev_init(&panthor_dev->base, fd, flags, version, &panthor_kmod_ops,
                      allocator);
@@ -160,6 +182,26 @@ panthor_kmod_dev_destroy(struct pan_kmod_dev *dev)
    os_munmap(panthor_dev->flush_id, getpagesize());
    pan_kmod_dev_cleanup(dev);
    pan_kmod_free(dev->allocator, panthor_dev);
+}
+
+static uint32_t
+to_kmod_group_allow_priority_flags(uint32_t panthor_flags)
+{
+   uint32_t kmod_flags = 0;
+
+   if (panthor_flags & BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_REALTIME))
+      kmod_flags |= PAN_KMOD_GROUP_ALLOW_PRIORITY_REALTIME;
+
+   if (panthor_flags & BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_HIGH))
+      kmod_flags |= PAN_KMOD_GROUP_ALLOW_PRIORITY_HIGH;
+
+   if (panthor_flags & BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_MEDIUM))
+      kmod_flags |= PAN_KMOD_GROUP_ALLOW_PRIORITY_MEDIUM;
+
+   if (panthor_flags & BITFIELD_BIT(PANTHOR_GROUP_PRIORITY_LOW))
+      kmod_flags |= PAN_KMOD_GROUP_ALLOW_PRIORITY_LOW;
+
+   return kmod_flags;
 }
 
 static void
@@ -203,6 +245,9 @@ panthor_dev_query_props(const struct pan_kmod_dev *dev,
 
       /* This register does not exist because AFBC is no longer optional. */
       .afbc_features = 0,
+
+      .allowed_group_priorities_mask = to_kmod_group_allow_priority_flags(
+         panthor_dev->props.group_priorities.allowed_mask),
    };
 
    static_assert(sizeof(props->texture_features) ==

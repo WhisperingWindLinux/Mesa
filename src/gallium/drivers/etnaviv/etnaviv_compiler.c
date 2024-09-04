@@ -53,6 +53,7 @@ etna_compiler_create(const char *renderer, const struct etna_core_info *info)
       .lower_all_io_to_temps = true,
       .lower_flrp32 = true,
       .lower_fmod = true,
+      .lower_fneg = true,
       .lower_vector_cmp = true,
       .lower_fdph = true,
       .lower_insert_byte = true,

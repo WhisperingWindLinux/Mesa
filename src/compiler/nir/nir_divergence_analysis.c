@@ -1279,7 +1279,10 @@ nir_divergence_analysis(nir_shader *shader)
       .first_visit = true,
    };
 
+   nir_metadata_require(nir_shader_get_entrypoint(shader),
+                        nir_metadata_block_index);
    visit_cf_list(&nir_shader_get_entrypoint(shader)->body, &state);
+   nir_metadata_preserve(nir_shader_get_entrypoint(shader), nir_metadata_all);
 }
 
 /* Compute divergence between vertices of the same primitive. This uses
@@ -1298,7 +1301,10 @@ nir_vertex_divergence_analysis(nir_shader *shader)
       .first_visit = true,
    };
 
+   nir_metadata_require(nir_shader_get_entrypoint(shader),
+                        nir_metadata_block_index);
    visit_cf_list(&nir_shader_get_entrypoint(shader)->body, &state);
+   nir_metadata_preserve(nir_shader_get_entrypoint(shader), nir_metadata_all);
 }
 
 bool

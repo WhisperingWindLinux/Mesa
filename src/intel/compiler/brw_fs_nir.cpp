@@ -4240,8 +4240,18 @@ fs_nir_emit_fs_intrinsic(nir_to_brw_state &ntb,
                /* The old sequence that would have been generated is,
                 * basically, bool_result == false.  This is equivalent to
                 * !bool_result, so negate the old modifier.
+                *
+                * Unfortunately, we can't do this to most float comparisons
+                * because of NaN, so we'll have to fallback to the old-style
+                * compare. It will still work for == and != though.
                 */
-               cmp->conditional_mod = brw_negate_cmod(cmp->conditional_mod);
+               if (brw_type_is_float(cmp->src[0].type) &&
+                   cmp->conditional_mod != BRW_CONDITIONAL_EQ &&
+                   cmp->conditional_mod != BRW_CONDITIONAL_NEQ) {
+                  cmp = NULL;
+               } else {
+                  cmp->conditional_mod = brw_negate_cmod(cmp->conditional_mod);
+               }
             }
          }
 

@@ -438,6 +438,35 @@ debian-android:
     - CROSS=x86_64-linux-android GALLIUM_DRIVERS=iris,virgl VULKAN_DRIVERS=amd,intel .gitlab-ci/meson/build.sh
     - .gitlab-ci/prepare-artifacts.sh
 
+aosp-cuttlefish-x86_64-mesa-llvmpipe:
+  extends:
+    - .core-manual-rules
+    - .use-debian/android_build
+  stage: build-only
+  timeout: 6h 30m # Building AOSP takes a long time, but it's done very rarely
+  variables:
+    AOSP_ROOT_PATH: /AOSP-mesa
+    AOSP_MANIFEST_REPO: https://gitlab.freedesktop.org/ao2/aosp-manifest
+    AOSP_MANIFEST_TAG: android14-gsi+mesa-llvmpipe
+    AOSP_BUILD_VERSION_TAGS: mesa-llvmpipe
+    AOSP_BUILD_NUMBER: 20240902.001
+    AOSP_TARGET: aosp_cf_x86_64_phone-userdebug
+  script:
+    - .gitlab-ci/aosp-build.sh
+    -  ci-fairy s3cp --token-file "${S3_JWT_FILE}" ${AOSP_ROOT_PATH}/out/dist/cvd-host_package.tar.gz https://${S3_HOST}/${S3_AOSP_BUCKET}/${CI_PROJECT_PATH}/aosp-${AOSP_BUILD_VERSION_TAGS}.${AOSP_BUILD_NUMBER}/cvd-host_package.tar.gz
+    -  ci-fairy s3cp --token-file "${S3_JWT_FILE}" ${AOSP_ROOT_PATH}/out/dist/aosp_cf_x86_64_phone-img-${AOSP_BUILD_NUMBER}.zip https://${S3_HOST}/${S3_AOSP_BUCKET}/${CI_PROJECT_PATH}/aosp-${AOSP_BUILD_VERSION_TAGS}.${AOSP_BUILD_NUMBER}/aosp_cf_x86_64_phone-img-${AOSP_BUILD_NUMBER}.zip
+  after_script:
+    - mv "${AOSP_ROOT_PATH}/make.log" "$CI_PROJECT_DIR" || true
+    - mv "${AOSP_ROOT_PATH}/make_dist.log" "$CI_PROJECT_DIR" || true
+    - mv "${AOSP_ROOT_PATH}/out/verbose.log.gz" "$CI_PROJECT_DIR" || true
+  artifacts:
+    name: "${CI_PROJECT_NAME}"
+    paths:
+        - "make.log"
+        - "make_dist.log"
+        - "verbose.log.gz"
+    when: always
+
 .meson-cross:
   extends:
     - .meson-build

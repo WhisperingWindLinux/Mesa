@@ -150,7 +150,6 @@ def type_base_type(type_):
 _2src_commutative = "2src_commutative "
 associative = "associative "
 selection = "selection "
-derivative = "derivative "
 
 # global dictionary of opcodes
 opcodes = {}
@@ -347,19 +346,6 @@ unop("fcos", tfloat, "bit_size == 64 ? cos(src0) : cosf(src0)")
 # dfrexp
 unop_convert("frexp_exp", tint32, tfloat, "frexp(src0, &dst);")
 unop_convert("frexp_sig", tfloat, tfloat, "int n; dst = frexp(src0, &n);")
-
-# Partial derivatives.
-deriv_template = """
-Calculate the screen-space partial derivative using {} derivatives of the input
-with respect to the {}-axis. The constant folding is trivial as the derivative
-of a constant is 0 if the constant is not Inf or NaN.
-"""
-
-for mode, suffix in [("either fine or coarse", ""), ("fine", "_fine"), ("coarse", "_coarse")]:
-    for axis in ["x", "y"]:
-        unop(f"fdd{axis}{suffix}", tfloat, "isfinite(src0) ? 0.0 : NAN",
-             algebraic_properties = derivative,
-             description = deriv_template.format(mode, axis.upper()))
 
 # Floating point pack and unpack operations.
 

@@ -133,10 +133,18 @@ remove_phis_block(nir_block *block, nir_builder *b)
 }
 
 bool
-nir_opt_remove_phis_block(nir_block *block)
+nir_remove_single_src_phis_block(nir_block *block)
 {
-   nir_builder b = nir_builder_create(nir_cf_node_get_function(&block->cf_node));
-   return remove_phis_block(block, &b);
+   assert(block->predecessors->entries == 1);
+   bool progress = false;
+   nir_foreach_phi_safe(phi, block) {
+      nir_foreach_phi_src(src, phi) {
+         nir_def_replace(&phi->def, src->src.ssa);
+         progress = true;
+         break;
+      }
+   }
+   return progress;
 }
 
 static bool

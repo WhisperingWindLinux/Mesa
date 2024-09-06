@@ -53,16 +53,22 @@ phi_srcs_equal(nir_def *a, nir_def *b)
 }
 
 static bool
-can_rematerialize_phi_src(nir_block *block, nir_def *def)
+src_dominates_block(nir_src *src, void *state)
+{
+   nir_block *block = state;
+   return nir_block_dominates(src->ssa->parent_instr->block, block);
+}
+
+static bool
+can_rematerialize_phi_src(nir_block *imm_dom, nir_def *def, bool has_undef)
 {
    if (def->parent_instr->type == nir_instr_type_alu) {
-      /* Restrict alu to movs. */
-      nir_alu_instr *alu = nir_instr_as_alu(def->parent_instr);
-      if (alu->op != nir_op_mov)
-         return false;
-      if (!nir_block_dominates(alu->src[0].src.ssa->parent_instr->block, block->imm_dom))
-         return false;
-      return true;
+      if (!list_is_singular(&def->uses) || has_undef) {
+         /* This could potentially create more work. */
+         if (nir_instr_as_alu(def->parent_instr)->op != nir_op_mov)
+            return false;
+      }
+      return nir_foreach_src(def->parent_instr, src_dominates_block, imm_dom);
    } else if (def->parent_instr->type == nir_instr_type_load_const) {
       return true;
    }
@@ -93,6 +99,7 @@ remove_phis_block(nir_block *block, nir_builder *b)
       nir_def *def = NULL;
       bool srcs_same = true;
       bool needs_remat = false;
+      bool has_undef = false;
 
       nir_foreach_phi_src(src, phi) {
          /* For phi nodes at the beginning of loops, we may encounter some
@@ -109,14 +116,20 @@ remove_phis_block(nir_block *block, nir_builder *b)
          if (src->src.ssa == &phi->def)
             continue;
 
-         /* Ignore undef sources. */
-         if (nir_src_is_undef(src->src))
+         /* Ignore undef sources unless rematerializing creates more work. */
+         if (nir_src_is_undef(src->src)) {
+            if (needs_remat && can_rematerialize_phi_src(block->imm_dom, def, true)) {
+               srcs_same = false;
+               break;
+            }
+            has_undef = true;
             continue;
+         }
 
          if (def == NULL) {
             def = src->src.ssa;
             if (!nir_block_dominates(def->parent_instr->block, block->imm_dom)) {
-               if (!can_rematerialize_phi_src(block, def)) {
+               if (!can_rematerialize_phi_src(block->imm_dom, def, has_undef)) {
                   srcs_same = false;
                   break;
                }

@@ -325,6 +325,7 @@ fs_inst::can_do_source_mods(const struct intel_device_info *devinfo) const
    case SHADER_OPCODE_VOTE_ALL:
    case SHADER_OPCODE_VOTE_EQUAL:
    case SHADER_OPCODE_BALLOT:
+   case SHADER_OPCODE_QUAD_SWAP:
       return false;
    default:
       return true;

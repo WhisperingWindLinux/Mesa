@@ -244,13 +244,13 @@ radv_is_zs_format_supported(VkFormat format)
    if (format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_X8_D24_UNORM_PACK32)
       return false;
 
-   return ac_is_zs_format_supported(vk_format_to_pipe_format(format)) || format == VK_FORMAT_S8_UINT;
+   return ac_is_zs_format_supported(radv_format_to_pipe_format(format)) || format == VK_FORMAT_S8_UINT;
 }
 
 static bool
 radv_is_filter_minmax_format_supported(const struct radv_physical_device *pdev, VkFormat format)
 {
-   return ac_is_reduction_mode_supported(&pdev->info, vk_format_to_pipe_format(format), false);
+   return ac_is_reduction_mode_supported(&pdev->info, radv_format_to_pipe_format(format), false);
 }
 
 bool
@@ -653,7 +653,8 @@ radv_list_drm_format_modifiers(struct radv_physical_device *pdev, VkFormat forma
    VK_OUTARRAY_MAKE_TYPED(VkDrmFormatModifierPropertiesEXT, out, mod_list->pDrmFormatModifierProperties,
                           &mod_list->drmFormatModifierCount);
 
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, NULL);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              NULL);
 
    uint64_t *mods = malloc(mod_count * sizeof(uint64_t));
    if (!mods) {
@@ -661,7 +662,8 @@ radv_list_drm_format_modifiers(struct radv_physical_device *pdev, VkFormat forma
       mod_list->drmFormatModifierCount = 0;
       return;
    }
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, mods);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              mods);
 
    for (unsigned i = 0; i < mod_count; ++i) {
       VkFormatFeatureFlags2 features = radv_get_modifier_flags(pdev, format, mods[i], format_props);
@@ -702,7 +704,8 @@ radv_list_drm_format_modifiers_2(struct radv_physical_device *pdev, VkFormat for
    VK_OUTARRAY_MAKE_TYPED(VkDrmFormatModifierProperties2EXT, out, mod_list->pDrmFormatModifierProperties,
                           &mod_list->drmFormatModifierCount);
 
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, NULL);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              NULL);
 
    uint64_t *mods = malloc(mod_count * sizeof(uint64_t));
    if (!mods) {
@@ -710,7 +713,8 @@ radv_list_drm_format_modifiers_2(struct radv_physical_device *pdev, VkFormat for
       mod_list->drmFormatModifierCount = 0;
       return;
    }
-   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, vk_format_to_pipe_format(format), &mod_count, mods);
+   ac_get_supported_modifiers(&pdev->info, &radv_modifier_options, radv_format_to_pipe_format(format), &mod_count,
+                              mods);
 
    for (unsigned i = 0; i < mod_count; ++i) {
       VkFormatFeatureFlags2 features = radv_get_modifier_flags(pdev, format, mods[i], format_props);

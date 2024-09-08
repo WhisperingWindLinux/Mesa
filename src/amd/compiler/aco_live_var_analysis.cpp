@@ -39,30 +39,50 @@ get_additional_operand_demand(Instruction* instr)
    return additional_demand;
 }
 
-RegisterDemand
-get_temp_registers(Instruction* instr)
+void
+get_temp_regs_before_after(Instruction* instr, RegisterDemand& demand_before,
+                           RegisterDemand& demand_after, bool count_live_changes = true)
 {
-   RegisterDemand demand_before;
-   RegisterDemand demand_after;
-
    for (Definition def : instr->definitions) {
       if (def.isKill())
          demand_after += def.getTemp();
-      else if (def.isTemp())
+      else if (def.isTemp() && count_live_changes)
          demand_before -= def.getTemp();
    }
 
    for (Operand op : instr->operands) {
       if (op.isFirstKill()) {
-         demand_before += op.getTemp();
+         if (count_live_changes)
+            demand_before += op.getTemp();
          if (op.isLateKill())
             demand_after += op.getTemp();
       }
    }
 
    demand_before += get_additional_operand_demand(instr);
+}
+
+RegisterDemand
+get_temp_registers(Instruction* instr)
+{
+   RegisterDemand demand_before;
+   RegisterDemand demand_after;
+
+   get_temp_regs_before_after(instr, demand_before, demand_after);
    demand_after.update(demand_before);
    return demand_after;
+}
+
+RegisterDemand
+get_temp_reg_changes(Instruction* instr)
+{
+   RegisterDemand demand_before;
+   RegisterDemand demand_after;
+
+   /* The temp register changes of killed ops/defs are already represented in get_live_changes,
+    * don't count them twice */
+   get_temp_regs_before_after(instr, demand_before, demand_after, false);
+   return demand_after - demand_before + get_live_changes(instr);
 }
 
 namespace {

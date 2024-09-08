@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -909,7 +910,7 @@ process_block(spill_ctx& ctx, unsigned block_idx, Block* block, RegisterDemand s
          /* the Operand is spilled: add it to reloads */
          Temp new_tmp = ctx.program->allocateTmp(op.regClass());
          ctx.renames[block_idx][op.getTemp()] = new_tmp;
-         reloads[new_tmp] = std::make_pair(op.getTemp(), current_spills[op.getTemp()]);
+         reloads[op.getTemp()] = std::make_pair(new_tmp, current_spills[op.getTemp()]);
          current_spills.erase(op.getTemp());
          spilled_registers -= new_tmp;
       }
@@ -917,13 +918,18 @@ process_block(spill_ctx& ctx, unsigned block_idx, Block* block, RegisterDemand s
       /* check if register demand is low enough during and after the current instruction */
       if (block->register_demand.exceeds(ctx.target_pressure)) {
          RegisterDemand new_demand = instr->register_demand;
+         std::optional<RegisterDemand> live_changes;
 
          /* if reg pressure is too high, spill variable with furthest next use */
          while ((new_demand - spilled_registers).exceeds(ctx.target_pressure)) {
             float score = 0.0;
             Temp to_spill;
+            unsigned operand_idx = -1u;
+            unsigned respill_slot = -1u;
+
             unsigned do_rematerialize = 0;
             unsigned avoid_respill = 0;
+
             RegType type = RegType::sgpr;
             if (new_demand.vgpr - spilled_registers.vgpr > ctx.target_pressure.vgpr)
                type = RegType::vgpr;
@@ -941,24 +947,68 @@ process_block(spill_ctx& ctx, unsigned block_idx, Block* block, RegisterDemand s
 
                if (can_rematerialize > do_rematerialize || loop_variable > avoid_respill ||
                    ctx.ssa_infos[t].score() > score) {
-                  /* Don't spill operands */
-                  if (std::any_of(instr->operands.begin(), instr->operands.end(),
-                                  [&](Operand& op) { return op.isTemp() && op.getTemp() == var; }))
+                  unsigned cur_operand_idx = -1u;
+                  bool can_spill = true;
+                  for (auto it = instr->operands.begin(); it != instr->operands.end(); ++it) {
+                     if (!it->isTemp() || it->getTemp() != var)
+                        continue;
+
+                     /* Vectors with size >4 require a p_split_vector. When spilling an operand,
+                      * the p_split_vector cannot kill the vector (because it's also an operand
+                      * to the current instruction) and will therefore increase register demand
+                      * instead of helping reduce it.
+                      */
+                     if (it->regClass().size() > 4) {
+                        can_spill = false;
+                        break;
+                     }
+
+                     if (!live_changes)
+                        live_changes = get_temp_reg_changes(instr.get());
+
+                     /* Don't spill operands if killing operands won't help with register pressure */
+                     if ((type == RegType::sgpr && live_changes->sgpr < (int16_t)it->size()) ||
+                         (type == RegType::vgpr && live_changes->vgpr < (int16_t)it->size())) {
+                        can_spill = false;
+                        break;
+                     }
+
+                     cur_operand_idx = it - instr->operands.begin();
+                     if (it->isLateKill() || it->isKill())
+                        can_spill = false;
+                     break;
+                  }
+                  if (!can_spill)
                      continue;
+
+                  bool is_spilled_operand = reloads.count(var);
 
                   to_spill = var;
                   score = ctx.ssa_infos[t].score();
                   do_rematerialize = can_rematerialize;
-                  avoid_respill = loop_variable;
+                  avoid_respill = loop_variable || is_spilled_operand;
+                  operand_idx = cur_operand_idx;
+
+                  /* This variable is spilled at the loop-header of the current loop.
+                   * Re-use the spill-slot in order to avoid an extra store.
+                   */
+                  if (loop_variable)
+                     respill_slot = ctx.loop.back().spills[var];
+                  else if (is_spilled_operand)
+                     respill_slot = reloads[var].second;
                }
             }
-            assert(score != 0.0);
+            assert(score > 0.0);
+
+            if (operand_idx != -1u) {
+               /* We might not be able to spill all operands. Keep live_changes up-to-date so we
+                * stop when we spilled every operand we can.
+                */
+               *live_changes -= instr->operands[operand_idx].getTemp();
+            }
 
             if (avoid_respill) {
-               /* This variable is spilled at the loop-header of the current loop.
-                * Re-use the spill-slot in order to avoid an extra store.
-                */
-               current_spills[to_spill] = ctx.loop.back().spills[to_spill];
+               current_spills[to_spill] = respill_slot;
                spilled_registers += to_spill;
                continue;
             }
@@ -1007,7 +1057,7 @@ process_block(spill_ctx& ctx, unsigned block_idx, Block* block, RegisterDemand s
       /* add reloads and instruction to new instructions */
       for (std::pair<const Temp, std::pair<Temp, uint32_t>>& pair : reloads) {
          aco_ptr<Instruction> reload =
-            do_reload(ctx, pair.second.first, pair.first, pair.second.second);
+            do_reload(ctx, pair.first, pair.second.first, pair.second.second);
          instructions.emplace_back(std::move(reload));
       }
       instructions.emplace_back(std::move(instr));
@@ -1227,7 +1277,7 @@ spill_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& inst
    assert(temp.type() == RegType::vgpr && !temp.is_linear());
 
    Builder bld(ctx.program, &instructions);
-   if (temp.size() > 1) {
+   if (temp.size() > 4) {
       Instruction* split{
          create_instruction(aco_opcode::p_split_vector, Format::PSEUDO, 1, temp.size())};
       split->operands[0] = Operand(temp);
@@ -1246,11 +1296,36 @@ spill_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& inst
             instr->mubuf().cache.value = ac_swizzled;
          }
       }
-   } else if (ctx.program->gfx_level >= GFX9) {
-      bld.scratch(aco_opcode::scratch_store_dword, Operand(v1), ctx.scratch_rsrc, temp, offset,
+      return;
+   }
+
+   aco_opcode opcode;
+   switch (temp.size()) {
+   case 4:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx4
+                                              : aco_opcode::buffer_store_dwordx4;
+      break;
+   case 3:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx3
+                                              : aco_opcode::buffer_store_dwordx3;
+      break;
+   case 2:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dwordx2
+                                              : aco_opcode::buffer_store_dwordx2;
+      break;
+   case 1:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_store_dword
+                                              : aco_opcode::buffer_store_dword;
+      break;
+   default:
+      unreachable("Unhandled vector size!\n");
+   }
+
+   if (ctx.program->gfx_level >= GFX9) {
+      bld.scratch(opcode, Operand(v1), ctx.scratch_rsrc, temp, offset,
                   memory_sync_info(storage_vgpr_spill, semantic_private));
    } else {
-      Instruction* instr = bld.mubuf(aco_opcode::buffer_store_dword, ctx.scratch_rsrc, Operand(v1),
+      Instruction* instr = bld.mubuf(opcode, ctx.scratch_rsrc, Operand(v1),
                                      scratch_offset, temp, offset, false);
       instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
       instr->mubuf().cache.value = ac_swizzled;
@@ -1291,11 +1366,36 @@ reload_vgpr(spill_ctx& ctx, Block& block, std::vector<aco_ptr<Instruction>>& ins
          }
       }
       bld.insert(vec);
-   } else if (ctx.program->gfx_level >= GFX9) {
-      bld.scratch(aco_opcode::scratch_load_dword, def, Operand(v1), ctx.scratch_rsrc, offset,
+      return;
+   }
+
+   aco_opcode opcode;
+   switch (def.size()) {
+   case 4:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx4
+                                              : aco_opcode::buffer_load_dwordx4;
+      break;
+   case 3:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx3
+                                              : aco_opcode::buffer_load_dwordx3;
+      break;
+   case 2:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dwordx2
+                                              : aco_opcode::buffer_load_dwordx2;
+      break;
+   case 1:
+      opcode = ctx.program->gfx_level >= GFX9 ? aco_opcode::scratch_load_dword
+                                              : aco_opcode::buffer_load_dword;
+      break;
+   default:
+      unreachable("Unhandled vector size!\n");
+   }
+
+   if (ctx.program->gfx_level >= GFX9) {
+      bld.scratch(opcode, def, Operand(v1), ctx.scratch_rsrc, offset,
                   memory_sync_info(storage_vgpr_spill, semantic_private));
    } else {
-      Instruction* instr = bld.mubuf(aco_opcode::buffer_load_dword, def, ctx.scratch_rsrc,
+      Instruction* instr = bld.mubuf(opcode, def, ctx.scratch_rsrc,
                                      Operand(v1), scratch_offset, offset, false);
       instr->mubuf().sync = memory_sync_info(storage_vgpr_spill, semantic_private);
       instr->mubuf().cache.value = ac_swizzled;

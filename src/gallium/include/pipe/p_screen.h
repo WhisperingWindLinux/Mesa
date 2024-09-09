@@ -862,6 +862,30 @@ struct pipe_screen {
                                             struct pipe_video_buffer *target,
                                             enum pipe_video_profile profile,
                                             enum pipe_video_entrypoint entrypoint);
+
+   /**
+    * Allocates a cut-out in the GPU's VM space.
+    *
+    * \return true if the operation was successful, false otherwise.
+    */
+   bool (*alloc_vm)(struct pipe_screen *screen, uint64_t start, uint64_t size);
+
+   /**
+    * Frees a cut-out allocated through alloc_vm.
+    */
+   void (*free_vm)(struct pipe_screen *screen, uint64_t start, uint64_t size);
+
+   /**
+    * Binds an \p address to the given \p resource
+    *
+    * \return true if the operation was successful, false otherwise.
+    */
+   bool (*resource_assign_vma)(struct pipe_resource *resource, uint64_t address);
+
+   /**
+    * Returns the virtual address of \p resource. \p needs to be created with PIPE_
+    */
+   uint64_t (*resource_get_address)(struct pipe_resource *resource);
 };
 
 

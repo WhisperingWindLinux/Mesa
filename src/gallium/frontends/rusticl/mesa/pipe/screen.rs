@@ -88,6 +88,18 @@ impl ResourceType {
     }
 }
 
+pub struct ScreenVMAllocation<'a> {
+    screen: &'a PipeScreen,
+    start: u64,
+    size: u64,
+}
+
+impl Drop for ScreenVMAllocation<'_> {
+    fn drop(&mut self) {
+        self.screen.free_vm(self.start, self.size);
+    }
+}
+
 impl PipeScreen {
     pub(super) fn new(ldev: PipeLoaderDevice, screen: *mut pipe_screen) -> Option<Self> {
         if screen.is_null() || !has_required_cbs(screen) {
@@ -120,6 +132,32 @@ impl PipeScreen {
         )
     }
 
+    pub fn alloc_vm(&self, start: u64, size: u64) -> Option<ScreenVMAllocation> {
+        unsafe { self.screen().alloc_vm?(self.screen.as_ptr(), start, size) }.then_some(
+            ScreenVMAllocation {
+                screen: self,
+                start: start,
+                size: size,
+            },
+        )
+    }
+
+    fn free_vm(&self, start: u64, size: u64) {
+        if let Some(free_vm) = self.screen().free_vm {
+            unsafe {
+                free_vm(self.screen.as_ptr(), start, size);
+            }
+        }
+    }
+
+    pub fn resource_assign_vma(&self, res: &PipeResource, address: u64) -> bool {
+        if let Some(resource_assign_vma) = self.screen().resource_assign_vma {
+            unsafe { resource_assign_vma(res.pipe(), address) }
+        } else {
+            false
+        }
+    }
+
     fn resource_create(&self, tmpl: &pipe_resource) -> Option<PipeResource> {
         PipeResource::new(
             unsafe { self.screen().resource_create.unwrap()(self.screen.as_ptr(), tmpl) },
@@ -143,6 +181,7 @@ impl PipeScreen {
         size: u32,
         res_type: ResourceType,
         pipe_bind: u32,
+        pipe_flags: u32,
     ) -> Option<PipeResource> {
         let mut tmpl = pipe_resource::default();
 
@@ -152,6 +191,7 @@ impl PipeScreen {
         tmpl.depth0 = 1;
         tmpl.array_size = 1;
         tmpl.bind = pipe_bind;
+        tmpl.flags = pipe_flags;
 
         res_type.apply(&mut tmpl);
 
@@ -163,6 +203,7 @@ impl PipeScreen {
         size: u32,
         mem: *mut c_void,
         pipe_bind: u32,
+        pipe_flags: u32,
     ) -> Option<PipeResource> {
         let mut tmpl = pipe_resource::default();
 
@@ -172,6 +213,7 @@ impl PipeScreen {
         tmpl.depth0 = 1;
         tmpl.array_size = 1;
         tmpl.bind = pipe_bind;
+        tmpl.flags = pipe_flags;
 
         self.resource_create_from_user(&tmpl, mem)
     }
@@ -392,6 +434,16 @@ impl PipeScreen {
 
     pub fn is_res_handle_supported(&self) -> bool {
         self.screen().resource_from_handle.is_some() && self.screen().resource_get_handle.is_some()
+    }
+
+    pub fn is_fixed_address_supported(&self) -> bool {
+        self.screen().resource_get_address.is_some()
+    }
+
+    pub fn is_vm_supported(&self) -> bool {
+        self.screen().resource_assign_vma.is_some()
+            && self.screen().alloc_vm.is_some()
+            && self.screen().free_vm.is_some()
     }
 
     pub fn nir_shader_compiler_options(

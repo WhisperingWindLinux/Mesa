@@ -9,31 +9,93 @@ use crate::impl_cl_type_trait;
 
 use mesa_rust::pipe::resource::*;
 use mesa_rust::pipe::screen::ResourceType;
+use mesa_rust::pipe::screen::ScreenVMAllocation;
+use mesa_rust::util::vm::VM;
 use mesa_rust_gen::*;
 use mesa_rust_util::properties::Properties;
 use mesa_rust_util::ptr::TrackedPointers;
 use rusticl_opencl_gen::*;
 
 use std::alloc::Layout;
+use std::cmp;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::mem;
+use std::ops::Deref;
 use std::os::raw::c_void;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
+
+pub struct ContextVM<'a> {
+    vm: VM,
+    // we make use of the drop to automatically free the reserved VM
+    _dev_allocs: Vec<ScreenVMAllocation<'a>>,
+}
+
+impl Deref for ContextVM<'_> {
+    type Target = VM;
+
+    fn deref(&self) -> &Self::Target {
+        &self.vm
+    }
+}
 
 pub struct Context {
     pub base: CLObjectBase<CL_INVALID_CONTEXT>,
     pub devs: Vec<&'static Device>,
     pub properties: Properties<cl_context_properties>,
     pub dtors: Mutex<Vec<DeleteContextCB>>,
+    bda_ptrs: Mutex<TrackedPointers<cl_mem_device_address_EXT, Weak<Buffer>>>,
     svm_ptrs: Mutex<TrackedPointers<usize, Layout>>,
     pub gl_ctx_manager: Option<GLCtxManager>,
+    // lifetime has to match the one of devs
+    pub vm: Option<ContextVM<'static>>,
+}
+
+pub enum BDAType {
+    None,
+    Single,
+    Multi,
 }
 
 impl_cl_type_trait!(cl_context, Context, CL_INVALID_CONTEXT);
 
 impl Context {
+    fn alloc_vm<'a>(devs: &[&'a Device]) -> Option<ContextVM<'a>> {
+        // if we have a single device and if it supports resources with fixed addresses,
+        // we use that instead of the VM manager.
+        if devs.len() == 1 && devs[0].screen().is_fixed_address_supported() {
+            return None;
+        }
+
+        let mut start = 0;
+        let mut end = u64::MAX;
+
+        for dev in devs {
+            let (dev_start, dev_end) = dev.vm_alloc_range()?;
+            start = cmp::max(start, dev_start);
+            end = cmp::min(end, dev_end);
+        }
+
+        // allocate 1/8 of the available VM. No specific reason for this limit
+        // TODO: make it more dynamic to e.g. support multiple contexts.
+        let size = end / 8;
+        if start > size {
+            return None;
+        }
+
+        let mut allocs = Vec::with_capacity(devs.len());
+        for dev in devs {
+            allocs.push(dev.screen().alloc_vm(size, size)?);
+        }
+
+        Some(ContextVM {
+            vm: VM::new(size, size),
+            _dev_allocs: allocs,
+        })
+    }
+
     pub fn new(
         devs: Vec<&'static Device>,
         properties: Properties<cl_context_properties>,
@@ -41,9 +103,11 @@ impl Context {
     ) -> Arc<Context> {
         Arc::new(Self {
             base: CLObjectBase::new(RusticlTypes::Context),
+            vm: Self::alloc_vm(&devs),
             devs: devs,
             properties: properties,
             dtors: Mutex::new(Vec::new()),
+            bda_ptrs: Mutex::new(TrackedPointers::new()),
             svm_ptrs: Mutex::new(TrackedPointers::new()),
             gl_ctx_manager: gl_ctx_manager,
         })
@@ -54,10 +118,19 @@ impl Context {
         size: usize,
         user_ptr: *mut c_void,
         copy: bool,
+        bda: BDAType,
         res_type: ResourceType,
     ) -> CLResult<HashMap<&'static Device, Arc<PipeResource>>> {
         let adj_size: u32 = size.try_into().map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
         let mut res = HashMap::new();
+        let mut pipe_flags = 0;
+
+        match bda {
+            BDAType::Single => pipe_flags |= PIPE_RESOURCE_FLAG_FIXED_ADDRESS,
+            BDAType::Multi => pipe_flags |= PIPE_RESOURCE_FLAG_FRONTEND_VM,
+            _ => {}
+        }
+
         for &dev in &self.devs {
             let mut resource = None;
 
@@ -66,13 +139,17 @@ impl Context {
                     adj_size,
                     user_ptr,
                     PIPE_BIND_GLOBAL,
+                    pipe_flags,
                 )
             }
 
             if resource.is_none() {
-                resource = dev
-                    .screen()
-                    .resource_create_buffer(adj_size, res_type, PIPE_BIND_GLOBAL)
+                resource = dev.screen().resource_create_buffer(
+                    adj_size,
+                    res_type,
+                    PIPE_BIND_GLOBAL,
+                    pipe_flags,
+                )
             }
 
             let resource = resource.ok_or(CL_OUT_OF_RESOURCES);
@@ -201,6 +278,44 @@ impl Context {
 
     pub fn remove_svm_ptr(&self, ptr: usize) -> Option<Layout> {
         self.svm_ptrs.lock().unwrap().remove(ptr)
+    }
+
+    pub fn add_bda_ptr(&self, ptr: &BufferAddress, buffer: &Arc<Buffer>) -> CLResult<()> {
+        let address = ptr.address().into();
+        self.bda_ptrs
+            .lock()
+            .unwrap()
+            .insert(address, Arc::downgrade(buffer));
+
+        // only assign the vma if it's in fact a vma allocation.
+        if let (BufferAddress::VMA(_), Some(res)) = (ptr, &buffer.res) {
+            for (dev, res) in res {
+                if !dev.screen().resource_assign_vma(res, address) {
+                    return Err(CL_OUT_OF_RESOURCES);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn find_bda_alloc(
+        &self,
+        ptr: cl_mem_device_address_EXT,
+    ) -> Option<(cl_mem_device_address_EXT, Arc<Buffer>)> {
+        let lock = self.bda_ptrs.lock().unwrap();
+        let (base, mem) = lock.find_alloc(ptr)?;
+        mem.upgrade().map(|mem| (base, mem))
+    }
+
+    pub fn remove_bda_ptr(&self, ptr: cl_mem_device_address_EXT, size: usize) {
+        let entry = self.bda_ptrs.lock().unwrap().remove(ptr);
+
+        if entry.is_some() {
+            if let Some(vma) = self.vm.as_ref() {
+                vma.lock().unwrap().free(ptr, size as u64);
+            }
+        }
     }
 
     pub fn import_gl_buffer(

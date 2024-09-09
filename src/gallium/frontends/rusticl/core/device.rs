@@ -677,6 +677,10 @@ impl Device {
             add_ext(1, 0, 0, "cl_arm_shared_virtual_memory");
         }
 
+        if self.bda_supported() {
+            add_ext(1, 0, 0, "cl_ext_buffer_device_address");
+        }
+
         self.extensions = exts;
         self.clc_features = feats;
         self.extension_string = format!("{} {}", PLATFORM_EXTENSION_STR, exts_str.join(" "));
@@ -753,6 +757,10 @@ impl Device {
         }
 
         self.screen.param(pipe_cap::PIPE_CAP_DOUBLES) == 1
+    }
+
+    pub fn bda_supported(&self) -> bool {
+        self.screen().is_vm_supported() || self.screen().is_fixed_address_supported()
     }
 
     pub fn is_gl_sharing_supported(&self) -> bool {
@@ -1035,6 +1043,18 @@ impl Device {
 
     pub fn svm_supported(&self) -> bool {
         self.screen.param(pipe_cap::PIPE_CAP_SYSTEM_SVM) == 1
+    }
+
+    // returns (start, end)
+    pub fn vm_alloc_range(&self) -> Option<(u64, u64)> {
+        let min = self.screen.param(pipe_cap::PIPE_CAP_MIN_VMA_SHIFT);
+        let max = self.screen.param(pipe_cap::PIPE_CAP_MAX_VMA_SHIFT);
+
+        if min == 0 && max == 0 {
+            return None;
+        }
+
+        Some((1u64 << min, 1u64 << max))
     }
 
     pub fn unified_memory(&self) -> bool {

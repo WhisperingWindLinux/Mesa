@@ -507,7 +507,9 @@ enum pipe_flush_flags
 #define PIPE_RESOURCE_FLAG_DONT_OVER_ALLOCATE    (1 << 6)
 #define PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY     (1 << 7) /* for small visible VRAM */
 #define PIPE_RESOURCE_FLAG_UNMAPPABLE            (1 << 8) /* implies staging transfers due to VK interop */
-#define PIPE_RESOURCE_FLAG_DRV_PRIV              (1 << 9) /* driver/winsys private */
+#define PIPE_RESOURCE_FLAG_FRONTEND_VM           (1 << 9) /* the frontend assigns addresses */
+#define PIPE_RESOURCE_FLAG_FIXED_ADDRESS         (1 << 10) /* virtual memory address never changes */
+#define PIPE_RESOURCE_FLAG_DRV_PRIV              (1 << 11) /* driver/winsys private */
 #define PIPE_RESOURCE_FLAG_FRONTEND_PRIV         (1 << 24) /* gallium frontend private */
 
 /**
@@ -974,6 +976,9 @@ enum pipe_cap
    PIPE_CAP_SHADER_SUBGROUP_SUPPORTED_STAGES,
    PIPE_CAP_SHADER_SUBGROUP_SUPPORTED_FEATURES,
    PIPE_CAP_SHADER_SUBGROUP_QUAD_ALL_STAGES,
+   /** for CL BDA and SVM */
+   PIPE_CAP_MIN_VMA_SHIFT,
+   PIPE_CAP_MAX_VMA_SHIFT,
    PIPE_CAP_LAST,
    /* XXX do not add caps after PIPE_CAP_LAST! */
 };

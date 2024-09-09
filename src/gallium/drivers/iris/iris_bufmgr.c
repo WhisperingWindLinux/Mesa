@@ -402,6 +402,34 @@ vma_alloc(struct iris_bufmgr *bufmgr,
    return intel_canonical_address(addr);
 }
 
+bool
+iris_bufmgr_alloc_heap(struct iris_bufmgr *bufmgr, uint64_t start, uint64_t size)
+{
+   simple_mtx_lock(&bufmgr->lock);
+   bool res = util_vma_heap_alloc_addr(&bufmgr->vma_allocator[IRIS_MEMZONE_OTHER], start, size);
+   simple_mtx_unlock(&bufmgr->lock);
+   return res;
+}
+
+void
+iris_bufmgr_free_heap(struct iris_bufmgr *bufmgr, uint64_t start, uint64_t size)
+{
+   simple_mtx_lock(&bufmgr->lock);
+   util_vma_heap_free(&bufmgr->vma_allocator[IRIS_MEMZONE_OTHER], start, size);
+   simple_mtx_unlock(&bufmgr->lock);
+}
+
+bool
+iris_bufmgr_assign_vma(struct iris_bufmgr *bufmgr, struct iris_bo *bo, uint64_t address)
+{
+   bo->address = intel_canonical_address(address);
+
+   if (address)
+      return bufmgr->kmd_backend->gem_vm_bind(bo);
+   else
+      return bufmgr->kmd_backend->gem_vm_unbind(bo);
+}
+
 static void
 vma_free(struct iris_bufmgr *bufmgr,
          uint64_t address,
@@ -1262,7 +1290,11 @@ iris_bo_alloc(struct iris_bufmgr *bufmgr,
          return NULL;
    }
 
-   if (bo->address == 0ull) {
+   if (flags & BO_ALLOC_NO_VMA) {
+       if (bo->address) {
+         vma_free(bufmgr, bo->address, bo->size);
+       }
+   } else if (bo->address == 0ull) {
       simple_mtx_lock(&bufmgr->lock);
       bo->address = vma_alloc(bufmgr, memzone, bo->size, alignment);
       simple_mtx_unlock(&bufmgr->lock);

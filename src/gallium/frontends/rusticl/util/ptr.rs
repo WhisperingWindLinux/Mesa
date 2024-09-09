@@ -5,6 +5,7 @@ use std::{
     mem,
     ops::{Add, Deref},
     ptr::{self, NonNull},
+    sync::Weak,
 };
 
 /// A wrapper around pointers to C data type which are considered thread safe.
@@ -137,12 +138,18 @@ pub const fn addr<T>(ptr: *const T) -> usize {
 }
 
 pub trait AllocSize<P> {
-    fn size(&self) -> P;
+    fn size(&self) -> Option<P>;
 }
 
 impl AllocSize<usize> for Layout {
-    fn size(&self) -> usize {
-        Self::size(self)
+    fn size(&self) -> Option<usize> {
+        Some(Self::size(self))
+    }
+}
+
+impl<T, A: AllocSize<T>> AllocSize<T> for Weak<A> {
+    fn size(&self) -> Option<T> {
+        self.upgrade()?.size()
     }
 }
 
@@ -172,7 +179,7 @@ where
 
     pub fn find_alloc(&self, ptr: P) -> Option<(P, &T)> {
         if let Some((&base, val)) = self.ptrs.range(..=ptr).next_back() {
-            let size = val.size();
+            let size = val.size()?;
             // we check if ptr is within [base..base+size)
             // means we can check if ptr - (base + size) < 0
             if ptr < (base + size) {

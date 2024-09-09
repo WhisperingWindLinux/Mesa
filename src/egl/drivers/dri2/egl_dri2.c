@@ -672,6 +672,9 @@ dri2_setup_screen(_EGLDisplay *disp)
    /* Report back to EGL the bitmask of priorities supported */
    disp->Extensions.IMG_context_priority =
       dri_get_screen_param(dri2_dpy->dri_screen_render_gpu, PIPE_CAP_CONTEXT_PRIORITY_MASK);
+   disp->Extensions.NV_context_priority_realtime =
+      disp->Extensions.IMG_context_priority &
+      (1 << __EGL_CONTEXT_PRIORITY_REALTIME_BIT);
 
    disp->Extensions.EXT_pixel_format_float = EGL_TRUE;
 
@@ -1144,6 +1147,9 @@ dri2_fill_context_attribs(struct dri2_egl_context *dri2_ctx,
       unsigned val;
 
       switch (dri2_ctx->base.ContextPriority) {
+      case EGL_CONTEXT_PRIORITY_REALTIME_NV:
+         val = __DRI_CTX_PRIORITY_REALTIME;
+         break;
       case EGL_CONTEXT_PRIORITY_HIGH_IMG:
          val = __DRI_CTX_PRIORITY_HIGH;
          break;

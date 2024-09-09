@@ -870,10 +870,10 @@ bit_cast_color(struct nir_builder *b, nir_def *color,
    assert(src_fmtl->bpb == dst_fmtl->bpb);
 
    if (src_fmtl->bpb <= 32) {
-      assert(src_fmtl->channels.r.type == ISL_UINT ||
-             src_fmtl->channels.r.type == ISL_UNORM);
-      assert(dst_fmtl->channels.r.type == ISL_UINT ||
-             dst_fmtl->channels.r.type == ISL_UNORM);
+      assert(src_fmtl->uniform_channel_type == ISL_UINT ||
+             src_fmtl->uniform_channel_type == ISL_UNORM);
+      assert(dst_fmtl->uniform_channel_type == ISL_UINT ||
+             dst_fmtl->uniform_channel_type == ISL_UNORM);
 
       nir_def *packed = nir_imm_int(b, 0);
       for (unsigned c = 0; c < 4; c++) {
@@ -908,8 +908,8 @@ bit_cast_color(struct nir_builder *b, nir_def *color,
       color = nir_vec(b, chans, 4);
    } else {
       /* This path only supports UINT formats */
-      assert(src_fmtl->channels.r.type == ISL_UINT);
-      assert(dst_fmtl->channels.r.type == ISL_UINT);
+      assert(src_fmtl->uniform_channel_type == ISL_UINT);
+      assert(dst_fmtl->uniform_channel_type == ISL_UINT);
 
       const unsigned src_bpc = src_fmtl->channels.r.bits;
       const unsigned dst_bpc = dst_fmtl->channels.r.bits;
@@ -2121,7 +2121,8 @@ try_blorp_blit(struct blorp_batch *batch,
               key->dst_usage != ISL_SURF_USAGE_DEPTH_BIT) {
       key->dst_format = params->dst.view.format;
       params->dst.view.format = ISL_FORMAT_R32_UINT;
-   } else if (params->dst.view.format == ISL_FORMAT_A4B4G4R4_UNORM) {
+   } else if (!isl_format_supports_rendering(devinfo, params->dst.view.format)
+              && params->dst.view.format == ISL_FORMAT_A4B4G4R4_UNORM) {
       params->dst.view.swizzle =
          isl_swizzle_compose(params->dst.view.swizzle,
                              ISL_SWIZZLE(ALPHA, RED, GREEN, BLUE));
@@ -2777,8 +2778,22 @@ blorp_copy_get_color_format(const struct isl_device *isl_dev,
 {
    const struct isl_format_layout *fmtl = isl_format_get_layout(surf_format);
 
-   if (ISL_GFX_VER(isl_dev) <= 12 &&
-       isl_format_supports_ccs_e(isl_dev->info, surf_format)) {
+   if (ISL_GFX_VER(isl_dev) >= 9 && fmtl->bpb <= 32 &&
+       fmtl->colorspace == ISL_COLORSPACE_LINEAR &&
+       fmtl->uniform_channel_type == ISL_UNORM &&
+       isl_format_supports_rendering(isl_dev->info, surf_format)) {
+      /* On gfx9-12, avoid format re-interpretation in order to support
+       * non-zero clear colors when copying. On gfx12, also do this in order
+       * to properly interpret the clear color of imported dmabuf surfaces.
+       *
+       * This may also benefit gfx20. There, some surface formats have the
+       * ability to be placed in an alternative sampler cache. Keeping the
+       * surface format unchanged should hopefully avoid any unexpected
+       * behavior. See isl_format_support_sampler_route_to_lsc().
+       */
+      return surf_format;
+   } else if (ISL_GFX_VER(isl_dev) <= 12 &&
+              isl_format_supports_ccs_e(isl_dev->info, surf_format)) {
       /* On gfx9-12, choose a copy format that maintains compatibility with
        * CCS_E. Although format reinterpretation doesn't affect
        * CCS_E-compatibility on gfx12, the sampler does have reduced support

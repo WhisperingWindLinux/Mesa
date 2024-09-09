@@ -15,6 +15,15 @@ if with_ld_version_script
   omx_link_depends += omx_sym
 endif
 
+link_with_libomx_gallium = []
+if with_dri
+  link_with_libomx_gallium += libgallium_dri
+else
+  if with_platform_windows
+    link_with_libomx_gallium += libgallium_wgl
+  endif
+endif
+
 libomx_gallium = shared_library(
   'omx_mesa',
   'omx_target.c',
@@ -25,11 +34,11 @@ libomx_gallium = shared_library(
   ],
   link_whole : [libomx_st],
   link_with : [
-    libgalliumvlwinsys, libgalliumvl, libgallium,
+    libgalliumvlwinsys, libgalliumvl, link_with_libomx_gallium,
     libpipe_loader_static, libws_null, libwsw, libswdri, libswkmsdri,
   ],
   link_depends : omx_link_depends,
-  dependencies : [idep_mesautil, driver_r600, driver_radeonsi, driver_nouveau],
+  dependencies : [idep_mesautil],
   install : true,
   install_dir : omx_drivers_path,
 )

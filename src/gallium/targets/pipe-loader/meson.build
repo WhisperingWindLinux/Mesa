@@ -3,7 +3,7 @@
 
 pipe_loader_link_args = [ld_args_gc_sections, ld_args_build_id]
 pipe_loader_link_deps = []
-pipe_loader_link_with = [libgallium, libgalliumvl_stub]
+pipe_loader_link_with = [libgalliumvl_stub]
 pipe_loader_comp_args = []
 pipe_loader_incs = [
   inc_include, inc_src, inc_util, inc_gallium, inc_gallium_drivers,
@@ -14,6 +14,14 @@ if (with_gallium_va or with_gallium_vdpau or with_gallium_omx != 'disabled')
   pipe_loader_link_with += libgalliumvlwinsys
 endif
 
+if with_dri
+  pipe_loader_link_with += libgallium_dri
+else
+  if with_platform_windows
+    pipe_loader_link_with += libgallium_wgl
+  endif
+endif
+
 pipe_loader_install_dir = join_paths(get_option('libdir'), 'gallium-pipe')
 
 _kmsro_targets = [
@@ -22,17 +30,17 @@ _kmsro_targets = [
 ]
 
 if with_gallium_v3d
-   _kmsro_targets += [idep_xmlconfig, dep_expat]
+   _kmsro_targets += [dep_expat]
 endif
 
 pipe_loaders = [
   [with_gallium_i915, 'i915', driver_i915, []],
-  [with_gallium_crocus, 'crocus', [driver_crocus, idep_xmlconfig], []],
-  [with_gallium_iris, 'iris', [driver_iris, idep_xmlconfig], []],
+  [with_gallium_crocus, 'crocus', [driver_crocus], []],
+  [with_gallium_iris, 'iris', [driver_iris], []],
   [with_gallium_nouveau, 'nouveau', driver_nouveau, []],
   [with_gallium_r300, 'r300', driver_r300, []],
   [with_gallium_r600, 'r600', driver_r600, []],
-  [with_gallium_radeonsi, 'radeonsi', [driver_radeonsi, idep_xmlconfig], []],
+  [with_gallium_radeonsi, 'radeonsi', [driver_radeonsi], []],
   [with_gallium_freedreno, 'msm', driver_freedreno, []],
   [with_gallium_kmsro, 'kmsro', _kmsro_targets, [libpipe_loader_dynamic]],
   [with_gallium_svga, 'vmwgfx', driver_svga, []],
@@ -79,7 +87,7 @@ foreach x : pipe_loaders
     link_depends : cur_pipe_loader_link_deps,
     include_directories : pipe_loader_incs,
     link_with : [pipe_loader_link_with, x[3]],
-    dependencies : [idep_mesautil, idep_nir, dep_thread, x[2]],
+    dependencies : [idep_mesautil, idep_nir, dep_thread, idep_xmlconfig, x[2]],
     name_prefix : '',
     install : true,
     install_dir : pipe_loader_install_dir,

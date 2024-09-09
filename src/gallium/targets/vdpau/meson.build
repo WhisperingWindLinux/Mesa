@@ -21,9 +21,17 @@ if with_ld_dynamic_list
 endif
 
 link_with_libvdpau_gallium = [
-  libgalliumvlwinsys, libgalliumvl, libgallium,
+  libgalliumvlwinsys, libgalliumvl,
   libpipe_loader_static, libws_null, libwsw, libswdri, libswkmsdri,
 ]
+
+if with_dri
+  link_with_libvdpau_gallium += libgallium_dri
+else
+  if with_platform_windows
+    link_with_libvdpau_gallium += libgallium_wgl
+  endif
+endif
 
 if with_glx == 'xlib'
   link_with_libvdpau_gallium += [libws_xlib]

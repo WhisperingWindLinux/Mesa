@@ -24,3 +24,6 @@ dEQP-VK.texture.mipmap.3d.image_view_min_lod.base_level.nearest_linear,Fail
 dEQP-VK.texture.mipmap.3d.image_view_min_lod.base_level.nearest_linear_integer_texel_coord,Fail
 dEQP-VK.texture.mipmap.3d.image_view_min_lod.base_level.nearest_nearest,Fail
 dEQP-VK.texture.mipmap.3d.image_view_min_lod.base_level.nearest_nearest_integer_texel_coord,Fail
+
+# Video failures.
+dEQP-VK.video.capabilities.queue_support_query,Fail

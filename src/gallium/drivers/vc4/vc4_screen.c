@@ -558,6 +558,7 @@ vc4_screen_create(int fd, const struct pipe_screen_config *config,
         pscreen->get_shader_param = vc4_screen_get_shader_param;
         pscreen->context_create = vc4_context_create;
         pscreen->is_format_supported = vc4_screen_is_format_supported;
+        pscreen->get_timestamp = u_default_get_timestamp;
 
         screen->fd = fd;
         screen->ro = ro;

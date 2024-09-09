@@ -2041,6 +2041,36 @@ check_have_device_time(struct zink_screen *screen)
 }
 
 static void
+zink_query_compression_rates(struct pipe_screen *pscreen, enum pipe_format pformat, int max, uint32_t *rates, int *count)
+{
+   struct zink_screen *screen = zink_screen(pscreen);
+
+   if (!screen->format_props[pformat].compressionRates) {
+      *count = 1;
+      if (max)
+         *rates = PIPE_COMPRESSION_FIXED_RATE_NONE;
+      return;
+   }
+   if (screen->format_props[pformat].compressionRates == UINT32_MAX) {
+      *count = 1;
+      if (max)
+         *rates = PIPE_COMPRESSION_FIXED_RATE_DEFAULT;
+      return;
+   }
+
+   *count = util_bitcount(screen->format_props[pformat].compressionRates);
+   if (!max)
+      return;
+
+   unsigned c = 0;
+   u_foreach_bit(r, screen->format_props[pformat].compressionRates) {
+      rates[c] = r + 1;
+      if (++c == max)
+         break;
+   }
+}
+
+static void
 zink_error(const char *msg)
 {
 }
@@ -2153,6 +2183,7 @@ zink_internal_setup_moltenvk(struct zink_screen *screen)
 }
 
 static void
+
 check_vertex_formats(struct zink_screen *screen)
 {
    /* from vbuf */
@@ -2259,6 +2290,14 @@ retry:
             mod_props.pDrmFormatModifierProperties = mods;
             props.pNext = &mod_props;
          }
+         VkImageCompressionPropertiesEXT comp;
+         if (screen->info.have_EXT_image_compression_control) {
+            comp.sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT;
+            comp.pNext = props.pNext;
+            comp.imageCompressionFlags = 0;
+            comp.imageCompressionFixedRateFlags = 0;
+            props.pNext = &comp;
+         }
          VkFormatProperties3 props3 = {0};
          if (screen->info.have_KHR_format_feature_flags2 || screen->info.have_vulkan13) {
            props3.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3;
@@ -2280,6 +2319,17 @@ retry:
            screen->format_props[i].linearTilingFeatures = props.formatProperties.linearTilingFeatures;
            screen->format_props[i].optimalTilingFeatures = props.formatProperties.optimalTilingFeatures;
            screen->format_props[i].bufferFeatures = props.formatProperties.bufferFeatures;
+         }
+
+         if (screen->info.have_EXT_image_compression_control) {
+            switch (comp.imageCompressionFlags) {
+            case VK_IMAGE_COMPRESSION_DISABLED_EXT:
+               screen->format_props[i].compressionRates = 0;
+               break;
+            default:
+               screen->format_props[i].compressionRates = comp.imageCompressionFixedRateFlags;
+               break;
+            }
          }
 
          if (screen->info.have_EXT_image_drm_format_modifier && mod_props.drmFormatModifierCount) {
@@ -3565,6 +3615,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
          }
       }
    }
+   if (screen->info.have_EXT_image_compression_control && screen->info.have_EXT_image_compression_control_swapchain)
+      screen->base.query_compression_rates = zink_query_compression_rates;
 
    if (!zink_screen_resource_init(&screen->base))
       goto fail;

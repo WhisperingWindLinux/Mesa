@@ -1068,6 +1068,18 @@ nvk_get_image_memory_requirements(struct nvk_device *dev,
    pMemoryRequirements->memoryRequirements.alignment = align_B;
    pMemoryRequirements->memoryRequirements.size = size_B;
 
+   /* Remove non host visible heaps from the types for host image copy in case
+    * of potential issues. This should be removed when we get ReBAR.
+    */
+   if (image->vk.usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) {
+      struct nvk_physical_device *pdev = nvk_device_physical(dev);
+      for (uint32_t i = 0; i < pdev->mem_type_count; i++) {
+         if (!(pdev->mem_types[i].propertyFlags &
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            memory_types &= ~BITFIELD_BIT(i);
+      }
+   }
+
    vk_foreach_struct_const(ext, pMemoryRequirements->pNext) {
       switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {

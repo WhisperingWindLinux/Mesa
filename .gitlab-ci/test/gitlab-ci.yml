@@ -52,9 +52,7 @@ python-test:
     GIT_STRATEGY: fetch
   timeout: 10m
   script:
-    - cd bin/ci
-    - pip install --break-system-packages -r test/requirements.txt
-    - PYTHONPATH=. pytest -v
+    - .gitlab-ci/run-pytest.sh
   rules:
     - !reference [.disable-farm-mr-rules, rules]
     - !reference [.never-post-merge-rules, rules]
@@ -71,13 +69,19 @@ python-test:
     - changes: *bin_ci_files
       when: manual
 
-toml-lint:
+yaml-toml-shell-test:
   extends:
     - python-test
     - .no-auto-retry  # this job can't be flaky
-  before_script:
+  script:
     - echo "If your change looks right but this script rejects it, contact @eric (GitLab) / eric_engestrom (IRC)."
+    - uncollapsed_section_start tomllint "tomllint"
     - python3 bin/toml_lint.py
+    - uncollapsed_section_switch yamllint "yamllint"
+    - .gitlab-ci/run-yamllint.sh
+    - uncollapsed_section_switch shellcheck "shellcheck"
+    - .gitlab-ci/run-shellcheck.sh
+    - section_end
   rules:
     - !reference [.disable-farm-mr-rules, rules]
     - !reference [.never-post-merge-rules, rules]

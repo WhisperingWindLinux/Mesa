@@ -422,6 +422,21 @@ debian-android:
     - CROSS=x86_64-linux-android GALLIUM_DRIVERS=iris,virgl VULKAN_DRIVERS=amd,intel .gitlab-ci/meson/build.sh
     - .gitlab-ci/prepare-artifacts.sh
 
+debian-android-x86_64-llvm:
+  extends:
+    - .core-manual-rules
+    - .use-debian/android_build
+  stage: build-only
+  variables:
+    ANDROID_NDK_VERSION: android-ndk-r25b
+    ANDROID_SDK_VERSION: 23
+    LLVM_ROOT_PATH: /LLVM
+    LLVM_VERSION: llvmorg-18.1.8
+    LLVM_ARTIFACT_NAME: android-x86_64-llvm-20240909
+  script:
+    - .gitlab-ci/android-x86_64-llvm-build.sh
+    -  ci-fairy s3cp --token-file "${S3_JWT_FILE}" "${LLVM_ROOT_PATH}/${LLVM_ARTIFACT_NAME}.tar.zst" "https://${S3_HOST}/${S3_ANDROID_BUCKET}/${CI_PROJECT_PATH}/${LLVM_ARTIFACT_NAME}.tar.zst"
+
 .meson-cross:
   extends:
     - .meson-build

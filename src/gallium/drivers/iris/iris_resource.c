@@ -1107,7 +1107,8 @@ iris_resource_create_for_image(struct pipe_screen *pscreen,
                                const struct pipe_resource *templ,
                                const uint64_t *modifiers,
                                int modifiers_count,
-                               unsigned row_pitch_B)
+                               unsigned row_pitch_B,
+                               bool no_compression)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
    const struct intel_device_info *devinfo = screen->devinfo;
@@ -1149,7 +1150,22 @@ iris_resource_create_for_image(struct pipe_screen *pscreen,
 
    unsigned flags = iris_resource_alloc_flags(screen, templ, res);
 
-   if (iris_resource_image_is_pat_compressible(screen, templ, res, flags))
+   /* The no_compression flag is not for general compression control but a
+    * special purpose. We need to create a new uncompressed image from a
+    * compressed image to achieve a resolve on Xe2+ platforms. This flag is
+    * used in iris_reallocate_resource_inplace() to disable the compression on
+    * the destination image.
+    */
+   if (no_compression) {
+      /* This flag can only be true on images being created without a Xe2
+       * modifier that supports compression. Xe2 CCS modifiers are always
+       * with compression enabled. Otherwise, they shouldn't be present at
+       * all from isl.
+       */
+      assert(devinfo->ver >= 20);
+      assert(!res->mod_info ||
+             !isl_drm_modifier_has_aux(res->mod_info->modifier));
+   } else if (iris_resource_image_is_pat_compressible(screen, templ, res, flags))
       flags |= BO_ALLOC_COMPRESSED;
 
    /* These are for u_upload_mgr buffers only */
@@ -1217,7 +1233,7 @@ iris_resource_create_with_modifiers(struct pipe_screen *pscreen,
                                     int modifier_count)
 {
    return iris_resource_create_for_image(pscreen, templ, modifiers,
-                                         modifier_count, 0);
+                                         modifier_count, 0, false);
 }
 
 static struct pipe_resource *
@@ -1579,7 +1595,9 @@ iris_reallocate_resource_inplace(struct iris_context *ice,
    struct pipe_resource templ = old_res->base.b;
    templ.bind |= new_bind_flag;
 
-   struct iris_resource *new_res =
+   struct iris_screen *screen = (struct iris_screen *)pscreen;
+   struct iris_resource *new_res = screen->devinfo->ver >= 20 ?
+      iris_resource_create_for_image(pscreen, &templ, 0, 0, 0, true) :
       (void *) pscreen->resource_create(pscreen, &templ);
 
    assert(iris_bo_is_real(new_res->bo));
@@ -2131,7 +2149,12 @@ iris_map_copy_region(struct iris_transfer *map)
 #endif
 
       map->staging =
-         iris_resource_create_for_image(pscreen, &templ, NULL, 0, row_pitch_B);
+         iris_resource_create_for_image(pscreen,
+                                        &templ,
+                                        NULL,
+                                        0,
+                                        row_pitch_B,
+                                        false);
    }
 
    /* If we fail to create a staging resource, the caller will fallback

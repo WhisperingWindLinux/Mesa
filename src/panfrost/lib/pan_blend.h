@@ -157,7 +157,8 @@ void pan_blend_shader_cache_cleanup(struct pan_blend_shader_cache *cache);
 
 nir_shader *GENX(pan_blend_create_shader)(const struct pan_blend_state *state,
                                           nir_alu_type src0_type,
-                                          nir_alu_type src1_type, unsigned rt);
+                                          nir_alu_type src1_type, unsigned rt,
+                                          bool alpha_to_one);
 
 #if PAN_ARCH >= 6
 uint64_t GENX(pan_blend_get_internal_desc)(enum pipe_format fmt, unsigned rt,
@@ -171,7 +172,7 @@ bool GENX(pan_inline_rt_conversion)(nir_shader *s, enum pipe_format *formats);
  */
 struct pan_blend_shader_variant *GENX(pan_blend_get_shader_locked)(
    struct pan_blend_shader_cache *cache, const struct pan_blend_state *state,
-   nir_alu_type src0_type, nir_alu_type src1_type, unsigned rt);
+   nir_alu_type src0_type, nir_alu_type src1_type, unsigned rt, bool alpha_to_one);
 #endif
 
 #endif

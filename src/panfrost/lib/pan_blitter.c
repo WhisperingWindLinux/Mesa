@@ -376,7 +376,8 @@ pan_blitter_get_blend_shaders(struct pan_blitter_cache *cache,
       struct pan_blend_shader_variant *b = GENX(pan_blend_get_shader_locked)(
          cache->blend_shader_cache, &blend_state, blit_shader->blend_types[i],
          nir_type_float32, /* unused */
-         i);
+         i,
+         false);
 
       assert(b->work_reg_count <= 4);
       struct panfrost_ptr bin =

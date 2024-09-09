@@ -553,7 +553,11 @@ radv_enc_spec_misc_h264(struct radv_cmd_buffer *cmd_buffer, const struct VkVideo
    radeon_emit(cs, vk_video_get_h264_level(sps->level_idc));
 
    if (pdev->enc_hw_ver >= RADV_VIDEO_ENC_HW_3) {
-      radeon_emit(cs, 0);                        // v3 b_picture_enabled
+      bool b_pic_enabled = false;
+      if (sps->pSequenceParameterSetVui) {
+         b_pic_enabled= !!sps->pSequenceParameterSetVui->max_num_reorder_frames;
+      }
+      radeon_emit(cs, b_pic_enabled);  // v3 b_picture_enabled
       radeon_emit(cs, pps->weighted_bipred_idc); // v3 weighted bipred idc
    }
 
@@ -1426,11 +1430,26 @@ radv_enc_params(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInfoKHR *
 }
 
 static void
-radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer)
+radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer,
+                     const VkVideoEncodeInfoKHR *enc_info)
 {
+   const struct VkVideoEncodeH264PictureInfoKHR *h264_picture_info =
+      vk_find_struct_const(enc_info->pNext, VIDEO_ENCODE_H264_PICTURE_INFO_KHR);
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radeon_cmdbuf *cs = cmd_buffer->cs;
+   const StdVideoEncodeH264PictureInfo *h264_pic = h264_picture_info ? h264_picture_info->pStdPictureInfo : NULL;
+   unsigned slot_idx_1 = 0xffffffff;
+
+   if (h264_pic) {
+      switch (h264_pic->primary_pic_type) {
+      case STD_VIDEO_H264_PICTURE_TYPE_B:
+         slot_idx_1 = enc_info->pReferenceSlots[1].slotIndex;
+         break;
+      default:
+         break;
+      }
+   }
    ENC_BEGIN;
    radeon_emit(cs, pdev->vcn_enc_cmds.enc_params_h264);
 
@@ -1453,7 +1472,7 @@ radv_enc_params_h264(struct radv_cmd_buffer *cmd_buffer)
       radeon_emit(cs, 0);          // l0 ref pic1 is long term
       radeon_emit(cs, 0);          // l0 ref pic1 picture structure
       radeon_emit(cs, 0);          // l0 ref pic1 pic order cnt
-      radeon_emit(cs, 0xffffffff); // l1 ref pic0 index
+      radeon_emit(cs, slot_idx_1); // l1 ref pic0 index
       radeon_emit(cs, 0);          // l1 ref pic0 pic_type
       radeon_emit(cs, 0);          // l1 ref pic0 is long term
       radeon_emit(cs, 0);          // l1 ref pic0 picture structure
@@ -1607,7 +1626,7 @@ radv_enc_headers_h264(struct radv_cmd_buffer *cmd_buffer, const VkVideoEncodeInf
 {
    radv_enc_slice_header(cmd_buffer, enc_info);
    radv_enc_params(cmd_buffer, enc_info);
-   radv_enc_params_h264(cmd_buffer);
+   radv_enc_params_h264(cmd_buffer, enc_info);
 }
 
 static void

@@ -154,15 +154,34 @@ update_alu(delay_ctx& ctx, bool is_valu, bool is_trans, int cycles)
 void
 kill_alu(alu_delay_info& delay, Instruction* instr, delay_ctx& ctx)
 {
-   if (parse_depctr_wait(instr).va_vdst == 0) {
+   depctr_wait wait = parse_depctr_wait(instr);
+
+   int8_t implict_cycles = 0;
+   if (!wait.va_vdst || !wait.va_sdst || !wait.va_vcc || !wait.sa_sdst || !wait.sa_exec ||
+       !wait.va_exec) {
       std::map<PhysReg, alu_delay_info>::iterator it = ctx.gpr_map.begin();
       while (it != ctx.gpr_map.end()) {
          alu_delay_info& entry = it->second;
-         entry.valu_instrs = alu_delay_info::valu_nop;
-         entry.trans_instrs = alu_delay_info::trans_nop;
+         bool wait_valu = !wait.va_vdst || (it->first < vcc && !wait.va_sdst) ||
+                          (it->first >= vcc && it->first <= vcc_hi && !wait.va_vcc) ||
+                          (it->first >= exec && it->first <= exec_hi && !wait.va_exec);
+         if (wait_valu) {
+            implict_cycles = MAX3(implict_cycles, entry.valu_cycles, entry.trans_cycles);
+            entry.valu_instrs = alu_delay_info::valu_nop;
+            entry.trans_instrs = alu_delay_info::trans_nop;
+         }
+         bool wait_salu = ((it->first <= vcc_hi || it->first == scc) && !wait.sa_sdst) ||
+                          (it->first >= exec && it->first <= exec_hi && !wait.sa_exec);
+         if (wait_salu) {
+            implict_cycles = MAX2(implict_cycles, entry.salu_cycles);
+            entry.salu_cycles = 0;
+         }
          it = it->second.fixup() ? ctx.gpr_map.erase(it) : std::next(it);
       }
    }
+
+   if (implict_cycles != 0)
+      update_alu(ctx, false, false, implict_cycles);
 
    if (instr->isVALU() || instr->isSALU())
       check_alu(ctx, delay, instr);

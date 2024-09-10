@@ -209,6 +209,7 @@ struct radv_descriptor_state {
    uint32_t dynamic_buffers[4 * MAX_DYNAMIC_BUFFERS];
    uint64_t descriptor_buffers[MAX_SETS];
    bool need_indirect_descriptor_sets;
+   uint64_t indirect_descriptor_sets_va;
 };
 
 struct radv_push_constant_state {
@@ -799,5 +800,8 @@ void radv_get_vbo_info(const struct radv_cmd_buffer *cmd_buffer, uint32_t vbo_id
 
 void radv_emit_compute_shader(const struct radv_physical_device *pdev, struct radeon_cmdbuf *cs,
                               const struct radv_shader *shader);
+
+void radv_upload_indirect_descriptor_sets(struct radv_cmd_buffer *cmd_buffer,
+                                          struct radv_descriptor_state *descriptors_state);
 
 #endif /* RADV_CMD_BUFFER_H */

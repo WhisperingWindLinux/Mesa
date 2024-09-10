@@ -9,6 +9,15 @@
 
 namespace aco {
 
+namespace {
+bool
+has_arbitrary_fixed_operands(Instruction* instr)
+{
+   return instr->opcode == aco_opcode::p_return || instr->opcode == aco_opcode::p_jump_to_epilog ||
+          instr->opcode == aco_opcode::p_end_with_regs;
+}
+} // namespace
+
 RegisterDemand
 get_live_changes(Instruction* instr)
 {
@@ -35,6 +44,28 @@ get_additional_operand_demand(Instruction* instr)
    int op_idx = get_op_fixed_to_def(instr);
    if (op_idx != -1 && !instr->operands[op_idx].isKill())
       additional_demand += instr->definitions[0].getTemp();
+
+   if (!has_arbitrary_fixed_operands(instr))
+      return additional_demand;
+
+   for (Operand op : instr->operands) {
+      if (op.isTemp() && op.isFixed() && !op.isFirstKill()) {
+         for (Operand op2 : instr->operands) {
+            if (!op2.isTemp())
+               continue;
+            if (op2 == op)
+               break;
+
+            /* The operand needs to reside in two different registers at the same time: A copy will
+             * be necessary.
+             */
+            if (op2.tempId() == op.tempId() && op2.isFixed() && op2.physReg() != op.physReg()) {
+               additional_demand += op.getTemp();
+               break;
+            }
+         }
+      }
+   }
 
    return additional_demand;
 }
@@ -176,6 +207,14 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
       if (is_phi(insn))
          break;
 
+      unsigned linear_vgpr_demand = 0;
+
+      if (has_arbitrary_fixed_operands(insn)) {
+         for (unsigned t : live) {
+            if (ctx.program->temp_rc[t].is_linear_vgpr())
+               linear_vgpr_demand += ctx.program->temp_rc[t].size();
+         }
+      }
       ctx.program->needs_vcc |= instr_needs_vcc(insn);
       insn->register_demand = RegisterDemand(new_demand.vgpr, new_demand.sgpr);
 
@@ -191,6 +230,10 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
          }
          if (definition.isFixed() && definition.physReg() == vcc)
             ctx.program->needs_vcc = true;
+         if (has_arbitrary_fixed_operands(insn) && definition.isFixed() &&
+             definition.regClass().type() == RegType::vgpr)
+            block->register_demand.update(
+               RegisterDemand((int16_t)(definition.physReg().reg() - 256 + linear_vgpr_demand), 0));
 
          const Temp temp = definition.getTemp();
          const size_t n = live.erase(temp.id());
@@ -258,18 +301,23 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
             continue;
          if (operand.isFixed() && operand.physReg() == vcc)
             ctx.program->needs_vcc = true;
-         const Temp temp = operand.getTemp();
-         const bool inserted = live.insert(temp.id()).second;
-         if (inserted) {
-            operand.setFirstKill(true);
-            for (unsigned j = i + 1; j < insn->operands.size(); ++j) {
-               if (insn->operands[j].isTemp() && insn->operands[j].tempId() == operand.tempId()) {
-                  insn->operands[j].setFirstKill(false);
-                  insn->operands[j].setKill(true);
+         if (has_arbitrary_fixed_operands(insn) && operand.isFixed() &&
+                operand.regClass().type() == RegType::vgpr)
+               block->register_demand.update(
+                  RegisterDemand((int16_t)(operand.physReg().reg() - 256 + linear_vgpr_demand), 0));
+            const Temp temp = operand.getTemp();
+            const bool inserted = live.insert(temp.id()).second;
+            if (inserted) {
+               operand.setFirstKill(true);
+               for (unsigned j = i + 1; j < insn->operands.size(); ++j) {
+                  if (insn->operands[j].isTemp() &&
+                      insn->operands[j].tempId() == operand.tempId()) {
+                     insn->operands[j].setFirstKill(false);
+                     insn->operands[j].setKill(true);
+                  }
                }
-            }
-            if (operand.isLateKill())
-               insn->register_demand += temp;
+               if (operand.isLateKill())
+                  insn->register_demand += temp;
             new_demand += temp;
          }
       }

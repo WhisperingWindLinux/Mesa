@@ -409,7 +409,7 @@ radv_shader_spirv_to_nir(struct radv_device *device, const struct radv_shader_st
        */
       NIR_PASS(_, nir, nir_lower_variable_initializers, ~0);
 
-      NIR_PASS(_, nir, radv_nir_lower_cooperative_matrix, subgroup_size);
+      NIR_PASS(_, nir, radv_nir_lower_cooperative_matrix, subgroup_size, pdev->info.gfx_level);
 
       /* Split member structs.  We do this before lower_io_to_temporaries so that
        * it doesn't lower system values to temporaries by accident.

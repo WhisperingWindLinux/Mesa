@@ -485,7 +485,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_acceleration_structure = radv_enable_rt(pdev, false),
       .KHR_calibrated_timestamps = radv_calibrated_timestamps_enabled(pdev),
       .KHR_compute_shader_derivatives = true,
-      .KHR_cooperative_matrix = pdev->info.gfx_level >= GFX11 && !pdev->use_llvm,
+      .KHR_cooperative_matrix = pdev->info.gfx_level >= GFX8 && !pdev->use_llvm,
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_copy_commands2 = true,
@@ -1183,8 +1183,8 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .deviceGeneratedComputeCaptureReplay = false,
 
       /* VK_KHR_cooperative_matrix */
-      .cooperativeMatrix = pdev->info.gfx_level >= GFX11 && !pdev->use_llvm,
-      .cooperativeMatrixRobustBufferAccess = pdev->info.gfx_level >= GFX11 && !pdev->use_llvm,
+      .cooperativeMatrix = pdev->info.gfx_level >= GFX8 && !pdev->use_llvm,
+      .cooperativeMatrixRobustBufferAccess = pdev->info.gfx_level >= GFX8 && !pdev->use_llvm,
 
       /* VK_EXT_image_compression_control */
       .imageCompressionControl = true,

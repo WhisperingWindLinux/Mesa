@@ -381,6 +381,7 @@ llvmpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_POST_DEPTH_COVERAGE:
    case PIPE_CAP_SHADER_CLOCK:
    case PIPE_CAP_PACKED_UNIFORMS:
+   case PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED:
       return 1;
    case PIPE_CAP_SYSTEM_SVM:
       return 1;

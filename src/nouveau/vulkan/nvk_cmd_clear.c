@@ -329,7 +329,7 @@ nvk_CmdClearColorImage(VkCommandBuffer commandBuffer,
    if (vk_format == VK_FORMAT_R64_UINT || vk_format == VK_FORMAT_R64_SINT)
       vk_format = VK_FORMAT_R32G32_UINT;
 
-   enum pipe_format p_format = vk_format_to_pipe_format(vk_format);
+   enum pipe_format p_format = nvk_format_to_pipe_format(vk_format);
    assert(p_format != PIPE_FORMAT_NONE);
 
    if (!nil_format_supports_color_targets(&pdev->info, p_format)) {

@@ -22,6 +22,9 @@ use spirv::SpirvKernelInfo;
 use std::cmp;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::fmt::Debug;
+use std::fmt::Display;
+use std::ops::Index;
 use std::os::raw::c_void;
 use std::ptr;
 use std::slice;
@@ -176,30 +179,6 @@ impl KernelArg {
         res
     }
 
-    fn assign_locations(
-        args: &mut [Self],
-        compiled_args: &mut [CompiledKernelArg],
-        nir: &mut NirShader,
-    ) {
-        for var in nir.variables_with_mode(
-            nir_variable_mode::nir_var_uniform | nir_variable_mode::nir_var_image,
-        ) {
-            let arg = &mut compiled_args[var.data.location as usize];
-            if let CompiledKernelArgType::APIArg(idx) = arg.kind {
-                args[idx as usize].dead = false;
-            }
-
-            let t = var.type_;
-            arg.offset = if unsafe {
-                glsl_type_is_image(t) || glsl_type_is_texture(t) || glsl_type_is_sampler(t)
-            } {
-                var.data.binding
-            } else {
-                var.data.driver_location
-            };
-        }
-    }
-
     fn serialize(args: &[Self], blob: &mut blob) {
         unsafe {
             blob_write_uint16(blob, args.len() as u16);
@@ -240,14 +219,34 @@ struct CompiledKernelArg {
     /// The binding for image/sampler args, the offset into the input buffer
     /// for anything else.
     offset: u32,
+    dead: bool,
 }
 
 impl CompiledKernelArg {
+    fn assign_locations(compiled_args: &mut [Self], nir: &mut NirShader) {
+        for var in nir.variables_with_mode(
+            nir_variable_mode::nir_var_uniform | nir_variable_mode::nir_var_image,
+        ) {
+            let arg = &mut compiled_args[var.data.location as usize];
+            let t = var.type_;
+
+            arg.dead = false;
+            arg.offset = if unsafe {
+                glsl_type_is_image(t) || glsl_type_is_texture(t) || glsl_type_is_sampler(t)
+            } {
+                var.data.binding
+            } else {
+                var.data.driver_location
+            };
+        }
+    }
+
     fn serialize(args: &[Self], blob: &mut blob) {
         unsafe {
             blob_write_uint16(blob, args.len() as u16);
             for arg in args {
                 blob_write_uint32(blob, arg.offset);
+                blob_write_uint8(blob, arg.dead.into());
                 match arg.kind {
                     CompiledKernelArgType::ConstantBuffer => blob_write_uint8(blob, 0),
                     CompiledKernelArgType::GlobalWorkOffsets => blob_write_uint8(blob, 1),
@@ -280,6 +279,7 @@ impl CompiledKernelArg {
 
             for _ in 0..len {
                 let offset = blob_read_uint32(blob);
+                let dead = blob_read_uint8(blob) != 0;
 
                 let kind = match blob_read_uint8(blob) {
                     0 => CompiledKernelArgType::ConstantBuffer,
@@ -307,6 +307,7 @@ impl CompiledKernelArg {
                 res.push(Self {
                     kind: kind,
                     offset: offset,
+                    dead: dead,
                 });
             }
 
@@ -320,6 +321,7 @@ pub struct KernelInfo {
     pub args: Vec<KernelArg>,
     pub attributes_string: String,
     work_group_size: [usize; 3],
+    work_group_size_hint: [u32; 3],
     subgroup_size: usize,
     num_subgroups: usize,
 }
@@ -357,7 +359,63 @@ enum KernelDevStateVariant {
     Nir(NirShader),
 }
 
-pub struct NirKernelBuild {
+#[derive(Debug, PartialEq)]
+enum NirKernelVariant {
+    /// Can be used under any circumstance.
+    Default,
+
+    /// Optimized variant making the following assumptions:
+    ///  - global_id_offsets are 0
+    ///  - workgroup_offsets are 0
+    ///  - local_size is info.local_size_hint
+    Optimized,
+}
+
+impl Display for NirKernelVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // this simply prints the enum name, so that's fine
+        Debug::fmt(self, f)
+    }
+}
+
+pub struct NirKernelBuilds {
+    default_build: NirKernelBuild,
+    optimized: Option<NirKernelBuild>,
+    /// merged info with worst case values
+    info: pipe_compute_state_object_info,
+}
+
+impl Index<NirKernelVariant> for NirKernelBuilds {
+    type Output = NirKernelBuild;
+
+    fn index(&self, index: NirKernelVariant) -> &Self::Output {
+        match index {
+            NirKernelVariant::Default => &self.default_build,
+            NirKernelVariant::Optimized => self.optimized.as_ref().unwrap_or(&self.default_build),
+        }
+    }
+}
+
+impl NirKernelBuilds {
+    fn new(default_build: NirKernelBuild, optimized: Option<NirKernelBuild>) -> Self {
+        let mut info = default_build.info;
+        if let Some(build) = &optimized {
+            info.max_threads = cmp::min(info.max_threads, build.info.max_threads);
+            info.simd_sizes &= build.info.simd_sizes;
+            info.private_memory = cmp::max(info.private_memory, build.info.private_memory);
+            info.preferred_simd_size =
+                cmp::max(info.preferred_simd_size, build.info.preferred_simd_size);
+        }
+
+        Self {
+            default_build: default_build,
+            optimized: optimized,
+            info: info,
+        }
+    }
+}
+
+struct NirKernelBuild {
     nir_or_cso: KernelDevStateVariant,
     constant_buffer: Option<Arc<PipeResource>>,
     info: pipe_compute_state_object_info,
@@ -372,19 +430,15 @@ unsafe impl Send for NirKernelBuild {}
 unsafe impl Sync for NirKernelBuild {}
 
 impl NirKernelBuild {
-    fn new(
-        dev: &'static Device,
-        mut nir: NirShader,
-        compiled_args: Vec<CompiledKernelArg>,
-    ) -> Self {
-        let cso = CSOWrapper::new(dev, &nir);
+    fn new(dev: &'static Device, mut out: CompilationResult) -> Self {
+        let cso = CSOWrapper::new(dev, &out.nir);
         let info = cso.get_cso_info();
-        let cb = Self::create_nir_constant_buffer(dev, &nir);
-        let shared_size = nir.shared_size() as u64;
-        let printf_info = nir.take_printf_info();
+        let cb = Self::create_nir_constant_buffer(dev, &out.nir);
+        let shared_size = out.nir.shared_size() as u64;
+        let printf_info = out.nir.take_printf_info();
 
         let nir_or_cso = if !dev.shareable_shaders() {
-            KernelDevStateVariant::Nir(nir)
+            KernelDevStateVariant::Nir(out.nir)
         } else {
             KernelDevStateVariant::Cso(cso)
         };
@@ -395,7 +449,7 @@ impl NirKernelBuild {
             info: info,
             shared_size: shared_size,
             printf_info: printf_info,
-            compiled_args: compiled_args,
+            compiled_args: out.compiled_args,
         }
     }
 
@@ -426,7 +480,7 @@ pub struct Kernel {
     pub prog: Arc<Program>,
     pub name: String,
     values: Mutex<Vec<Option<KernelArgValue>>>,
-    builds: HashMap<&'static Device, Arc<NirKernelBuild>>,
+    builds: HashMap<&'static Device, Arc<NirKernelBuilds>>,
     pub kernel_info: Arc<KernelInfo>,
 }
 
@@ -443,6 +497,33 @@ where
     }
 
     Ok(res)
+}
+
+#[derive(Clone)]
+struct CompilationResult {
+    nir: NirShader,
+    compiled_args: Vec<CompiledKernelArg>,
+}
+
+impl CompilationResult {
+    fn deserialize(reader: &mut blob_reader, d: &Device) -> Option<Self> {
+        let nir = NirShader::deserialize(
+            reader,
+            d.screen()
+                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE),
+        )?;
+        let compiled_args = CompiledKernelArg::deserialize(reader)?;
+
+        Some(Self {
+            nir: nir,
+            compiled_args,
+        })
+    }
+
+    fn serialize(&self, blob: &mut blob) {
+        self.nir.serialize(blob);
+        CompiledKernelArg::serialize(&self.compiled_args, blob);
+    }
 }
 
 fn opt_nir(nir: &mut NirShader, dev: &Device, has_explicit_types: bool) {
@@ -521,36 +602,17 @@ unsafe extern "C" fn can_remove_var(var: *mut nir_variable, _: *mut c_void) -> b
     }
 }
 
-fn lower_and_optimize_nir(
+const DV_OPTS: nir_remove_dead_variables_options = nir_remove_dead_variables_options {
+    can_remove_var: Some(can_remove_var),
+    can_remove_var_data: ptr::null_mut(),
+};
+
+fn compile_nir_to_args(
     dev: &Device,
-    nir: &mut NirShader,
+    mut nir: NirShader,
     args: &[spirv::SPIRVKernelArg],
     lib_clc: &NirShader,
-) -> (Vec<KernelArg>, Vec<CompiledKernelArg>) {
-    let address_bits_ptr_type;
-    let address_bits_base_type;
-    let global_address_format;
-    let shared_address_format;
-
-    if dev.address_bits() == 64 {
-        address_bits_ptr_type = unsafe { glsl_uint64_t_type() };
-        address_bits_base_type = glsl_base_type::GLSL_TYPE_UINT64;
-        global_address_format = nir_address_format::nir_address_format_64bit_global;
-        shared_address_format = nir_address_format::nir_address_format_32bit_offset_as_64bit;
-    } else {
-        address_bits_ptr_type = unsafe { glsl_uint_type() };
-        address_bits_base_type = glsl_base_type::GLSL_TYPE_UINT;
-        global_address_format = nir_address_format::nir_address_format_32bit_global;
-        shared_address_format = nir_address_format::nir_address_format_32bit_offset;
-    }
-
-    let mut lower_state = rusticl_lower_state::default();
-    let nir_options = unsafe {
-        &*dev
-            .screen
-            .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
-    };
-
+) -> (Vec<KernelArg>, NirShader) {
     // this is a hack until we support fp16 properly and check for denorms inside vstore/vload_half
     nir.preserve_fp16_denorms();
 
@@ -590,19 +652,17 @@ fn lower_and_optimize_nir(
     };
     nir_pass!(nir, nir_lower_printf, &printf_opts);
 
-    opt_nir(nir, dev, false);
+    opt_nir(&mut nir, dev, false);
 
-    let mut args = KernelArg::from_spirv_nir(args, nir);
+    (KernelArg::from_spirv_nir(args, &mut nir), nir)
+}
 
-    // add all API kernel args
-    let mut compiled_args: Vec<_> = (0..args.len())
-        .map(|idx| CompiledKernelArg {
-            kind: CompiledKernelArgType::APIArg(idx as u32),
-            offset: 0,
-        })
-        .collect();
-
-    // asign locations for inline samplers.
+fn compile_nir_prepare_for_variants(
+    dev: &Device,
+    nir: &mut NirShader,
+    compiled_args: &mut Vec<CompiledKernelArg>,
+) {
+    // assign locations for inline samplers.
     // IMPORTANT: this needs to happen before nir_remove_dead_variables.
     let mut last_loc = -1;
     for v in nir
@@ -624,16 +684,13 @@ fn lower_and_optimize_nir(
                     s.normalized_coordinates(),
                 )),
                 offset: 0,
+                dead: true,
             });
         } else {
             last_loc = v.data.location;
         }
     }
 
-    let dv_opts = nir_remove_dead_variables_options {
-        can_remove_var: Some(can_remove_var),
-        can_remove_var_data: ptr::null_mut(),
-    };
     nir_pass!(
         nir,
         nir_remove_dead_variables,
@@ -642,7 +699,7 @@ fn lower_and_optimize_nir(
             | nir_variable_mode::nir_var_mem_constant
             | nir_variable_mode::nir_var_mem_shared
             | nir_variable_mode::nir_var_function_temp,
-        &dv_opts,
+        &DV_OPTS,
     );
 
     nir_pass!(nir, nir_lower_readonly_images_to_tex, true);
@@ -663,12 +720,60 @@ fn lower_and_optimize_nir(
     // has to run before adding internal kernel arguments
     nir.extract_constant_initializers();
 
-    // run before gather info
+    // needed to convert variables to load intrinsics
     nir_pass!(nir, nir_lower_system_values);
+
+    // Run here so we can decide if it makes sense to compile a variant, e.g. read system values.
+    nir.gather_info();
+}
+
+fn compile_nir_variant(
+    res: &mut CompilationResult,
+    dev: &Device,
+    variant: NirKernelVariant,
+    args: &[KernelArg],
+    name: &str,
+) {
+    let mut lower_state = rusticl_lower_state::default();
+    let compiled_args = &mut res.compiled_args;
+    let nir = &mut res.nir;
+
+    let address_bits_ptr_type;
+    let address_bits_base_type;
+    let global_address_format;
+    let shared_address_format;
+
+    if dev.address_bits() == 64 {
+        address_bits_ptr_type = unsafe { glsl_uint64_t_type() };
+        address_bits_base_type = glsl_base_type::GLSL_TYPE_UINT64;
+        global_address_format = nir_address_format::nir_address_format_64bit_global;
+        shared_address_format = nir_address_format::nir_address_format_32bit_offset_as_64bit;
+    } else {
+        address_bits_ptr_type = unsafe { glsl_uint_type() };
+        address_bits_base_type = glsl_base_type::GLSL_TYPE_UINT;
+        global_address_format = nir_address_format::nir_address_format_32bit_global;
+        shared_address_format = nir_address_format::nir_address_format_32bit_offset;
+    }
+
+    let nir_options = unsafe {
+        &*dev
+            .screen
+            .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
+    };
+
+    if variant == NirKernelVariant::Optimized {
+        let wgsh = nir.workgroup_size_hint();
+        if wgsh != [0; 3] {
+            nir.set_workgroup_size(wgsh);
+        }
+    }
+
     let mut compute_options = nir_lower_compute_system_values_options::default();
-    compute_options.set_has_base_global_invocation_id(true);
-    compute_options.set_has_base_workgroup_id(true);
     compute_options.set_has_global_size(true);
+    if variant != NirKernelVariant::Optimized {
+        compute_options.set_has_base_global_invocation_id(true);
+        compute_options.set_has_base_workgroup_id(true);
+    }
     nir_pass!(nir, nir_lower_compute_system_values, &compute_options);
     nir.gather_info();
 
@@ -681,6 +786,7 @@ fn lower_and_optimize_nir(
         compiled_args.push(CompiledKernelArg {
             kind: kind,
             offset: 0,
+            dead: true,
         });
         nir.add_var(
             nir_variable_mode::nir_var_uniform,
@@ -691,6 +797,7 @@ fn lower_and_optimize_nir(
     };
 
     if nir.reads_sysval(gl_system_value::SYSTEM_VALUE_BASE_GLOBAL_INVOCATION_ID) {
+        debug_assert_ne!(variant, NirKernelVariant::Optimized);
         add_var(
             nir,
             &mut lower_state.base_global_invoc_id_loc,
@@ -711,6 +818,7 @@ fn lower_and_optimize_nir(
     }
 
     if nir.reads_sysval(gl_system_value::SYSTEM_VALUE_BASE_WORKGROUP_ID) {
+        debug_assert_ne!(variant, NirKernelVariant::Optimized);
         add_var(
             nir,
             &mut lower_state.base_workgroup_id_loc,
@@ -803,7 +911,7 @@ fn lower_and_optimize_nir(
         nir,
         nir_remove_dead_variables,
         nir_variable_mode::nir_var_function_temp | nir_variable_mode::nir_var_mem_shared,
-        &dv_opts,
+        &DV_OPTS,
     );
     nir_pass!(
         nir,
@@ -846,24 +954,88 @@ fn lower_and_optimize_nir(
     /* before passing it into drivers, assign locations as drivers might remove nir_variables or
      * other things we depend on
      */
-    KernelArg::assign_locations(&mut args, &mut compiled_args, nir);
+    CompiledKernelArg::assign_locations(compiled_args, nir);
 
     /* update the has_variable_shared_mem info as we might have DCEed all of them */
-    nir.set_has_variable_shared_mem(
-        args.iter()
-            .any(|arg| arg.kind == KernelArgType::MemLocal && !arg.dead),
-    );
-    dev.screen.finalize_nir(nir);
+    nir.set_has_variable_shared_mem(compiled_args.iter().any(|arg| {
+        if let CompiledKernelArgType::APIArg(idx) = arg.kind {
+            args[idx as usize].kind == KernelArgType::MemLocal && !arg.dead
+        } else {
+            false
+        }
+    }));
+
+    if Platform::dbg().nir {
+        eprintln!("=== Printing nir variant '{variant}' for '{name}' before driver finalization");
+        nir.print();
+    }
+
+    if dev.screen.finalize_nir(nir) {
+        if Platform::dbg().nir {
+            eprintln!(
+                "=== Printing nir variant '{variant}' for '{name}' after driver finalization"
+            );
+            nir.print();
+        }
+    }
 
     nir_pass!(nir, nir_opt_dce);
     nir.sweep_mem();
+}
 
-    (args, compiled_args)
+fn compile_nir_remaining(
+    dev: &Device,
+    mut nir: NirShader,
+    args: &[KernelArg],
+    name: &str,
+) -> (CompilationResult, Option<CompilationResult>) {
+    // add all API kernel args
+    let mut compiled_args: Vec<_> = (0..args.len())
+        .map(|idx| CompiledKernelArg {
+            kind: CompiledKernelArgType::APIArg(idx as u32),
+            offset: 0,
+            dead: true,
+        })
+        .collect();
+
+    compile_nir_prepare_for_variants(dev, &mut nir, &mut compiled_args);
+    if Platform::dbg().nir {
+        eprintln!("=== Printing nir for '{name}' before specialization");
+        nir.print();
+    }
+
+    let mut default_build = CompilationResult {
+        nir: nir,
+        compiled_args: compiled_args,
+    };
+
+    // check if we even want to compile a variant before cloning the compilation state
+    let has_wgs_hint = default_build.nir.workgroup_size_variable()
+        && default_build.nir.workgroup_size_hint() != [0; 3];
+    let has_offsets = default_build
+        .nir
+        .reads_sysval(gl_system_value::SYSTEM_VALUE_GLOBAL_INVOCATION_ID);
+
+    let mut optimized = (!Platform::dbg().no_variants && (has_offsets || has_wgs_hint))
+        .then(|| default_build.clone());
+
+    compile_nir_variant(
+        &mut default_build,
+        dev,
+        NirKernelVariant::Default,
+        args,
+        name,
+    );
+    if let Some(optimized) = &mut optimized {
+        compile_nir_variant(optimized, dev, NirKernelVariant::Optimized, args, name);
+    }
+
+    (default_build, optimized)
 }
 
 pub struct SPIRVToNirResult {
     pub kernel_info: KernelInfo,
-    pub nir_kernel_build: NirKernelBuild,
+    pub nir_kernel_builds: NirKernelBuilds,
 }
 
 impl SPIRVToNirResult {
@@ -871,21 +1043,31 @@ impl SPIRVToNirResult {
         dev: &'static Device,
         kernel_info: &clc_kernel_info,
         args: Vec<KernelArg>,
-        compiled_args: Vec<CompiledKernelArg>,
-        nir: NirShader,
+        default_build: CompilationResult,
+        optimized: Option<CompilationResult>,
     ) -> Self {
+        // TODO: we _should_ be able to parse them out of the SPIR-V, but clc doesn't handle
+        //       indirections yet.
+        let nir = &default_build.nir;
         let wgs = nir.workgroup_size();
+        let subgroup_size = nir.subgroup_size();
+        let num_subgroups = nir.num_subgroups();
+
+        let default_build = NirKernelBuild::new(dev, default_build);
+        let optimized = optimized.map(|opt| NirKernelBuild::new(dev, opt));
+
         let kernel_info = KernelInfo {
             args: args,
             attributes_string: kernel_info.attribute_str(),
             work_group_size: [wgs[0] as usize, wgs[1] as usize, wgs[2] as usize],
-            subgroup_size: nir.subgroup_size() as usize,
-            num_subgroups: nir.num_subgroups() as usize,
+            work_group_size_hint: kernel_info.local_size_hint,
+            subgroup_size: subgroup_size as usize,
+            num_subgroups: num_subgroups as usize,
         };
 
         Self {
             kernel_info: kernel_info,
-            nir_kernel_build: NirKernelBuild::new(dev, nir, compiled_args),
+            nir_kernel_builds: NirKernelBuilds::new(default_build, optimized),
         }
     }
 
@@ -895,20 +1077,20 @@ impl SPIRVToNirResult {
             blob_reader_init(&mut reader, bin.as_ptr().cast(), bin.len());
         }
 
-        let nir = NirShader::deserialize(
-            &mut reader,
-            d.screen()
-                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE),
-        )?;
         let args = KernelArg::deserialize(&mut reader)?;
-        let compiled_args = CompiledKernelArg::deserialize(&mut reader)?;
+        let default_build = CompilationResult::deserialize(&mut reader, d)?;
+
+        let optimized = match unsafe { blob_read_uint8(&mut reader) } {
+            0 => None,
+            _ => Some(CompilationResult::deserialize(&mut reader, d)?),
+        };
 
         Some(SPIRVToNirResult::new(
             d,
             kernel_info,
             args,
-            compiled_args,
-            nir,
+            default_build,
+            optimized,
         ))
     }
 
@@ -916,13 +1098,21 @@ impl SPIRVToNirResult {
     // cache that.
     fn serialize(
         blob: &mut blob,
-        nir: &NirShader,
         args: &[KernelArg],
-        compiled_args: &[CompiledKernelArg],
+        default_build: &CompilationResult,
+        optimized: &Option<CompilationResult>,
     ) {
-        nir.serialize(blob);
         KernelArg::serialize(args, blob);
-        CompiledKernelArg::serialize(compiled_args, blob);
+        default_build.serialize(blob);
+        match optimized {
+            Some(variant) => {
+                unsafe { blob_write_uint8(blob, 1) };
+                variant.serialize(blob);
+            }
+            None => unsafe {
+                blob_write_uint8(blob, 0);
+            },
+        }
     }
 }
 
@@ -941,21 +1131,40 @@ pub(super) fn convert_spirv_to_nir(
         .and_then(|cache| cache.get(&mut key?))
         .and_then(|entry| SPIRVToNirResult::deserialize(&entry, dev, spirv_info))
         .unwrap_or_else(|| {
-            let mut nir = build.to_nir(name, dev);
-            let (args, compiled_args) = lower_and_optimize_nir(dev, &mut nir, args, &dev.lib_clc);
+            let nir = build.to_nir(name, dev);
+
+            if Platform::dbg().nir {
+                eprintln!("=== Printing nir for '{name}' after spirv_to_nir");
+                nir.print();
+            }
+
+            let (mut args, nir) = compile_nir_to_args(dev, nir, args, &dev.lib_clc);
+            let (default_build, optimized) = compile_nir_remaining(dev, nir, &args, name);
+
+            for build in [Some(&default_build), optimized.as_ref()].into_iter() {
+                let Some(build) = build else {
+                    continue;
+                };
+
+                for arg in &build.compiled_args {
+                    if let CompiledKernelArgType::APIArg(idx) = arg.kind {
+                        args[idx as usize].dead &= arg.dead;
+                    }
+                }
+            }
 
             if let Some(cache) = cache {
                 let mut blob = blob::default();
                 unsafe {
                     blob_init(&mut blob);
-                    SPIRVToNirResult::serialize(&mut blob, &nir, &args, &compiled_args);
+                    SPIRVToNirResult::serialize(&mut blob, &args, &default_build, &optimized);
                     let bin = slice::from_raw_parts(blob.data, blob.size);
                     cache.put(bin, &mut key.unwrap());
                     blob_finish(&mut blob);
                 }
             }
 
-            SPIRVToNirResult::new(dev, spirv_info, args, compiled_args, nir)
+            SPIRVToNirResult::new(dev, spirv_info, args, default_build, optimized)
         })
 }
 
@@ -1057,7 +1266,7 @@ impl Kernel {
         // Clone all the data we need to execute this kernel
         let kernel_info = Arc::clone(&self.kernel_info);
         let arg_values = self.arg_values().clone();
-        let nir_kernel_build = Arc::clone(&self.builds[q.device]);
+        let nir_kernel_builds = Arc::clone(&self.builds[q.device]);
 
         // operations we want to report errors to the clients
         let mut block = create_kernel_arr::<u32>(block, 1)?;
@@ -1069,6 +1278,27 @@ impl Kernel {
         self.optimize_local_size(q.device, &mut grid, &mut block);
 
         Ok(Box::new(move |q, ctx| {
+            let hw_max_grid: Vec<usize> = q
+                .device
+                .max_grid_size()
+                .into_iter()
+                .map(|val| val.try_into().unwrap_or(usize::MAX))
+                // clamped as pipe_launch_grid::grid is only u32
+                .map(|val| cmp::min(val, u32::MAX as usize))
+                .collect();
+
+            let variant = if offsets == [0; 3]
+                && grid[0] <= hw_max_grid[0]
+                && grid[1] <= hw_max_grid[1]
+                && grid[2] <= hw_max_grid[2]
+                && block == kernel_info.work_group_size_hint
+            {
+                NirKernelVariant::Optimized
+            } else {
+                NirKernelVariant::Default
+            };
+
+            let nir_kernel_build = &nir_kernel_builds[variant];
             let mut workgroup_id_offset_loc = None;
             let mut input = Vec::new();
             // Set it once so we get the alignment padding right
@@ -1313,15 +1543,6 @@ impl Kernel {
             ctx.set_shader_images(&iviews);
             ctx.set_global_binding(resources.as_slice(), &mut globals);
 
-            let hw_max_grid: Vec<usize> = q
-                .device
-                .max_grid_size()
-                .into_iter()
-                .map(|val| val.try_into().unwrap_or(usize::MAX))
-                // clamped as pipe_launch_grid::grid is only u32
-                .map(|val| cmp::min(val, u32::MAX as usize))
-                .collect();
-
             for z in 0..grid[2].div_ceil(hw_max_grid[2]) {
                 for y in 0..grid[1].div_ceil(hw_max_grid[1]) {
                     for x in 0..grid[0].div_ceil(hw_max_grid[0]) {
@@ -1489,7 +1710,8 @@ impl Kernel {
 
     pub fn local_mem_size(&self, dev: &Device) -> cl_ulong {
         // TODO include args
-        self.builds.get(dev).unwrap().shared_size as cl_ulong
+        // this is purely informational so it shouldn't even matter
+        self.builds.get(dev).unwrap()[NirKernelVariant::Default].shared_size as cl_ulong
     }
 
     pub fn has_svm_devs(&self) -> bool {
@@ -1528,7 +1750,8 @@ impl Kernel {
             *block.get(2).unwrap_or(&1) as u32,
         ];
 
-        match &self.builds.get(dev).unwrap().nir_or_cso {
+        // TODO: this _might_ bite us somewhere, but I think it probably doesn't matter
+        match &self.builds.get(dev).unwrap()[NirKernelVariant::Default].nir_or_cso {
             KernelDevStateVariant::Cso(cso) => {
                 dev.helper_ctx()
                     .compute_state_subgroup_size(cso.cso_ptr, &block) as usize

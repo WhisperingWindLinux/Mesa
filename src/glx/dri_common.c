@@ -233,9 +233,10 @@ driConvertConfigs(struct glx_config *configs, const __DRIconfig **driConfigs)
 _X_HIDDEN void
 driDestroyConfigs(const __DRIconfig **configs)
 {
-   int i;
+   if (!configs)
+      return;
 
-   for (i = 0; configs[i]; i++)
+   for (int i = 0; configs[i]; i++)
       free((__DRIconfig *) configs[i]);
    free(configs);
 }

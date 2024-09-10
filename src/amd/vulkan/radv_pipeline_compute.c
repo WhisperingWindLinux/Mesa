@@ -20,6 +20,7 @@
 #include "util/u_atomic.h"
 #include "radv_cs.h"
 #include "radv_debug.h"
+#include "radv_pipeline_binary.h"
 #include "radv_pipeline_cache.h"
 #include "radv_rmv.h"
 #include "radv_shader.h"
@@ -154,7 +155,7 @@ radv_compile_cs(struct radv_device *device, struct vk_pipeline_cache *cache, str
    return cs_shader;
 }
 
-static void
+void
 radv_compute_pipeline_hash(const struct radv_device *device, const VkComputePipelineCreateInfo *pCreateInfo,
                            unsigned char *hash)
 {
@@ -196,8 +197,9 @@ radv_compute_pipeline_compile(const VkComputePipelineCreateInfo *pCreateInfo, st
 
    /* Skip the shaders cache when any of the below are true:
     * - shaders are captured because it's for debugging purposes
+    * - binaries are captured for later uses
     */
-   if (keep_executable_info) {
+   if (keep_executable_info || (pipeline->base.create_flags & VK_PIPELINE_CREATE_2_CAPTURE_DATA_BIT_KHR)) {
       skip_shaders_cache = true;
    }
 
@@ -251,6 +253,29 @@ done:
    return result;
 }
 
+static VkResult
+radv_compute_pipeline_import_binary(struct radv_device *device, struct radv_compute_pipeline *pipeline,
+                                    const VkPipelineBinaryInfoKHR *binary_info)
+{
+   VK_FROM_HANDLE(radv_pipeline_binary, pipeline_binary, binary_info->pPipelineBinaries[0]);
+   struct radv_shader *shader;
+   struct blob_reader blob;
+
+   assert(binary_info->binaryCount == 1);
+
+   blob_reader_init(&blob, pipeline_binary->data, pipeline_binary->size);
+
+   shader = radv_shader_deserialize(device, pipeline_binary->key, sizeof(pipeline_binary->key), &blob);
+   if (!shader)
+      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+
+   pipeline->base.shaders[MESA_SHADER_COMPUTE] = shader;
+
+   pipeline->base.pipeline_hash = *(uint64_t *)pipeline_binary->key;
+
+   return VK_SUCCESS;
+}
+
 VkResult
 radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache, const VkComputePipelineCreateInfo *pCreateInfo,
                              const VkAllocationCallbacks *pAllocator, VkPipeline *pPipeline)
@@ -273,8 +298,15 @@ radv_compute_pipeline_create(VkDevice _device, VkPipelineCache _cache, const VkC
    const VkPipelineCreationFeedbackCreateInfo *creation_feedback =
       vk_find_struct_const(pCreateInfo->pNext, PIPELINE_CREATION_FEEDBACK_CREATE_INFO);
 
-   result = radv_compute_pipeline_compile(pCreateInfo, pipeline, pipeline_layout, device, cache, &pCreateInfo->stage,
-                                          creation_feedback);
+   const VkPipelineBinaryInfoKHR *binary_info = vk_find_struct_const(pCreateInfo->pNext, PIPELINE_BINARY_INFO_KHR);
+
+   if (binary_info && binary_info->binaryCount > 0) {
+      result = radv_compute_pipeline_import_binary(device, pipeline, binary_info);
+   } else {
+      result = radv_compute_pipeline_compile(pCreateInfo, pipeline, pipeline_layout, device, cache, &pCreateInfo->stage,
+                                             creation_feedback);
+   }
+
    if (result != VK_SUCCESS) {
       radv_pipeline_destroy(device, &pipeline->base, pAllocator);
       return result;

@@ -31,14 +31,6 @@
 
 #include "util/vl_rbsp.h"
 
-enum H264NALUnitType {
-   H264_NAL_SLICE      = 1,
-   H264_NAL_IDR_SLICE  = 5,
-   H264_NAL_SPS        = 7,
-   H264_NAL_PPS        = 8,
-   H264_NAL_AUD        = 9,
-};
-
 VAStatus
 vlVaHandleVAEncPictureParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *context, vlVaBuffer *buf)
 {
@@ -339,8 +331,12 @@ vlVaHandleVAEncSequenceParameterBufferTypeH264(vlVaDriver *drv, vlVaContext *con
    }
 
    if (!(context->desc.base.packed_headers & VA_ENC_PACKED_HEADER_SEQUENCE)) {
-      context->desc.h264enc.header_flags.sps = 1;
-      context->desc.h264enc.header_flags.pps = 1;
+      util_dynarray_append(&context->desc.h264enc.raw_headers,
+                           struct pipe_enc_raw_header,
+                           (struct pipe_enc_raw_header){.type = PIPE_H264_NAL_SPS});
+      util_dynarray_append(&context->desc.h264enc.raw_headers,
+                           struct pipe_enc_raw_header,
+                           (struct pipe_enc_raw_header){.type = PIPE_H264_NAL_PPS});
    }
 
    return VA_STATUS_SUCCESS;
@@ -511,7 +507,7 @@ static void parseEncSliceParamsH264(vlVaContext *context,
    }
 
    if (nal_ref_idc != 0) {
-      if (nal_unit_type == H264_NAL_IDR_SLICE) {
+      if (nal_unit_type == PIPE_H264_NAL_IDR_SLICE) {
          slice->no_output_of_prior_pics_flag = vl_rbsp_u(rbsp, 1);
          slice->long_term_reference_flag = vl_rbsp_u(rbsp, 1);
       } else {
@@ -770,7 +766,12 @@ VAStatus
 vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *buf)
 {
    struct vl_vlc vlc = {0};
-   vl_vlc_init(&vlc, 1, (const void * const*)&buf->data, &buf->size);
+   uint8_t *data = buf->data;
+   int nal_start = -1;
+   unsigned nal_unit_type = 0, emulation_bytes_start = 0;
+   bool is_slice = false;
+
+   vl_vlc_init(&vlc, 1, (const void * const*)&data, &buf->size);
 
    while (vl_vlc_bits_left(&vlc) > 0) {
       /* search the first 64 bytes for a startcode */
@@ -780,6 +781,21 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *
          vl_vlc_eatbits(&vlc, 8);
          vl_vlc_fillbits(&vlc);
       }
+
+      unsigned start = vlc.data - data - vl_vlc_valid_bits(&vlc) / 8;
+      emulation_bytes_start = 4; /* 3 bytes startcode + 1 byte header */
+      /* handle 4 bytes startcode */
+      if (start > 0 && data[start - 1] == 0x00) {
+         start--;
+         emulation_bytes_start++;
+      }
+      if (nal_start >= 0) {
+         vlVaAddRawHeader(&context->desc.h264enc.raw_headers, nal_unit_type,
+                          start - nal_start, data + nal_start, is_slice, 0);
+      }
+      nal_start = start;
+      is_slice = false;
+
       vl_vlc_eatbits(&vlc, 24); /* eat the startcode */
 
       if (vl_vlc_valid_bits(&vlc) < 15)
@@ -787,26 +803,22 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *
 
       vl_vlc_eatbits(&vlc, 1);
       unsigned nal_ref_idc = vl_vlc_get_uimsbf(&vlc, 2);
-      unsigned nal_unit_type = vl_vlc_get_uimsbf(&vlc, 5);
+      nal_unit_type = vl_vlc_get_uimsbf(&vlc, 5);
 
       struct vl_rbsp rbsp;
       vl_rbsp_init(&rbsp, &vlc, ~0, context->packed_header_emulation_bytes);
 
       switch (nal_unit_type) {
-      case H264_NAL_SLICE:
-      case H264_NAL_IDR_SLICE:
+      case PIPE_H264_NAL_SLICE:
+      case PIPE_H264_NAL_IDR_SLICE:
+         is_slice = true;
          parseEncSliceParamsH264(context, &rbsp, nal_ref_idc, nal_unit_type);
          break;
-      case H264_NAL_SPS:
+      case PIPE_H264_NAL_SPS:
          parseEncSpsParamsH264(context, &rbsp);
-         context->desc.h264enc.header_flags.sps = 1;
          break;
-      case H264_NAL_PPS:
+      case PIPE_H264_NAL_PPS:
          parseEncPpsParamsH264(context, &rbsp);
-         context->desc.h264enc.header_flags.pps = 1;
-         break;
-      case H264_NAL_AUD:
-         context->desc.h264enc.header_flags.aud = 1;
          break;
       default:
          break;
@@ -814,6 +826,12 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *
 
       if (!context->packed_header_emulation_bytes)
          break;
+   }
+
+   if (nal_start >= 0) {
+      vlVaAddRawHeader(&context->desc.h264enc.raw_headers, nal_unit_type,
+                       buf->size - nal_start, data + nal_start, is_slice,
+                       context->packed_header_emulation_bytes ? 0 : emulation_bytes_start);
    }
 
    return VA_STATUS_SUCCESS;

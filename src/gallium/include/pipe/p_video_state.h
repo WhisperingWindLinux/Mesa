@@ -35,6 +35,7 @@
 #include "util/u_hash_table.h"
 #include "util/u_inlines.h"
 #include "util/u_rect.h"
+#include "util/u_dynarray.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -126,6 +127,15 @@ enum pipe_mpeg12_field_select
    PIPE_MPEG12_FS_SECOND_BACKWARD = 0x08
 };
 
+enum pipe_h264_nal_unit_type
+{
+   PIPE_H264_NAL_SLICE = 1,
+   PIPE_H264_NAL_IDR_SLICE= 5,
+   PIPE_H264_NAL_SPS = 7,
+   PIPE_H264_NAL_PPS = 8,
+   PIPE_H264_NAL_AUD = 9,
+};
+
 enum pipe_h264_slice_type
 {
    PIPE_H264_SLICE_TYPE_P = 0x0,
@@ -133,6 +143,24 @@ enum pipe_h264_slice_type
    PIPE_H264_SLICE_TYPE_I = 0x2,
    PIPE_H264_SLICE_TYPE_SP = 0x3,
    PIPE_H264_SLICE_TYPE_SI = 0x4
+};
+
+enum pipe_h265_nal_unit_type
+{
+   PIPE_H265_NAL_TRAIL_N = 0,
+   PIPE_H265_NAL_TRAIL_R = 1,
+   PIPE_H265_NAL_TSA_N = 2,
+   PIPE_H265_NAL_TSA_R = 3,
+   PIPE_H265_NAL_BLA_W_LP = 16,
+   PIPE_H265_NAL_IDR_W_RADL = 19,
+   PIPE_H265_NAL_IDR_N_LP = 20,
+   PIPE_H265_NAL_CRA_NUT = 21,
+   PIPE_H265_NAL_RSV_IRAP_VCL23 = 23,
+   PIPE_H265_NAL_VPS = 32,
+   PIPE_H265_NAL_SPS = 33,
+   PIPE_H265_NAL_PPS = 34,
+   PIPE_H265_NAL_AUD = 35,
+   PIPE_H265_NAL_PREFIX_SEI = 39,
 };
 
 enum pipe_h265_slice_type
@@ -491,6 +519,14 @@ struct pipe_enc_roi
    struct pipe_enc_region_in_roi region[PIPE_ENC_ROI_REGION_NUM_MAX];
 };
 
+struct pipe_enc_raw_header
+{
+   uint8_t type; /* nal_unit_type or obu_type */
+   bool is_slice; /* slice or frame header */
+   uint32_t size;
+   uint8_t *buffer;
+};
+
 struct pipe_h264_enc_rate_control
 {
    enum pipe_h2645_enc_rate_control_method rate_ctrl_method;
@@ -784,20 +820,13 @@ struct pipe_h264_enc_picture_desc
    enum pipe_video_feedback_metadata_type requested_metadata;
    bool renew_headers_on_idr;
 
-   union {
-      struct {
-         uint32_t sps:1;
-         uint32_t pps:1;
-         uint32_t aud:1;
-      };
-      uint32_t value;
-   } header_flags;
-
    struct pipe_h264_enc_dpb_entry dpb[PIPE_H264_MAX_DPB_SIZE];
    uint8_t dpb_size;
    uint8_t dpb_curr_pic; /* index in dpb */
    uint8_t ref_list0[PIPE_H264_MAX_NUM_LIST_REF]; /* index in dpb, PIPE_H2645_LIST_REF_INVALID_ENTRY invalid */
    uint8_t ref_list1[PIPE_H264_MAX_NUM_LIST_REF]; /* index in dpb, PIPE_H2645_LIST_REF_INVALID_ENTRY invalid */
+
+   struct util_dynarray raw_headers; /* struct pipe_enc_raw_header */
 };
 
 struct pipe_h265_st_ref_pic_set
@@ -1151,18 +1180,6 @@ struct pipe_h265_enc_picture_desc
    enum pipe_video_feedback_metadata_type requested_metadata;
    bool renew_headers_on_idr;
 
-   union {
-      struct {
-         uint32_t vps:1;
-         uint32_t sps:1;
-         uint32_t pps:1;
-         uint32_t aud:1;
-         uint32_t hdr_cll:1;
-         uint32_t hdr_mdcv:1;
-      };
-      uint32_t value;
-   } header_flags;
-
    struct pipe_enc_hdr_cll metadata_hdr_cll;
    struct pipe_enc_hdr_mdcv metadata_hdr_mdcv;
 
@@ -1171,6 +1188,8 @@ struct pipe_h265_enc_picture_desc
    uint8_t dpb_curr_pic; /* index in dpb */
    uint8_t ref_list0[PIPE_H265_MAX_NUM_LIST_REF]; /* index in dpb, PIPE_H2645_LIST_REF_INVALID_ENTRY invalid */
    uint8_t ref_list1[PIPE_H265_MAX_NUM_LIST_REF]; /* index in dpb, PIPE_H2645_LIST_REF_INVALID_ENTRY invalid */
+
+   struct util_dynarray raw_headers; /* struct pipe_enc_raw_header */
 };
 
 struct pipe_av1_enc_rate_control

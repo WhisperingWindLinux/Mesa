@@ -31,23 +31,6 @@
 
 #include "util/vl_rbsp.h"
 
-enum HEVCNALUnitType {
-   HEVC_NAL_TRAIL_N    = 0,
-   HEVC_NAL_TRAIL_R    = 1,
-   HEVC_NAL_TSA_N      = 2,
-   HEVC_NAL_TSA_R      = 3,
-   HEVC_NAL_BLA_W_LP   = 16,
-   HEVC_NAL_IDR_W_RADL = 19,
-   HEVC_NAL_IDR_N_LP   = 20,
-   HEVC_NAL_CRA_NUT    = 21,
-   HEVC_NAL_RSV_IRAP_VCL23 = 23,
-   HEVC_NAL_VPS        = 32,
-   HEVC_NAL_SPS        = 33,
-   HEVC_NAL_PPS        = 34,
-   HEVC_NAL_AUD        = 35,
-   HEVC_NAL_PREFIX_SEI = 39,
-};
-
 enum HEVCSEIPayloadType {
    MASTERING_DISPLAY_COLOUR_VOLUME  = 137,
    CONTENT_LIGHT_LEVEL_INFO         = 144,
@@ -365,9 +348,15 @@ vlVaHandleVAEncSequenceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *con
    if (!(context->desc.base.packed_headers & VA_ENC_PACKED_HEADER_SEQUENCE)) {
       struct pipe_h265_profile_tier_level *ptl =
          &context->desc.h265enc.vid.profile_tier_level;
-      context->desc.h265enc.header_flags.vps = 1;
-      context->desc.h265enc.header_flags.sps = 1;
-      context->desc.h265enc.header_flags.pps = 1;
+      util_dynarray_append(&context->desc.h264enc.raw_headers,
+                           struct pipe_enc_raw_header,
+                           (struct pipe_enc_raw_header){.type = PIPE_H265_NAL_VPS});
+      util_dynarray_append(&context->desc.h264enc.raw_headers,
+                           struct pipe_enc_raw_header,
+                           (struct pipe_enc_raw_header){.type = PIPE_H265_NAL_SPS});
+      util_dynarray_append(&context->desc.h264enc.raw_headers,
+                           struct pipe_enc_raw_header,
+                           (struct pipe_enc_raw_header){.type = PIPE_H265_NAL_PPS});
       context->desc.h265enc.vid.vps_base_layer_internal_flag = 1;
       context->desc.h265enc.vid.vps_base_layer_available_flag = 1;
       ptl->profile_tier.general_tier_flag = h265->general_tier_flag;
@@ -655,7 +644,7 @@ static void parseEncSliceParamsH265(vlVaContext *context,
    pic->nal_unit_type = nal_unit_type;
    pic->temporal_id = temporal_id;
 
-   if (nal_unit_type >= HEVC_NAL_BLA_W_LP && nal_unit_type <= HEVC_NAL_RSV_IRAP_VCL23)
+   if (nal_unit_type >= PIPE_H265_NAL_BLA_W_LP && nal_unit_type <= PIPE_H265_NAL_RSV_IRAP_VCL23)
       slice->no_output_of_prior_pics_flag = vl_rbsp_u(rbsp, 1);
 
    vl_rbsp_ue(rbsp); /* slice_pic_parameter_set_id */
@@ -671,7 +660,7 @@ static void parseEncSliceParamsH265(vlVaContext *context,
    if (pic->output_flag_present_flag)
       slice->pic_output_flag = vl_rbsp_u(rbsp, 1);
 
-   if (nal_unit_type != HEVC_NAL_IDR_W_RADL && nal_unit_type != HEVC_NAL_IDR_N_LP) {
+   if (nal_unit_type != PIPE_H265_NAL_IDR_W_RADL && nal_unit_type != PIPE_H265_NAL_IDR_N_LP) {
       slice->slice_pic_order_cnt_lsb = vl_rbsp_u(rbsp, seq->log2_max_pic_order_cnt_lsb_minus4 + 4);
       slice->short_term_ref_pic_set_sps_flag = vl_rbsp_u(rbsp, 1);
       if (!slice->short_term_ref_pic_set_sps_flag) {
@@ -1021,7 +1010,6 @@ static void parseEncSeiPayloadH265(vlVaContext *context, struct vl_rbsp *rbsp, i
 {
    switch (payloadType) {
    case MASTERING_DISPLAY_COLOUR_VOLUME:
-      context->desc.h265enc.header_flags.hdr_mdcv = 1;
       for (int32_t i = 0; i < 3; i++) {
          context->desc.h265enc.metadata_hdr_mdcv.primary_chromaticity_x[i] = vl_rbsp_u(rbsp, 16);
          context->desc.h265enc.metadata_hdr_mdcv.primary_chromaticity_y[i] = vl_rbsp_u(rbsp, 16);
@@ -1032,7 +1020,6 @@ static void parseEncSeiPayloadH265(vlVaContext *context, struct vl_rbsp *rbsp, i
       context->desc.h265enc.metadata_hdr_mdcv.luminance_min = vl_rbsp_u(rbsp, 32);
       break;
    case CONTENT_LIGHT_LEVEL_INFO:
-      context->desc.h265enc.header_flags.hdr_cll = 1;
       context->desc.h265enc.metadata_hdr_cll.max_cll= vl_rbsp_u(rbsp, 16);
       context->desc.h265enc.metadata_hdr_cll.max_fall= vl_rbsp_u(rbsp, 16);
       break;
@@ -1068,7 +1055,12 @@ VAStatus
 vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *buf)
 {
    struct vl_vlc vlc = {0};
-   vl_vlc_init(&vlc, 1, (const void * const*)&buf->data, &buf->size);
+   uint8_t *data = buf->data;
+   int nal_start = -1;
+   unsigned nal_unit_type = 0, emulation_bytes_start = 0;
+   bool is_slice = false;
+
+   vl_vlc_init(&vlc, 1, (const void * const*)&data, &buf->size);
 
    while (vl_vlc_bits_left(&vlc) > 0) {
       /* search the first 64 bytes for a startcode */
@@ -1078,13 +1070,28 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
          vl_vlc_eatbits(&vlc, 8);
          vl_vlc_fillbits(&vlc);
       }
+
+      unsigned start = vlc.data - data - vl_vlc_valid_bits(&vlc) / 8;
+      emulation_bytes_start = 5; /* 3 bytes startcode + 2 bytes header */
+      /* handle 4 bytes startcode */
+      if (start > 0 && data[start - 1] == 0x00) {
+         start--;
+         emulation_bytes_start++;
+      }
+      if (nal_start >= 0) {
+         vlVaAddRawHeader(&context->desc.h265enc.raw_headers, nal_unit_type,
+                          start - nal_start, data + nal_start, is_slice, 0);
+      }
+      nal_start = start;
+      is_slice = false;
+
       vl_vlc_eatbits(&vlc, 24); /* eat the startcode */
 
       if (vl_vlc_valid_bits(&vlc) < 15)
          vl_vlc_fillbits(&vlc);
 
       vl_vlc_eatbits(&vlc, 1);
-      unsigned nal_unit_type = vl_vlc_get_uimsbf(&vlc, 6);
+      nal_unit_type = vl_vlc_get_uimsbf(&vlc, 6);
       vl_vlc_eatbits(&vlc, 6);
       unsigned temporal_id = vl_vlc_get_uimsbf(&vlc, 3) - 1;
 
@@ -1092,31 +1099,26 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
       vl_rbsp_init(&rbsp, &vlc, ~0, context->packed_header_emulation_bytes);
 
       switch (nal_unit_type) {
-      case HEVC_NAL_TRAIL_N:
-      case HEVC_NAL_TRAIL_R:
-      case HEVC_NAL_TSA_N:
-      case HEVC_NAL_TSA_R:
-      case HEVC_NAL_IDR_W_RADL:
-      case HEVC_NAL_IDR_N_LP:
-      case HEVC_NAL_CRA_NUT:
+      case PIPE_H265_NAL_TRAIL_N:
+      case PIPE_H265_NAL_TRAIL_R:
+      case PIPE_H265_NAL_TSA_N:
+      case PIPE_H265_NAL_TSA_R:
+      case PIPE_H265_NAL_IDR_W_RADL:
+      case PIPE_H265_NAL_IDR_N_LP:
+      case PIPE_H265_NAL_CRA_NUT:
+         is_slice = true;
          parseEncSliceParamsH265(context, &rbsp, nal_unit_type, temporal_id);
          break;
-      case HEVC_NAL_VPS:
+      case PIPE_H265_NAL_VPS:
          parseEncVpsParamsH265(context, &rbsp);
-         context->desc.h265enc.header_flags.vps = 1;
          break;
-      case HEVC_NAL_SPS:
+      case PIPE_H265_NAL_SPS:
          parseEncSpsParamsH265(context, &rbsp);
-         context->desc.h265enc.header_flags.sps = 1;
          break;
-      case HEVC_NAL_PPS:
+      case PIPE_H265_NAL_PPS:
          parseEncPpsParamsH265(context, &rbsp);
-         context->desc.h265enc.header_flags.pps = 1;
          break;
-      case HEVC_NAL_AUD:
-         context->desc.h265enc.header_flags.aud = 1;
-         break;
-      case HEVC_NAL_PREFIX_SEI:
+      case PIPE_H265_NAL_PREFIX_SEI:
          parseEncSeiH265(context, &rbsp);
          break;
       default:
@@ -1125,6 +1127,12 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeHEVC(vlVaContext *context, vlVaBuffer *
 
       if (!context->packed_header_emulation_bytes)
          break;
+   }
+
+   if (nal_start >= 0) {
+      vlVaAddRawHeader(&context->desc.h265enc.raw_headers, nal_unit_type,
+                       buf->size - nal_start, data + nal_start, is_slice,
+                       context->packed_header_emulation_bytes ? 0 : emulation_bytes_start);
    }
 
    return VA_STATUS_SUCCESS;

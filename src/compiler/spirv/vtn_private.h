@@ -364,8 +364,8 @@ struct vtn_type {
 
       /* Members for pointer types */
       struct {
-         /* For pointers, the vtn_type for dereferenced type */
-         struct vtn_type *deref;
+         /* For pointers, the vtn_type of the object pointed to. */
+         struct vtn_type *pointed;
 
          /* Storage class for pointers */
          SpvStorageClass storage_class;
@@ -483,16 +483,8 @@ struct vtn_pointer {
    /** The variable mode for the referenced data */
    enum vtn_variable_mode mode;
 
-   /** The dereferenced type of this pointer */
+   /** The pointer type of this pointer */
    struct vtn_type *type;
-
-   /** The pointer type of this pointer
-    *
-    * This may be NULL for some temporary pointers constructed as part of a
-    * large load, store, or copy.  It MUST be valid for all pointers which are
-    * stored as SPIR-V SSA values.
-    */
-   struct vtn_type *ptr_type;
 
    /** The referenced variable, if known
     *

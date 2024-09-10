@@ -29,17 +29,6 @@ get_live_changes(Instruction* instr)
 }
 
 RegisterDemand
-get_additional_operand_demand(Instruction* instr)
-{
-   RegisterDemand additional_demand;
-   int op_idx = get_op_fixed_to_def(instr);
-   if (op_idx != -1 && !instr->operands[op_idx].isKill())
-      additional_demand += instr->definitions[0].getTemp();
-
-   return additional_demand;
-}
-
-RegisterDemand
 get_temp_registers(Instruction* instr)
 {
    RegisterDemand demand_before;
@@ -53,14 +42,15 @@ get_temp_registers(Instruction* instr)
    }
 
    for (Operand op : instr->operands) {
-      if (op.isFirstKill()) {
+      if (op.isFirstKill() || op.isCopyKill()) {
          demand_before += op.getTemp();
          if (op.isLateKill())
             demand_after += op.getTemp();
+      } else if (op.isClobbered() && !op.isKill()) {
+         demand_before += op.getTemp();
       }
    }
 
-   demand_before += get_additional_operand_demand(instr);
    demand_after.update(demand_before);
    return demand_after;
 }
@@ -237,6 +227,11 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
          insn->operands[1].setLateKill(true);
       }
 
+      /* Check if a definition clobbers some operand */
+      int op_idx = get_op_fixed_to_def(insn);
+      if (op_idx != -1)
+         insn->operands[op_idx].setClobbered(true);
+
       /* we need to do this in a separate loop because the next one can
        * setKill() for several operands at once and we don't want to
        * overwrite that in a later iteration */
@@ -252,30 +247,59 @@ process_live_temps_per_block(live_ctx& ctx, Block* block)
       }
 
       /* GEN */
+      RegisterDemand operand_demand;
       for (unsigned i = 0; i < insn->operands.size(); ++i) {
          Operand& operand = insn->operands[i];
          if (!operand.isTemp())
             continue;
-         if (operand.isFixed() && operand.physReg() == vcc)
-            ctx.program->needs_vcc = true;
+
          const Temp temp = operand.getTemp();
-         const bool inserted = live.insert(temp.id()).second;
-         if (inserted) {
+         if (operand.isFixed() && ctx.program->progress < CompilationProgress::after_ra) {
+            assert(!operand.isLateKill());
+            ctx.program->needs_vcc |= operand.physReg() == vcc;
+
+            /* Check if this operand gets overwritten by a precolored definition. */
+            if (std::any_of(insn->definitions.begin(), insn->definitions.end(),
+                            [=](Definition def)
+                            {
+                               return def.isFixed() &&
+                                      def.physReg() + def.size() > operand.physReg() &&
+                                      operand.physReg() + operand.size() > def.physReg();
+                            }))
+               operand.setClobbered(true);
+
+            /* Check if this temp is fixed to a different register as well.
+             * This assumes that operands of one instruction are not precolored twice to
+             * the same register. In this case, register pressure might be overestimated.
+             */
+            for (unsigned j = i + 1; !operand.isCopyKill() && j < insn->operands.size(); ++j) {
+               if (insn->operands[j].isTemp() && insn->operands[j].getTemp() == temp &&
+                   insn->operands[j].isFixed()) {
+                  operand_demand += temp;
+                  insn->operands[j].setCopyKill(true);
+               }
+            }
+         }
+
+         if (operand.isKill())
+            continue;
+
+         if (live.insert(temp.id()).second) {
             operand.setFirstKill(true);
             for (unsigned j = i + 1; j < insn->operands.size(); ++j) {
-               if (insn->operands[j].isTemp() && insn->operands[j].tempId() == operand.tempId()) {
-                  insn->operands[j].setFirstKill(false);
+               if (insn->operands[j].isTemp() && insn->operands[j].getTemp() == temp)
                   insn->operands[j].setKill(true);
-               }
             }
             if (operand.isLateKill())
                insn->register_demand += temp;
             new_demand += temp;
+         } else if (operand.isClobbered()) {
+            operand_demand += temp;
          }
       }
 
-      RegisterDemand before_instr = new_demand + get_additional_operand_demand(insn);
-      insn->register_demand.update(before_instr);
+      operand_demand += new_demand;
+      insn->register_demand.update(operand_demand);
       block->register_demand.update(insn->register_demand);
    }
 

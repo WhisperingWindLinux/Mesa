@@ -2106,8 +2106,14 @@ anv_get_image_memory_types(struct anv_device *device, struct anv_image *image)
           * from choosing a wrong memory type in this case.
           */
          memory_types = device->physical->memory.compressed_mem_types;
-      } else if (image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
+      } else if (image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+                 image->vk.external_handle_types == 0) {
+         /* Report compression + default memory types on images without a
+          * modifier. But compression cannot be enabled on images to share
+          * externally without a modifier.
+          */
          memory_types |= device->physical->memory.compressed_mem_types;
+      }
    }
 
    return memory_types;

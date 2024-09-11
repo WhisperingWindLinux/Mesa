@@ -1872,7 +1872,19 @@ enum vmem_type : uint8_t {
  */
 uint8_t get_vmem_type(enum amd_gfx_level gfx_level, Instruction* instr);
 
-unsigned parse_vdst_wait(Instruction* instr);
+struct depctr_wait {
+   unsigned va_vdst : 4;
+   unsigned va_sdst : 3;
+   unsigned va_ssrc : 1;
+   unsigned hold_cnt : 1;
+   unsigned vm_vsrc : 3;
+   unsigned va_vcc : 1;
+   unsigned sa_sdst : 1;
+   unsigned va_exec : 1;
+   unsigned sa_exec : 1;
+};
+
+depctr_wait parse_depctr_wait(Instruction* instr);
 
 enum block_kind {
    /* uniform indicates that leaving this block,

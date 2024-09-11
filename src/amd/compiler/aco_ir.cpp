@@ -1399,17 +1399,97 @@ get_vmem_type(enum amd_gfx_level gfx_level, Instruction* instr)
    return 0;
 }
 
-unsigned
-parse_vdst_wait(Instruction* instr)
+depctr_wait
+parse_depctr_wait(Instruction* instr)
 {
-   if (instr->isVMEM() || instr->isFlatLike() || instr->isDS() || instr->isEXP())
-      return 0;
-   else if (instr->isLDSDIR())
-      return instr->ldsdir().wait_vdst;
-   else if (instr->opcode == aco_opcode::s_waitcnt_depctr)
-      return (instr->salu().imm >> 12) & 0xf;
-   else
-      return 15;
+   /* Probably incomplete. */
+   depctr_wait res;
+   res.va_vdst = 0xf;
+   res.va_sdst = 0x7;
+   res.va_ssrc = 0x1;
+   res.hold_cnt = 0x1;
+   res.vm_vsrc = 0x7;
+   res.va_vcc = 0x1;
+   res.sa_sdst = 0x1;
+   res.va_exec = 0x1;
+   res.sa_exec = 0x1;
+   if (instr->isVMEM() || instr->isFlatLike() || instr->isDS() || instr->isEXP()) {
+      res.va_vdst = 0;
+      res.va_exec = 0;
+      res.sa_exec = 0;
+      if (instr->isVMEM() || instr->isFlatLike()) {
+         res.sa_sdst = 0;
+         res.va_sdst = 0;
+         res.va_vcc = 0;
+      }
+   } else if (instr->isSMEM()) {
+      res.sa_sdst = 0;
+      res.va_sdst = 0;
+      res.va_vcc = 0;
+   } else if (instr->isLDSDIR()) {
+      res.va_vdst = instr->ldsdir().wait_vdst;
+      res.va_exec = 0;
+      res.sa_exec = 0;
+   } else if (instr->opcode == aco_opcode::s_waitcnt_depctr) {
+      unsigned imm = instr->salu().imm;
+      res.va_vdst = (imm >> 12) & 0xf;
+      res.va_sdst = (imm >> 9) & 0x7;
+      res.va_ssrc = (imm >> 8) & 0x1;
+      res.hold_cnt = (imm >> 7) & 0x1;
+      res.vm_vsrc = (imm >> 2) & 0x7;
+      res.va_vcc = (imm >> 1) & 0x1;
+      res.sa_sdst = imm & 0x1;
+   } else if (instr->isVALU()) {
+      res.sa_exec = 0;
+      for (Definition& def : instr->definitions) {
+         if (def.regClass().type() == RegType::sgpr) {
+            res.sa_sdst = 0;
+            break;
+         }
+      }
+      /* Notably, this is the only exception, even VALU that
+       * reads exec doesn't implicitly wait for va_exec.
+       */
+      if (instr->opcode == aco_opcode::v_readfirstlane_b32)
+         res.va_exec = 0;
+   } else if (instr_info.classes[(int)instr->opcode] == instr_class::branch ||
+              instr_info.classes[(int)instr->opcode] == instr_class::sendmsg) {
+      res.sa_exec = 0;
+      res.va_exec = 0;
+      switch (instr->opcode) {
+      case aco_opcode::s_cbranch_vccz:
+      case aco_opcode::s_cbranch_vccnz:
+         res.va_vcc = 0;
+         res.sa_sdst = 0;
+         break;
+      case aco_opcode::s_cbranch_scc0:
+      case aco_opcode::s_cbranch_scc1:
+         res.sa_sdst = 0;
+         break;
+      default: break;
+      }
+   } else if (instr->isSALU()) {
+      for (Definition& def : instr->definitions) {
+         if (def.physReg() < vcc) {
+            res.va_sdst = 0;
+         } else if (def.physReg() <= vcc_hi) {
+            res.va_vcc = 0;
+         } else if (def.physReg() == exec || def.physReg() == exec_hi) {
+            res.va_exec = 0;
+         }
+      }
+      for (Operand& op : instr->operands) {
+         if (op.physReg() < vcc) {
+            res.va_sdst = 0;
+         } else if (op.physReg() <= vcc_hi) {
+            res.va_vcc = 0;
+         } else if (op.physReg() == exec || op.physReg() == exec_hi) {
+            res.va_exec = 0;
+         }
+      }
+   }
+
+   return res;
 }
 
 bool

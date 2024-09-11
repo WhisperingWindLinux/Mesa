@@ -23,10 +23,16 @@
 #include "pan_blend.h"
 #include "pan_blitter.h"
 
+#include "util/vma.h"
+
 #define PANVK_MAX_QUEUE_FAMILIES 1
 
 struct panvk_device {
    struct vk_device vk;
+
+   struct {
+      struct util_vma_heap heap;
+   } as;
 
    struct {
       struct pan_kmod_vm *vm;
@@ -56,15 +62,14 @@ struct panvk_device {
    struct panvk_blend_shader_cache blend_shader_cache;
    struct vk_meta_device meta;
 
-#if PAN_ARCH <= 7
    struct {
       struct panvk_priv_mem shader;
       struct panvk_priv_mem rsd;
    } desc_copy;
-#endif
 
    struct {
       struct panvk_pool rw;
+      struct panvk_pool rw_nc;
       struct panvk_pool exec;
    } mempools;
 
@@ -93,7 +98,7 @@ panvk_device_adjust_bo_flags(const struct panvk_device *device,
    struct panvk_instance *instance =
       to_panvk_instance(device->vk.physical->instance);
 
-   if (instance->debug_flags & PANVK_DEBUG_DUMP)
+   if (instance->debug_flags & (PANVK_DEBUG_DUMP | PANVK_DEBUG_TRACE))
       bo_flags &= ~PAN_KMOD_BO_FLAG_NO_MMAP;
 
    return bo_flags;

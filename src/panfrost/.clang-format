@@ -6,4 +6,14 @@ AlignConsecutiveBitFields: true
 ColumnLimit: 80
 BreakStringLiterals: false
 SpaceBeforeParens: ControlStatementsExceptControlMacros
-ForEachMacros: ['cs_while']
+ForEachMacros: [
+  'cs_case',
+  'cs_default',
+  'cs_match',
+  'cs_update_compute_ctx',
+  'cs_update_frag_ctx',
+  'cs_update_progress_seqno',
+  'cs_update_vt_ctx',
+  'cs_while',
+  'panvk_cs_reg_upd_ctx',
+]

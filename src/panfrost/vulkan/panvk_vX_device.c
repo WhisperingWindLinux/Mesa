@@ -13,6 +13,7 @@
 #include "vk_common_entrypoints.h"
 
 #include "panvk_buffer.h"
+#include "panvk_cmd_alloc.h"
 #include "panvk_cmd_buffer.h"
 #include "panvk_device.h"
 #include "panvk_entrypoints.h"
@@ -60,13 +61,24 @@ panvk_device_init_mempools(struct panvk_device *dev)
    struct panvk_pool_properties rw_pool_props = {
       .create_flags = 0,
       .slab_size = 16 * 1024,
-      .label = "Device RW memory pool",
+      .label = "Device RW cached memory pool",
       .owns_bos = false,
       .needs_locking = true,
       .prealloc = false,
    };
 
    panvk_pool_init(&dev->mempools.rw, dev, NULL, &rw_pool_props);
+
+   struct panvk_pool_properties rw_nc_pool_props = {
+      .create_flags = PAN_KMOD_BO_FLAG_GPU_UNCACHED,
+      .slab_size = 16 * 1024,
+      .label = "Device RW uncached memory pool",
+      .owns_bos = false,
+      .needs_locking = true,
+      .prealloc = false,
+   };
+
+   panvk_pool_init(&dev->mempools.rw_nc, dev, NULL, &rw_nc_pool_props);
 
    struct panvk_pool_properties exec_pool_props = {
       .create_flags = PAN_KMOD_BO_FLAG_EXECUTABLE,
@@ -96,7 +108,10 @@ panvk_meta_cmd_bind_map_buffer(struct vk_command_buffer *cmd,
    struct panvk_cmd_buffer *cmdbuf =
       container_of(cmd, struct panvk_cmd_buffer, vk);
    struct panfrost_ptr mem =
-      pan_pool_alloc_aligned(&cmdbuf->desc_pool.base, buffer->vk.size, 64);
+      panvk_cmd_alloc_dev_mem(cmdbuf, desc, buffer->vk.size, 64);
+
+   if (!mem.gpu)
+      return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
    buffer->dev_addr = mem.gpu;
    *map_out = mem.cpu;
@@ -238,6 +253,7 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
    device->vk.command_dispatch_table = &device->cmd_dispatch;
    device->vk.command_buffer_ops = &panvk_per_arch(cmd_buffer_ops);
    device->vk.shader_ops = &panvk_per_arch(device_shader_ops);
+   device->vk.submit_mode = VK_QUEUE_SUBMIT_MODE_THREADED_ON_DEMAND;
 
    device->kmod.allocator = (struct pan_kmod_allocator){
       .zalloc = panvk_kmod_zalloc,
@@ -264,9 +280,13 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
       device->kmod.dev, PANVK_VA_RESERVE_BOTTOM);
    uint64_t user_va_end =
       panfrost_clamp_to_usable_va_range(device->kmod.dev, 1ull << 32);
+   uint32_t vm_flags = PAN_ARCH <= 7 ? PAN_KMOD_VM_FLAG_AUTO_VA : 0;
+
+   util_vma_heap_init(&device->as.heap, user_va_start,
+                      user_va_end - user_va_start);
 
    device->kmod.vm =
-      pan_kmod_vm_create(device->kmod.dev, PAN_KMOD_VM_FLAG_AUTO_VA,
+      pan_kmod_vm_create(device->kmod.dev, vm_flags,
                          user_va_start, user_va_end - user_va_start);
 
    if (!device->kmod.vm) {
@@ -276,6 +296,7 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
 
    panvk_device_init_mempools(device);
 
+#if PAN_ARCH <= 9
    device->tiler_heap = panvk_priv_bo_create(
       device, 128 * 1024 * 1024,
       PAN_KMOD_BO_FLAG_NO_MMAP | PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT,
@@ -285,6 +306,7 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
       result = vk_error(physical_device, VK_ERROR_OUT_OF_HOST_MEMORY);
       goto err_free_priv_bos;
    }
+#endif
 
    device->sample_positions =
       panvk_priv_bo_create(device, panfrost_sample_positions_buffer_size(), 0,
@@ -358,6 +380,7 @@ err_free_priv_bos:
    panvk_priv_bo_unref(device->tiler_heap);
    panvk_device_cleanup_mempools(device);
    pan_kmod_vm_destroy(device->kmod.vm);
+   util_vma_heap_finish(&device->as.heap);
 
 err_destroy_kdev:
    pan_kmod_dev_destroy(device->kmod.dev);
@@ -391,6 +414,7 @@ panvk_per_arch(destroy_device)(struct panvk_device *device,
    panvk_priv_bo_unref(device->sample_positions);
    panvk_device_cleanup_mempools(device);
    pan_kmod_vm_destroy(device->kmod.vm);
+   util_vma_heap_finish(&device->as.heap);
 
    if (device->debug.decode_ctx)
       pandecode_destroy_context(device->debug.decode_ctx);

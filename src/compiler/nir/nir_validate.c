@@ -803,6 +803,25 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
                       (state->shader->info.stage == MESA_SHADER_FRAGMENT &&
                        instr->intrinsic == nir_intrinsic_load_input_vertex));
    }
+
+   if (nir_intrinsic_has_image_dim(instr) &&
+       instr->src[0].ssa->parent_instr->type == nir_instr_type_deref) {
+      nir_deref_instr *deref = nir_instr_as_deref(instr->src[0].ssa->parent_instr);
+      enum glsl_sampler_dim deref_dim = glsl_get_sampler_dim(deref->type);
+      unsigned image_dim = nir_intrinsic_image_dim(instr);
+
+      /* Allow lowering CUBE to 2D with image_array=1 without updating the deref type.
+       *
+       * If an intrinsic has image_dim, it should also have image_array.
+       */
+      if (deref_dim == GLSL_SAMPLER_DIM_CUBE && image_dim == GLSL_SAMPLER_DIM_2D) {
+         validate_assert(state, nir_intrinsic_image_array(instr));
+      } else {
+         validate_assert(state, deref_dim == image_dim);
+         validate_assert(state, glsl_sampler_type_is_array(deref->type) ==
+                         nir_intrinsic_image_array(instr));
+      }
+   }
 }
 
 static void
@@ -812,6 +831,26 @@ validate_tex_src_texture_deref(nir_tex_instr *instr, validate_state *state,
    validate_assert(state, glsl_type_is_image(deref->type) ||
                              glsl_type_is_texture(deref->type) ||
                              glsl_type_is_sampler(deref->type));
+   enum glsl_sampler_dim deref_dim = glsl_get_sampler_dim(deref->type);
+
+   /* Allow lowering CUBE->2D with is_array=1, RECT->2D, 1D->2D, and EXTERNAL->2D
+    * without updating the deref type.
+    */
+   if (deref_dim == GLSL_SAMPLER_DIM_CUBE && instr->sampler_dim == GLSL_SAMPLER_DIM_2D) {
+      validate_assert(state, instr->is_array);
+   } else if ((deref_dim == GLSL_SAMPLER_DIM_RECT || deref_dim == GLSL_SAMPLER_DIM_1D ||
+               deref_dim == GLSL_SAMPLER_DIM_EXTERNAL) &&
+              instr->sampler_dim == GLSL_SAMPLER_DIM_2D) {
+      validate_assert(state, glsl_sampler_type_is_array(deref->type) == instr->is_array);
+   } else {
+      validate_assert(state, deref_dim == instr->sampler_dim);
+      validate_assert(state, glsl_sampler_type_is_array(deref->type) == instr->is_array);
+   }
+
+   if (glsl_type_is_sampler(deref->type))
+      validate_assert(state, glsl_sampler_type_is_shadow(deref->type) == instr->is_shadow);
+   else
+      validate_assert(state, !instr->is_shadow);
 
    switch (instr->op) {
    case nir_texop_descriptor_amd:

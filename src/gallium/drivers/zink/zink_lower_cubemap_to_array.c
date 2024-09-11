@@ -305,6 +305,7 @@ handle_cube_edge(nir_builder *b, nir_def *x, nir_def *y, nir_def *face, nir_def 
 static nir_def *
 handle_cube_gather(nir_builder *b, nir_tex_instr *tex, nir_def *coord)
 {
+   tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
    tex->is_array = true;
    nir_def *tex_size = nir_get_texture_size(b, tex);
 

@@ -1095,9 +1095,13 @@ fs_reg_alloc::assign_regs(bool allow_spilling, bool spill_all)
       /* Failed to allocate registers.  Spill some regs, and the caller will
        * loop back into here to try again.
        */
+#if 0
       unsigned nr_spills = 1;
       if (compiler->spilling_rate)
          nr_spills = MAX2(1, spilled / compiler->spilling_rate);
+#else
+      unsigned nr_spills = MAX2(1, compiler->spilling_rate);
+#endif
 
       fprintf(stderr, "ra failures: %u, cumulative spills: %u, new spills: %u\n",
               ra_failures, cumulative_spills, nr_spills);

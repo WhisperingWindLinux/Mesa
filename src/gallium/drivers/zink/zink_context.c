@@ -3006,6 +3006,7 @@ begin_rendering(struct zink_context *ctx, bool check_msaa_expand)
       zink_screen(ctx->base.screen)->image_barrier(ctx, res, layout, 0, 0);
       res->obj->unordered_read = res->obj->unordered_write = false;
       ctx->dynamic_fb.attachments[0].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+      ctx->dynamic_fb.attachments[0].resolveImageLayout = zink_resource(surf->base.texture)->layout;
       ctx->dynamic_fb.attachments[0].resolveImageView = surf->image_view;
    }
    if (has_swapchain) {
@@ -3879,6 +3880,9 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
          zink_screen_lock_context(screen);
          res->surface = screen->copy_context->base.create_surface(&screen->copy_context->base, &res->base.b, &tmpl);
          zink_screen_unlock_context(screen);
+         /* delete extra ref: the resource controls the surface lifetime, not the other way around */
+         struct pipe_resource *pres = ctx->fb_state.resolve;
+         pipe_resource_reference(&pres, NULL);
       }
    }
    if (depth_bias_scale_factor != ctx->depth_bias_scale_factor &&

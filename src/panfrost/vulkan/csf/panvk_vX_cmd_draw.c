@@ -1409,6 +1409,27 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
    cs_req_res(b, 0);
 }
 
+void
+panvk_per_arch(cmd_prepare_exec_cmds)(struct panvk_cmd_buffer *cmdbuf)
+{
+   const struct panvk_shader *vs = cmdbuf->state.gfx.vs.shader;
+   VkResult result;
+
+   /* FIXME: support non-IDVS. */
+   if (vs)
+      assert(vs->info.vs.idvs);
+
+   if (cmdbuf->vk.render_pass) {
+      result = get_tiler_desc(cmdbuf);
+      if (result != VK_SUCCESS)
+         return;
+
+      result = get_fb_descs(cmdbuf);
+      if (result != VK_SUCCESS)
+         return;
+   }
+}
+
 VKAPI_ATTR void VKAPI_CALL
 panvk_per_arch(CmdDraw)(VkCommandBuffer commandBuffer, uint32_t vertexCount,
                         uint32_t instanceCount, uint32_t firstVertex,

@@ -459,4 +459,6 @@ void panvk_per_arch(get_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                                  const VkDependencyInfo *in,
                                  struct panvk_cs_deps *out);
 
+void panvk_per_arch(cmd_prepare_exec_cmds)(struct panvk_cmd_buffer *cmdbuf);
+
 #endif /* PANVK_CMD_BUFFER_H */

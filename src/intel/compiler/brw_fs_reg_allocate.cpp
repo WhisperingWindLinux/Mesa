@@ -1068,6 +1068,9 @@ fs_reg_alloc::spill_reg(unsigned spill_reg)
 bool
 fs_reg_alloc::assign_regs(bool allow_spilling, bool spill_all)
 {
+   fprintf(stderr, "compiler->spilling_rate = %u\n", compiler->spilling_rate);
+   unsigned ra_failures = 0, cumulative_spills = 0;
+
    build_interference_graph(allow_spilling);
 
    unsigned spilled = 0;
@@ -1087,12 +1090,18 @@ fs_reg_alloc::assign_regs(bool allow_spilling, bool spill_all)
       if (!allow_spilling)
          return false;
 
+      ra_failures++;
+
       /* Failed to allocate registers.  Spill some regs, and the caller will
        * loop back into here to try again.
        */
       unsigned nr_spills = 1;
       if (compiler->spilling_rate)
          nr_spills = MAX2(1, spilled / compiler->spilling_rate);
+
+      fprintf(stderr, "ra failures: %u, cumulative spills: %u, new spills: %u\n",
+              ra_failures, cumulative_spills, nr_spills);
+      cumulative_spills += nr_spills;
 
       for (unsigned j = 0; j < nr_spills; j++) {
          int reg = choose_spill_reg();
@@ -1106,6 +1115,8 @@ fs_reg_alloc::assign_regs(bool allow_spilling, bool spill_all)
          spilled++;
       }
    }
+   fprintf(stderr, "ra failures: %u, cumulative spills: %u\n",
+           ra_failures, cumulative_spills);
 
    if (spilled)
       fs->invalidate_analysis(DEPENDENCY_INSTRUCTIONS | DEPENDENCY_VARIABLES);

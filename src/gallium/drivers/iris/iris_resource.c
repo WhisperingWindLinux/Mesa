@@ -619,7 +619,8 @@ iris_get_aux_clear_color_state_size(struct iris_screen *screen,
     * buffers can use indirect clear values is when they're accessed by the
     * sampler via render surface state objects.
     */
-   if (isl_surf_usage_is_depth(res->surf.usage) &&
+   if (screen->devinfo->verx10 < 125 &&
+       isl_surf_usage_is_depth(res->surf.usage) &&
        !iris_sample_with_depth_aux(screen->devinfo, res))
       return 0;
 

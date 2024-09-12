@@ -59,6 +59,32 @@ radv_destroy_buffer(struct radv_device *device, const VkAllocationCallbacks *pAl
    vk_free2(&device->vk.alloc, pAllocator, buffer);
 }
 
+static uint64_t
+radv_get_bda_replay_addr(const VkBufferCreateInfo *pCreateInfo)
+{
+   uint64_t addr = 0;
+   vk_foreach_struct_const (ext, pCreateInfo->pNext) {
+      switch (ext->sType) {
+      case VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO: {
+         const VkBufferOpaqueCaptureAddressCreateInfo *bda = (void *)ext;
+         if (bda->opaqueCaptureAddress != 0)
+            return bda->opaqueCaptureAddress;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_CREATE_INFO_EXT: {
+         const VkBufferDeviceAddressCreateInfoEXT *bda = (void *)ext;
+         if (bda->deviceAddress != 0)
+            return bda->deviceAddress;
+         break;
+      }
+      default:
+         break;
+      }
+   }
+
+   return addr;
+}
+
 VkResult
 radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreateInfo,
                    const VkAllocationCallbacks *pAllocator, VkBuffer *pBuffer, bool is_internal)
@@ -93,11 +119,7 @@ radv_create_buffer(struct radv_device *device, const VkBufferCreateInfo *pCreate
           (VK_BUFFER_USAGE_2_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_2_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT))
          flags |= RADEON_FLAG_32BIT;
 
-      uint64_t replay_address = 0;
-      const VkBufferOpaqueCaptureAddressCreateInfo *replay_info =
-         vk_find_struct_const(pCreateInfo->pNext, BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO);
-      if (replay_info && replay_info->opaqueCaptureAddress)
-         replay_address = replay_info->opaqueCaptureAddress;
+      const uint64_t replay_address = radv_get_bda_replay_addr(pCreateInfo);
 
       VkResult result = radv_bo_create(device, &buffer->vk.base, align64(buffer->vk.size, 4096), 4096, 0, flags,
                                        RADV_BO_PRIORITY_VIRTUAL, replay_address, is_internal, &buffer->bo);

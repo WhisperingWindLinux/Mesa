@@ -842,7 +842,7 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .hostQueryReset = true,
       .timelineSemaphore = true,
       .bufferDeviceAddress = true,
-      .bufferDeviceAddressCaptureReplay = true,
+      .bufferDeviceAddressCaptureReplay = false,
       .bufferDeviceAddressMultiDevice = false,
       .vulkanMemoryModel = true,
       .vulkanMemoryModelDeviceScope = true,

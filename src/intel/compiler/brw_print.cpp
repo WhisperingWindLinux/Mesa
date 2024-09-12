@@ -4,6 +4,7 @@
  */
 
 #include "brw_cfg.h"
+#include "brw_disasm.h"
 #include "brw_fs.h"
 #include "brw_private.h"
 #include "dev/intel_debug.h"
@@ -180,38 +181,6 @@ brw_instruction_name(const struct brw_isa_info *isa, enum opcode op)
    case SHADER_OPCODE_IMAGE_SIZE_LOGICAL:
       return "image_size_logical";
 
-   case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
-      return "untyped_atomic_logical";
-   case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
-      return "untyped_surface_read_logical";
-   case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
-      return "untyped_surface_write_logical";
-   case SHADER_OPCODE_UNALIGNED_OWORD_BLOCK_READ_LOGICAL:
-      return "unaligned_oword_block_read_logical";
-   case SHADER_OPCODE_OWORD_BLOCK_WRITE_LOGICAL:
-      return "oword_block_write_logical";
-   case SHADER_OPCODE_A64_UNTYPED_READ_LOGICAL:
-      return "a64_untyped_read_logical";
-   case SHADER_OPCODE_A64_OWORD_BLOCK_READ_LOGICAL:
-      return "a64_oword_block_read_logical";
-   case SHADER_OPCODE_A64_UNALIGNED_OWORD_BLOCK_READ_LOGICAL:
-      return "a64_unaligned_oword_block_read_logical";
-   case SHADER_OPCODE_A64_OWORD_BLOCK_WRITE_LOGICAL:
-      return "a64_oword_block_write_logical";
-   case SHADER_OPCODE_A64_UNTYPED_WRITE_LOGICAL:
-      return "a64_untyped_write_logical";
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_READ_LOGICAL:
-      return "a64_byte_scattered_read_logical";
-   case SHADER_OPCODE_A64_BYTE_SCATTERED_WRITE_LOGICAL:
-      return "a64_byte_scattered_write_logical";
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
-      return "a64_untyped_atomic_logical";
-   case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
-      return "typed_atomic_logical";
-   case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
-      return "typed_surface_read_logical";
-   case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
-      return "typed_surface_write_logical";
    case SHADER_OPCODE_MEMORY_FENCE:
       return "memory_fence";
    case FS_OPCODE_SCHEDULING_FENCE:
@@ -219,15 +188,6 @@ brw_instruction_name(const struct brw_isa_info *isa, enum opcode op)
    case SHADER_OPCODE_INTERLOCK:
       /* For an interlock we actually issue a memory fence via sendc. */
       return "interlock";
-
-   case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
-      return "byte_scattered_read_logical";
-   case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
-      return "byte_scattered_write_logical";
-   case SHADER_OPCODE_DWORD_SCATTERED_READ_LOGICAL:
-      return "dword_scattered_read_logical";
-   case SHADER_OPCODE_DWORD_SCATTERED_WRITE_LOGICAL:
-      return "dword_scattered_write_logical";
 
    case SHADER_OPCODE_LOAD_PAYLOAD:
       return "load_payload";
@@ -325,11 +285,87 @@ brw_instruction_name(const struct brw_isa_info *isa, enum opcode op)
       return "read_arch_reg";
    case SHADER_OPCODE_LOAD_SUBGROUP_INVOCATION:
       return "load_subgroup_invocation";
+   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
+      return "memory_load";
+   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
+      return "memory_store";
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
+      return "memory_atomic";
    }
 
    unreachable("not reached");
 }
 
+/**
+ * Pretty-print a source for a SHADER_OPCODE_MEMORY_LOGICAL instruction.
+ *
+ * Returns true if the value is fully printed (i.e. an enum) and false if
+ * we only printed a label, and the actual source value still needs printing.
+ */
+static bool
+print_memory_logical_source(FILE *file, const fs_inst *inst, unsigned i)
+{
+   if (inst->is_control_source(i)) {
+      assert(inst->src[i].file == IMM && inst->src[i].type == BRW_TYPE_UD);
+      assert(!inst->src[i].negate);
+      assert(!inst->src[i].abs);
+   }
+
+   switch (i) {
+   case MEMORY_LOGICAL_OPCODE:
+      fprintf(file, " %s", brw_lsc_op_to_string(inst->src[i].ud));
+      return true;
+   case MEMORY_LOGICAL_MODE: {
+      static const char *modes[] = {
+         [MEMORY_MODE_TYPED]        = "typed",
+         [MEMORY_MODE_UNTYPED]      = "untyped",
+         [MEMORY_MODE_SHARED_LOCAL] = "shared",
+         [MEMORY_MODE_SCRATCH]      = "scratch",
+      };
+      assert(inst->src[i].ud < ARRAY_SIZE(modes));
+      fprintf(file, " %s", modes[inst->src[i].ud]);
+      return true;
+   }
+   case MEMORY_LOGICAL_BINDING_TYPE:
+      fprintf(file, " %s", brw_lsc_addr_surftype_to_string(inst->src[i].ud));
+      if (inst->src[i].ud != LSC_ADDR_SURFTYPE_FLAT)
+         fprintf(file, ":");
+      return true;
+   case MEMORY_LOGICAL_BINDING:
+      return inst->src[i].file == BAD_FILE;
+   case MEMORY_LOGICAL_ADDRESS:
+      fprintf(file, " addr: ");
+      return false;
+   case MEMORY_LOGICAL_COORD_COMPONENTS:
+      fprintf(file, " coord_comps:");
+      return false;
+   case MEMORY_LOGICAL_ALIGNMENT:
+      fprintf(file, " align:");
+      return false;
+   case MEMORY_LOGICAL_DATA_SIZE:
+      fprintf(file, " %s", brw_lsc_data_size_to_string(inst->src[i].ud));
+      return true;
+   case MEMORY_LOGICAL_COMPONENTS:
+      fprintf(file, " comps:");
+      return false;
+   case MEMORY_LOGICAL_FLAGS:
+      if (inst->src[i].ud & MEMORY_FLAG_TRANSPOSE)
+         fprintf(file, " transpose");
+      if (inst->src[i].ud & MEMORY_FLAG_INCLUDE_HELPERS)
+         fprintf(file, " helpers");
+      return true;
+   case MEMORY_LOGICAL_DATA0:
+      fprintf(file, " data0: ");
+      return false;
+   case MEMORY_LOGICAL_DATA1:
+      if (inst->src[i].file == BAD_FILE)
+         return true;
+      fprintf(file, " data1: ");
+      return false;
+   default:
+      unreachable("invalid source");
+   }
+}
 
 void
 brw_print_instruction_to_file(const fs_visitor &s, const fs_inst *inst, FILE *file, const brw::def_analysis *defs)
@@ -430,7 +466,14 @@ brw_print_instruction_to_file(const fs_visitor &s, const fs_inst *inst, FILE *fi
    fprintf(file, ":%s", brw_reg_type_to_letters(inst->dst.type));
 
    for (int i = 0; i < inst->sources; i++) {
-      fprintf(file, ", ");
+      if (inst->opcode == SHADER_OPCODE_MEMORY_LOAD_LOGICAL ||
+          inst->opcode == SHADER_OPCODE_MEMORY_STORE_LOGICAL ||
+          inst->opcode == SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL) {
+         if (print_memory_logical_source(file, inst, i))
+            continue;
+      } else {
+         fprintf(file, ", ");
+      }
 
       if (inst->src[i].negate)
          fprintf(file, "-");

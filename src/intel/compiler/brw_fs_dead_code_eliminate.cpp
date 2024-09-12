@@ -56,15 +56,13 @@ static bool
 can_omit_write(const fs_inst *inst)
 {
    switch (inst->opcode) {
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL:
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
       return true;
    default:
       /* We can eliminate the destination write for ordinary instructions,
        * but not most SENDs.
        */
-      if (inst->opcode < 128 && inst->mlen == 0)
+      if (inst->opcode < NUM_BRW_OPCODES && inst->mlen == 0)
          return true;
 
       /* It might not be safe for other virtual opcodes. */

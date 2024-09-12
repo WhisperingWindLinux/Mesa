@@ -241,6 +241,14 @@ fs_inst::is_control_source(unsigned arg) const
    case SHADER_OPCODE_SEND:
       return arg == 0 || arg == 1;
 
+   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
+   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
+      return arg != MEMORY_LOGICAL_BINDING &&
+             arg != MEMORY_LOGICAL_ADDRESS &&
+             arg != MEMORY_LOGICAL_DATA0 &&
+             arg != MEMORY_LOGICAL_DATA1;
+
    default:
       return false;
    }
@@ -617,26 +625,13 @@ fs_inst::is_partial_write() const
        this->opcode != BRW_OPCODE_SEL)
       return true;
 
+   if (!this->dst.is_contiguous())
+      return true;
+
    if (this->dst.offset % REG_SIZE != 0)
       return true;
 
-   /* SEND instructions always write whole registers */
-   if (this->opcode == SHADER_OPCODE_SEND)
-      return false;
-
-   /* Special case UNDEF since a lot of places in the backend do things like this :
-    *
-    *  fs_builder ubld = bld.exec_all().group(1, 0);
-    *  brw_reg tmp = ubld.vgrf(BRW_TYPE_UD);
-    *  ubld.UNDEF(tmp); <- partial write, even if the whole register is concerned
-    */
-   if (this->opcode == SHADER_OPCODE_UNDEF) {
-      assert(this->dst.is_contiguous());
-      return this->size_written < 32;
-   }
-
-   return this->exec_size * brw_type_size_bytes(this->dst.type) < 32 ||
-          !this->dst.is_contiguous();
+   return this->size_written % REG_SIZE != 0;
 }
 
 unsigned
@@ -709,103 +704,22 @@ fs_inst::components_read(unsigned i) const
       } else
          return 1;
 
-   case SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL:
-   case SHADER_OPCODE_TYPED_SURFACE_READ_LOGICAL:
-      assert(src[SURFACE_LOGICAL_SRC_IMM_DIMS].file == IMM);
-      /* Surface coordinates. */
-      if (i == SURFACE_LOGICAL_SRC_ADDRESS)
-         return src[SURFACE_LOGICAL_SRC_IMM_DIMS].ud;
-      /* Surface operation source (ignored for reads). */
-      else if (i == SURFACE_LOGICAL_SRC_DATA)
+   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
+      if (i == MEMORY_LOGICAL_DATA0 || i == MEMORY_LOGICAL_DATA0)
          return 0;
+      /* fallthrough */
+   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
+      if (i == MEMORY_LOGICAL_DATA1)
+         return 0;
+      /* fallthrough */
+   case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
+      if (i == MEMORY_LOGICAL_DATA0 || i == MEMORY_LOGICAL_DATA1)
+         return src[MEMORY_LOGICAL_COMPONENTS].ud;
+      else if (i == MEMORY_LOGICAL_ADDRESS)
+         return src[MEMORY_LOGICAL_COORD_COMPONENTS].ud;
       else
          return 1;
 
-   case SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL:
-   case SHADER_OPCODE_TYPED_SURFACE_WRITE_LOGICAL:
-      assert(src[SURFACE_LOGICAL_SRC_IMM_DIMS].file == IMM &&
-             src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      /* Surface coordinates. */
-      if (i == SURFACE_LOGICAL_SRC_ADDRESS)
-         return src[SURFACE_LOGICAL_SRC_IMM_DIMS].ud;
-      /* Surface operation source. */
-      else if (i == SURFACE_LOGICAL_SRC_DATA)
-         return src[SURFACE_LOGICAL_SRC_IMM_ARG].ud;
-      else
-         return 1;
-
-   case SHADER_OPCODE_A64_UNTYPED_READ_LOGICAL:
-   case SHADER_OPCODE_A64_OWORD_BLOCK_READ_LOGICAL:
-   case SHADER_OPCODE_A64_UNALIGNED_OWORD_BLOCK_READ_LOGICAL:
-      assert(src[A64_LOGICAL_ARG].file == IMM);
-      return 1;
-
-   case SHADER_OPCODE_A64_OWORD_BLOCK_WRITE_LOGICAL:
-      assert(src[A64_LOGICAL_ARG].file == IMM);
-      if (i == A64_LOGICAL_SRC) { /* data to write */
-         const unsigned comps = src[A64_LOGICAL_ARG].ud / exec_size;
-         assert(comps > 0);
-         return comps;
-      } else {
-         return 1;
-      }
-
-   case SHADER_OPCODE_UNALIGNED_OWORD_BLOCK_READ_LOGICAL:
-      assert(src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      return 1;
-
-   case SHADER_OPCODE_OWORD_BLOCK_WRITE_LOGICAL:
-      assert(src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      if (i == SURFACE_LOGICAL_SRC_DATA) {
-         const unsigned comps = src[SURFACE_LOGICAL_SRC_IMM_ARG].ud / exec_size;
-         assert(comps > 0);
-         return comps;
-      } else {
-         return 1;
-      }
-
-   case SHADER_OPCODE_A64_UNTYPED_WRITE_LOGICAL:
-      assert(src[A64_LOGICAL_ARG].file == IMM);
-      return i == A64_LOGICAL_SRC ? src[A64_LOGICAL_ARG].ud : 1;
-
-   case SHADER_OPCODE_A64_UNTYPED_ATOMIC_LOGICAL:
-      assert(src[A64_LOGICAL_ARG].file == IMM);
-      return i == A64_LOGICAL_SRC ?
-             lsc_op_num_data_values(src[A64_LOGICAL_ARG].ud) : 1;
-
-   case SHADER_OPCODE_BYTE_SCATTERED_READ_LOGICAL:
-   case SHADER_OPCODE_DWORD_SCATTERED_READ_LOGICAL:
-      /* Scattered logical opcodes use the following params:
-       * src[0] Surface coordinates
-       * src[1] Surface operation source (ignored for reads)
-       * src[2] Surface
-       * src[3] IMM with always 1 dimension.
-       * src[4] IMM with arg bitsize for scattered read/write 8, 16, 32
-       */
-      assert(src[SURFACE_LOGICAL_SRC_IMM_DIMS].file == IMM &&
-             src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      return i == SURFACE_LOGICAL_SRC_DATA ? 0 : 1;
-
-   case SHADER_OPCODE_BYTE_SCATTERED_WRITE_LOGICAL:
-   case SHADER_OPCODE_DWORD_SCATTERED_WRITE_LOGICAL:
-      assert(src[SURFACE_LOGICAL_SRC_IMM_DIMS].file == IMM &&
-             src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      return 1;
-
-   case SHADER_OPCODE_UNTYPED_ATOMIC_LOGICAL:
-   case SHADER_OPCODE_TYPED_ATOMIC_LOGICAL: {
-      assert(src[SURFACE_LOGICAL_SRC_IMM_DIMS].file == IMM &&
-             src[SURFACE_LOGICAL_SRC_IMM_ARG].file == IMM);
-      const unsigned op = src[SURFACE_LOGICAL_SRC_IMM_ARG].ud;
-      /* Surface coordinates. */
-      if (i == SURFACE_LOGICAL_SRC_ADDRESS)
-         return src[SURFACE_LOGICAL_SRC_IMM_DIMS].ud;
-      /* Surface operation source. */
-      else if (i == SURFACE_LOGICAL_SRC_DATA)
-         return lsc_op_num_data_values(op);
-      else
-         return 1;
-   }
    case FS_OPCODE_INTERPOLATE_AT_PER_SLOT_OFFSET:
       return (i == 0 ? 2 : 1);
 

@@ -2038,12 +2038,47 @@ brw_cmod_for_nir_comparison(nir_op op)
 }
 
 enum lsc_opcode
-lsc_aop_for_nir_intrinsic(const nir_intrinsic_instr *atomic)
+lsc_op_for_nir_intrinsic(const nir_intrinsic_instr *intrin)
 {
-   switch (nir_intrinsic_atomic_op(atomic)) {
+   switch (intrin->intrinsic) {
+   case nir_intrinsic_image_load:
+   case nir_intrinsic_image_load_raw_intel:
+   case nir_intrinsic_bindless_image_load:
+   case nir_intrinsic_load_ssbo:
+   case nir_intrinsic_load_shared:
+   case nir_intrinsic_load_global:
+   case nir_intrinsic_load_global_block_intel:
+   case nir_intrinsic_load_global_constant:
+   case nir_intrinsic_load_global_constant_uniform_block_intel:
+   case nir_intrinsic_load_shared_block_intel:
+   case nir_intrinsic_load_shared_uniform_block_intel:
+   case nir_intrinsic_load_ssbo_block_intel:
+   case nir_intrinsic_load_ssbo_uniform_block_intel:
+   case nir_intrinsic_load_ubo_uniform_block_intel:
+   case nir_intrinsic_load_scratch:
+      return LSC_OP_LOAD;
+
+   case nir_intrinsic_image_store:
+   case nir_intrinsic_image_store_raw_intel:
+   case nir_intrinsic_bindless_image_store:
+   case nir_intrinsic_store_ssbo:
+   case nir_intrinsic_store_shared:
+   case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_block_intel:
+   case nir_intrinsic_store_shared_block_intel:
+   case nir_intrinsic_store_ssbo_block_intel:
+   case nir_intrinsic_store_scratch:
+      return LSC_OP_STORE;
+
+   default:
+      assert(nir_intrinsic_has_atomic_op(intrin));
+      break;
+   }
+
+   switch (nir_intrinsic_atomic_op(intrin)) {
    case nir_atomic_op_iadd: {
       unsigned src_idx;
-      switch (atomic->intrinsic) {
+      switch (intrin->intrinsic) {
       case nir_intrinsic_image_atomic:
       case nir_intrinsic_bindless_image_atomic:
          src_idx = 3;
@@ -2059,8 +2094,8 @@ lsc_aop_for_nir_intrinsic(const nir_intrinsic_instr *atomic)
          unreachable("Invalid add atomic opcode");
       }
 
-      if (nir_src_is_const(atomic->src[src_idx])) {
-         int64_t add_val = nir_src_as_int(atomic->src[src_idx]);
+      if (nir_src_is_const(intrin->src[src_idx])) {
+         int64_t add_val = nir_src_as_int(intrin->src[src_idx]);
          if (add_val == 1)
             return LSC_OP_ATOMIC_INC;
          else if (add_val == -1)

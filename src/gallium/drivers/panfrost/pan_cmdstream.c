@@ -741,8 +741,8 @@ panfrost_emit_viewport(struct panfrost_batch *batch)
    maxx--;
    maxy--;
 
-   batch->minimum_z = rast->depth_clip_near ? minz : -INFINITY;
-   batch->maximum_z = rast->depth_clip_far ? maxz : +INFINITY;
+   batch->minimum_z = minz;
+   batch->maximum_z = maxz;
 
 #if PAN_ARCH <= 7
    struct panfrost_ptr T = pan_pool_alloc_desc(&batch->pool.base, VIEWPORT);
@@ -802,6 +802,12 @@ panfrost_emit_depth_stencil(struct panfrost_batch *batch)
       cfg.depth_units = panfrost_z_depth_offset(ctx, rast->base.offset_units);
       cfg.depth_factor = rast->base.offset_scale;
       cfg.depth_bias_clamp = rast->base.offset_clamp;
+
+      assert(rast->base.depth_clip_near == rast->base.depth_clip_far);
+      cfg.depth_cull_enable = rast->base.depth_clip_near;
+      cfg.depth_clamp_mode = rast->base.depth_clamp
+                                ? MALI_DEPTH_CLAMP_MODE_BOUNDS
+                                : MALI_DEPTH_CLAMP_MODE_0_1;
    }
 
    pan_merge(dynamic, zsa->desc, DEPTH_STENCIL);
@@ -3320,6 +3326,7 @@ panfrost_create_rasterizer_state(struct pipe_context *pctx,
       cfg.multisample_enable = cso->multisample;
       cfg.fixed_function_near_discard = cso->depth_clip_near;
       cfg.fixed_function_far_discard = cso->depth_clip_far;
+      cfg.fixed_function_depth_range_fixed = !cso->depth_clamp;
       cfg.shader_depth_range_fixed = true;
    }
 
@@ -3512,7 +3519,9 @@ panfrost_create_depth_stencil_state(
    pan_pipe_to_stencil(&front, &so->stencil_front);
    pan_pipe_to_stencil(&back, &so->stencil_back);
 #else
-   pan_pack(&so->desc, DEPTH_STENCIL, cfg) {
+   /* Pack with nodefaults so only explicitly set fields affect pan_merge() when
+    * emitting depth stencil descriptor */
+   pan_pack_nodefaults(&so->desc, DEPTH_STENCIL, cfg) {
       cfg.front_compare_function = (enum mali_func)front.func;
       cfg.front_stencil_fail = pan_pipe_to_stencil_op(front.fail_op);
       cfg.front_depth_fail = pan_pipe_to_stencil_op(front.zfail_op);

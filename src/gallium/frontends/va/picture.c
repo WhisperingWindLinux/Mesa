@@ -148,12 +148,15 @@ vlVaBeginPicture(VADriverContextP ctx, VAContextID context_id, VASurfaceID rende
          case PIPE_VIDEO_FORMAT_AV1:
             context->desc.av1enc.metadata_flags.value = 0;
             context->desc.av1enc.roi.num = 0;
+            context->desc.av1enc.intra_refresh.mode = INTRA_REFRESH_MODE_NONE;
             break;
          case PIPE_VIDEO_FORMAT_HEVC:
             context->desc.h265enc.roi.num = 0;
+            context->desc.h265enc.intra_refresh.mode = INTRA_REFRESH_MODE_NONE;
             break;
          case PIPE_VIDEO_FORMAT_MPEG4_AVC:
             context->desc.h264enc.roi.num = 0;
+            context->desc.h264enc.intra_refresh.mode = INTRA_REFRESH_MODE_NONE;
             break;
          default:
             break;
@@ -972,7 +975,6 @@ vlVaRenderPicture(VADriverContextP ctx, VAContextID context_id, VABufferID *buff
    VAStatus vaStatus = VA_STATUS_SUCCESS;
 
    unsigned i;
-   vlVaBuffer *seq_param_buf = NULL;
 
    if (!ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -998,15 +1000,7 @@ vlVaRenderPicture(VADriverContextP ctx, VAContextID context_id, VABufferID *buff
 
       if (buf->type == VAProtectedSliceDataBufferType)
          handleVAProtectedSliceDataBufferType(context, buf);
-      else if (buf->type == VAEncSequenceParameterBufferType)
-         seq_param_buf = buf;
    }
-
-   /* Now process VAEncSequenceParameterBufferType where the encoder is created
-    * and some default parameters are set to make sure it won't overwrite
-    * parameters already set by application from earlier buffers. */
-   if (seq_param_buf)
-      vaStatus = handleVAEncSequenceParameterBufferType(drv, context, seq_param_buf);
 
    for (i = 0; i < num_buffers && vaStatus == VA_STATUS_SUCCESS; ++i) {
       vlVaBuffer *buf = handle_table_get(drv->htab, buffers[i]);
@@ -1035,6 +1029,10 @@ vlVaRenderPicture(VADriverContextP ctx, VAContextID context_id, VABufferID *buff
 
       case VAProcPipelineParameterBufferType:
          vaStatus = vlVaHandleVAProcPipelineParameterBufferType(drv, context, buf);
+         break;
+
+      case VAEncSequenceParameterBufferType:
+         vaStatus = handleVAEncSequenceParameterBufferType(drv, context, buf);
          break;
 
       case VAEncMiscParameterBufferType:
@@ -1279,17 +1277,6 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
       coded_buf = context->coded_buf;
       if (u_reduce_video_profile(context->templat.profile) == PIPE_VIDEO_FORMAT_MPEG4_AVC)
          context->desc.h264enc.frame_num_cnt++;
-
-      /* keep other path the same way */
-      if (!screen->get_video_param(screen, context->templat.profile,
-                                  context->decoder->entrypoint,
-                                  PIPE_VIDEO_CAP_ENC_QUALITY_LEVEL)) {
-
-         if (u_reduce_video_profile(context->templat.profile) == PIPE_VIDEO_FORMAT_MPEG4_AVC)
-            getEncParamPresetH264(context);
-         else if (u_reduce_video_profile(context->templat.profile) == PIPE_VIDEO_FORMAT_HEVC)
-            getEncParamPresetH265(context);
-      }
 
       if (surf->efc_surface) {
          assert(surf == drv->last_efc_surface);

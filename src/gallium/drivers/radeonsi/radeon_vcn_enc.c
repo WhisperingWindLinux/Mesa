@@ -914,6 +914,26 @@ static void radeon_vcn_enc_av1_get_param(struct radeon_encoder *enc,
 
    enc_pic->av1_recon_frame = pic->recon_frame;
    enc_pic->av1_ref_frame_ctrl_l0.value = pic->ref_frame_ctrl_l0;
+   enc_pic->av1_ref_frame_ctrl_l1.value = pic->ref_frame_ctrl_l1;
+   enc_pic->delta_frame_id_length = pic->seq.delta_frame_id_length ?
+                                         pic->seq.delta_frame_id_length :
+                                         RENCODE_AV1_DELTA_FRAME_ID_LENGTH;
+   enc_pic->additional_frame_id_length = pic->seq.additional_frame_id_length ?
+                                         pic->seq.additional_frame_id_length :
+                                         RENCODE_AV1_ADDITIONAL_FRAME_ID_LENGTH ;
+   enc_pic->show_frame = pic->show_frame;
+   enc_pic->showable_frame = pic->showable_frame;
+   if (enc->dpb_type == DPB_TIER_2) {
+      for (int i = 0; i < RENCDOE_AV1_NUM_REF_FRAMES; i++)
+         enc_pic->reference_order_hint[i] = pic->ref_order_hint[i];
+      enc_pic->refresh_frame_flags = pic->refresh_frame_flags;
+      enc_pic->temporal_id = pic->temporal_id;
+      enc_pic->frame_id = pic->current_frame_id;
+      enc_pic->display_frame_id = pic->current_frame_id;
+      enc_pic->reference_delta_frame_id = pic->delta_frame_id_minus_1 + 1;
+      enc_pic->order_hint = pic->order_hint;
+      enc_pic->primary_ref_frame = pic->primary_ref_frame;
+   }
 
    enc_pic->frame_id_numbers_present = pic->seq.seq_bits.frame_id_number_present_flag;
    enc_pic->enable_error_resilient_mode = pic->error_resilient_mode;
@@ -1124,6 +1144,9 @@ static int setup_dpb(struct radeon_encoder *enc, uint32_t num_reconstructed_pict
    enc_pic->ctx_buf.rec_luma_pitch   = pitch;
    enc_pic->ctx_buf.pre_encode_picture_luma_pitch   = pitch;
    enc_pic->ctx_buf.num_reconstructed_pictures = num_reconstructed_pictures;
+   enc_pic->dpb_luma_size   = luma_size;
+   enc_pic->dpb_chroma_size = chroma_size;
+   enc_pic->total_coloc_bytes = total_coloc_bytes;
 
    offset = 0;
    enc->metadata_size = 0;
@@ -1314,6 +1337,22 @@ error:
    return -1;
 }
 
+static void radeon_enc_release_ddpb(struct radeon_encoder *enc)
+{
+   for (int i = 0; i < RADEON_ENC_DDPB_MAX_NUM; i++) {
+      struct radeon_enc_dpb_tier2_entry *p = &enc->ddpb[i];
+      if (!p->flags) {
+         for (int j = 0; j < RADEON_ENC_TIER2_MAX_BUF; j++) {
+            RADEON_ENC_DESTROY_VIDEO_BUFFER(p->b[j]);
+            p->flags = 0;
+         }
+      }
+   }
+
+   FREE(enc->ddpb);
+   enc->ddpb = NULL;
+}
+
 static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
                                    struct pipe_video_buffer *source,
                                    struct pipe_picture_desc *picture)
@@ -1391,6 +1430,10 @@ static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
    radeon_vcn_enc_get_param(enc, picture);
    if (u_reduce_video_profile(picture->profile) == PIPE_VIDEO_FORMAT_AV1)
       dpb_slots = enc->base.max_references + 1;
+
+   if (enc->dpb_type == DPB_TIER_2)
+      dpb_slots = 0;
+
    if (!enc->dpb) {
       enc->dpb = CALLOC_STRUCT(rvid_buffer);
       setup_dpb(enc, dpb_slots);
@@ -1421,6 +1464,18 @@ static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
          RVID_ERR("Can't resize meta buffer.\n");
          goto error;
       }
+   }
+
+   if (enc->dpb_type == DPB_TIER_2 && !enc->ddpb) {
+      enc->ddpb = CALLOC(RADEON_ENC_DDPB_MAX_NUM, sizeof(*enc->ddpb));
+      if (!enc->ddpb) {
+         RVID_ERR("Can't create DDPB entry buffer.\n");
+         goto error;
+      }
+
+      memset(enc->ddpb, 0, sizeof(*enc->ddpb) * RADEON_ENC_DDPB_MAX_NUM);
+      for (int i = 0; i < RADEON_ENC_DDPB_MAX_NUM; i++)
+         (enc->ddpb + i)->index = i;
    }
 
    /* qp map buffer could be created here, and release at the end */
@@ -1480,6 +1535,8 @@ error:
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->cdf);
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->roi);
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->meta);
+   if (enc->ddpb)
+      radeon_enc_release_ddpb(enc);
 }
 
 static uint32_t radeon_vcn_enc_encode_h264_header(struct radeon_encoder *enc,
@@ -1647,6 +1704,9 @@ static void radeon_enc_destroy(struct pipe_video_codec *encoder)
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->cdf);
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->roi);
    RADEON_ENC_DESTROY_VIDEO_BUFFER(enc->meta);
+   if (enc->ddpb)
+      radeon_enc_release_ddpb(enc);
+
    enc->ws->cs_destroy(&enc->cs);
    if (enc->ectx)
       enc->ectx->destroy(enc->ectx);
@@ -1758,6 +1818,10 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    }
 
    enc->enc_pic.use_rc_per_pic_ex = false;
+
+   if (sscreen->info.vcn_ip_version >= VCN_5_0_0 &&
+      (u_reduce_video_profile(enc->base.profile) == PIPE_VIDEO_FORMAT_AV1))
+      enc->dpb_type = DPB_LEGACY; /* DPB_TIER_2 disable for now */
 
    if (sscreen->info.vcn_ip_version >= VCN_5_0_0) {
       radeon_enc_5_0_init(enc);

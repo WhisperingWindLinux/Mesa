@@ -311,9 +311,8 @@ static bool radeon_enc_av1_search_requested_reference(
       indicates which slot it needs to find in ref_frame_idx[], and
       from ref_frame_idx to find the requested reference frame
       in ref_list[] */
-   #define RENCODE_AV1_REF_CTRL_L0_THIRD_ITEM (0x1c0) /* 111 000 000 */
-   uint32_t marked_ref_frame_idx = (RENCODE_AV1_REF_CTRL_L0_THIRD_ITEM &
-                                    enc->enc_pic.av1_ref_frame_ctrl_l0) >> 6;
+   uint32_t marked_ref_frame_idx =
+         enc->enc_pic.av1_ref_frame_ctrl_l0.fields.search_idx2;
    /* valid marked_ref_frame_idx > 0 */
    if (marked_ref_frame_idx) {
       uint32_t requested_frame_idx =

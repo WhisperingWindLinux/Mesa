@@ -913,7 +913,7 @@ static void radeon_vcn_enc_av1_get_param(struct radeon_encoder *enc,
       enc_pic->av1_ref_list[i] = pic->ref_list[i];
 
    enc_pic->av1_recon_frame = pic->recon_frame;
-   enc_pic->av1_ref_frame_ctrl_l0 = pic->ref_frame_ctrl_l0;
+   enc_pic->av1_ref_frame_ctrl_l0.value = pic->ref_frame_ctrl_l0;
 
    enc_pic->frame_id_numbers_present = pic->seq.seq_bits.frame_id_number_present_flag;
    enc_pic->enable_error_resilient_mode = pic->error_resilient_mode;

@@ -62,7 +62,7 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
 
    struct vk_image_buffer_layout buffer_layout =
       vk_memory_to_image_copy_layout(&dst->vk, info);
-   
+
    const VkExtent3D extent_px =
       vk_image_sanitize_extent(&dst->vk, info->imageExtent);
    const uint32_t layer_count =
@@ -73,11 +73,11 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
          vk_image_sanitize_offset(&dst->vk, info->imageOffset);
    const struct nil_Offset4D_Pixels offset4d_px =
          vk_to_nil_offset(offset_px, info->imageSubresource.baseArrayLayer);
-   
+
    const VkImageAspectFlagBits aspects = info->imageSubresource.aspectMask;
    const uint8_t plane = nvk_image_aspects_to_plane(dst, aspects);
    struct nvk_image_plane dst_plane = dst->planes[plane];
-   
+
    const uint32_t dst_miplevel = info->imageSubresource.mipLevel;
    const unsigned bpp = util_format_get_blocksize(dst_plane.nil.format.p_format);
 
@@ -87,19 +87,19 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
    result = nvkmd_mem_map(host_mem->mem, &host_mem->vk.base, NVKMD_MEM_MAP_RDWR, NULL, &mem_map_dst);
    if (result != VK_SUCCESS)
       return result;
-   
+
    struct nil_Extent4D_Elements extent_el =
       nil_extent4d_px_to_el(extent4d_px, dst_plane.nil.format,
                             dst_plane.nil.sample_layout);
    assert(extent_el.depth == 1 || extent_el.array_len == 1);
-   
+
    const unsigned start_layer = (dst->vk.image_type == VK_IMAGE_TYPE_3D) ?
       info->imageOffset.z : info->imageSubresource.baseArrayLayer;
    const unsigned dst_pitch_B =
       dst_plane.nil.levels[dst_miplevel].row_stride_B;
    VkDeviceSize src_addr_B = (uint64_t) info->pHostPointer + start_layer * dst_pitch_B;
    VkDeviceSize dst_addr_B = (uint64_t) mem_map_dst + host_offset;
-   
+
    for (unsigned z = 0; z < layer_count; z++) {
       uint64_t layer_size_B = nil_image_level_size_B(&dst_plane.nil,
                                                      dst_miplevel);
@@ -189,7 +189,7 @@ nvk_copy_image_to_memory(struct nvk_image *src,
 
    struct vk_image_buffer_layout buffer_layout =
       vk_image_to_memory_copy_layout(&src->vk, info);
-   
+
    const VkExtent3D extent_px =
       vk_image_sanitize_extent(&src->vk, info->imageExtent);
    const uint32_t layer_count =
@@ -200,7 +200,7 @@ nvk_copy_image_to_memory(struct nvk_image *src,
          vk_image_sanitize_offset(&src->vk, info->imageOffset);
    const struct nil_Offset4D_Pixels offset4d_px =
          vk_to_nil_offset(offset_px, info->imageSubresource.baseArrayLayer);
-   
+
    const VkImageAspectFlagBits aspects = info->imageSubresource.aspectMask;
    const uint8_t plane = nvk_image_aspects_to_plane(src, aspects);
    struct nvk_image_plane src_plane = src->planes[plane];
@@ -219,7 +219,7 @@ nvk_copy_image_to_memory(struct nvk_image *src,
       nil_extent4d_px_to_el(extent4d_px, src_plane.nil.format,
                             src_plane.nil.sample_layout);
    assert(extent_el.depth == 1 || extent_el.array_len == 1);
-   
+
    const unsigned start_layer = (src->vk.image_type == VK_IMAGE_TYPE_3D) ?
       info->imageOffset.z : info->imageSubresource.baseArrayLayer;
    const unsigned src_pitch_B =
@@ -306,7 +306,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
                         bool no_swizzle)
 {
    VkResult result;
-   
+
    /* From the Vulkan 1.3.217 spec:
     *
     *    "When copying between compressed and uncompressed formats the
@@ -352,7 +352,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
    result = nvkmd_mem_map(src_host_mem->mem, &src_host_mem->vk.base, NVKMD_MEM_MAP_RDWR, NULL, &mem_map_src);
    if (result != VK_SUCCESS)
       return result;
-   
+
    struct nvk_device_memory *dst_host_mem = src->planes[dst_plane].host_mem;
    uint64_t dst_host_offset = src->planes[dst_plane].host_offset;
    void *mem_map_dst;
@@ -364,7 +364,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
       src_img_plane.nil.levels[src_miplevel].row_stride_B;
    uint64_t src_layer_size_B = nil_image_level_size_B(&src_img_plane.nil,
                                                       src_miplevel);
-   
+
    uint32_t dst_layer_stride_B =
       dst_img_plane.nil.levels[dst_miplevel].row_stride_B;
    uint64_t dst_layer_size_B = nil_image_level_size_B(&dst_img_plane.nil,
@@ -429,7 +429,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
 
          uint32_t tmp_pitch = tl_w_B * src_bpp;
          uint32_t tmp_plane_stride = tmp_pitch * tl_h_B;
-        
+
          for (uint32_t a = 0; a < info->srcSubresource.layerCount; a++) {
             for (uint32_t z = 0; z < info->extent.depth; z += tl_d_B) {
                for (uint32_t y = 0; y < info->extent.height; y += tl_h_B) {
@@ -446,7 +446,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
                         .z = info->dstOffset.z + z,
                         .a = info->dstSubresource.baseArrayLayer + a,
                      };
-                     
+
                      struct nil_Extent4D_Pixels tmp_extent = {
                         .width  = MIN2(info->extent.width - tmp_src_offset.x,
                                        tl_w_B),
@@ -515,7 +515,7 @@ nvk_CopyImageToImageEXT(VkDevice _device,
    VK_FROM_HANDLE(nvk_image, dst, pCopyImageToImageInfo->dstImage);
 
    VkResult result;
-   
+
    const bool no_swizzle = pCopyImageToImageInfo->flags &
       VK_HOST_IMAGE_COPY_MEMCPY_EXT;
 
@@ -536,6 +536,6 @@ nvk_TransitionImageLayoutEXT(VkDevice device,
                              uint32_t transitionCount,
                              const VkHostImageLayoutTransitionInfoEXT *transitions)
 {
-   /* TODO: Not really sure what we should be doing here */
+   /* Nothing to do here */
    return VK_SUCCESS;
 }

@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 use crate::extent::{units, Extent4D, Offset4D};
-use crate::ILog2Ceil;
 use crate::image::Image;
-use crate::tiling::{Tiling, gob_height, GOB_WIDTH_B, GOB_DEPTH};
+use crate::tiling::{gob_height, Tiling, GOB_DEPTH, GOB_WIDTH_B};
+use crate::ILog2Ceil;
 
 pub const SECTOR_WIDTH_B: u32 = 16;
 pub const SECTOR_HEIGHT: u32 = 2;
 pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
 
-
 // This file is dedicated to the internal tiling layout, mainly in the context
-// of CPU-based tiled memcpy implementations (and helpers) for EXT_Host_Image_Copy
+// of CPU-based tiled memcpy implementations (and helpers) for VK_EXT_host_image_copy
 //
 // Work here is based on isl_tiled_memcpy, fd6_tiled_memcpy, old work by Rebecca Mckeever,
 // and https://fgiesen.wordpress.com/2011/01/17/texture-tiling-and-swizzling/
@@ -129,18 +128,19 @@ trait LinearTiledCopy {
         x_end: u32,
         y_end: u32,
         tiling: Tiling,
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
         tiled: usize,
     );
 
     // No bounding box for this one
     unsafe fn copy_whole_gob(
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        tiling: Tiling,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
-        tiled: usize
+        tiled: usize,
     );
 
     unsafe fn copy_tile(
@@ -151,8 +151,8 @@ trait LinearTiledCopy {
         y_end: u32,
         z_end: u32,
         tiling: Tiling,
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
         tiled: usize,
     ) {
@@ -168,7 +168,7 @@ trait LinearTiledCopy {
         //      |           GOB 3           |
         //      +---------------------------+
         // Normally individual tiles are of tile_width_B = GOB_WIDTH_B, so they
-        // already have the correct width, and we just need to divide by 
+        // already have the correct width, and we just need to divide by
         // gob_height_B, and loop over the vertical dimension. However, in the
         // sparse case, a tile can be multiple GOBs wide, so we also have to
         // account for tile width.
@@ -182,7 +182,7 @@ trait LinearTiledCopy {
         let z_max = std::cmp::min(z_end, tile_extent_B.depth);
 
         let gob_extent_B = tiling.gob_extent_B();
-        
+
         let x_start_gob = x_min / gob_extent_B.width as i32;
         let y_start_gob = y_min / gob_extent_B.height as i32;
 
@@ -193,28 +193,36 @@ trait LinearTiledCopy {
         let z_end_tl = z_max.div_ceil(tile_extent_B.depth);
 
         for z_tl in z_start_tl..z_end_tl as i32 {
-           let z_B = z_tl * tile_extent_B.depth as i32;
-           let z_min = z_min - z_B;
-           for y_gob in y_start_gob..y_end_gob as i32 {
+            let z_B = z_tl * tile_extent_B.depth as i32;
+            let z_min = z_min - z_B;
+            for y_gob in y_start_gob..y_end_gob as i32 {
                 let y_B = y_gob as u32 * gob_extent_B.height;
                 let y_min = y_min - y_B as i32;
                 for x_gob in x_start_gob..x_end_gob as i32 {
                     let x_B = x_gob as u32 * gob_extent_B.width;
                     let x_min = x_min - x_B as i32;
-                    let gob_offset: u32 = ((x_B >> 6) & (1 << tiling.x_log2)) +
-                              ((y_B >> 3) & (1 << tiling.y_log2)) +
-                              ((z_tl as u32 & (1 << tiling.z_log2)) << tiling.y_log2);
-                    let tiled = tiled.wrapping_add((gob_offset * (gob_extent_B.height * gob_extent_B.width)).try_into().unwrap());
+                    let gob_offset: u32 = ((x_B >> 6) & (1 << tiling.x_log2))
+                        + ((y_B >> 3) & (1 << tiling.y_log2))
+                        + ((z_tl as u32 & (1 << tiling.z_log2))
+                            << tiling.y_log2);
+                    let tiled = tiled.wrapping_add(
+                        (gob_offset
+                            * (gob_extent_B.height * gob_extent_B.width))
+                            .try_into()
+                            .unwrap(),
+                    );
 
                     if x_min <= 0
-                    && y_min <= 0
-                    && x_max >= gob_extent_B.width.try_into().unwrap()
-                    && y_max >= gob_extent_B.height.try_into().unwrap()
+                        && y_min <= 0
+                        && x_max >= gob_extent_B.width.try_into().unwrap()
+                        && y_max >= gob_extent_B.height.try_into().unwrap()
                     {
-                        Self::copy_whole_gob(row_stride_B,
-                            plane_stride_B,
+                        Self::copy_whole_gob(
+                            tiling,
+                            linear_row_stride_B,
+                            linear_plane_stride_B,
                             tiled,
-                            linear
+                            linear,
                         );
                     } else {
                         Self::copy_gob(
@@ -223,8 +231,8 @@ trait LinearTiledCopy {
                             x_max.try_into().unwrap(),
                             y_max.try_into().unwrap(),
                             tiling,
-                            row_stride_B,
-                            plane_stride_B,
+                            linear_row_stride_B,
+                            linear_plane_stride_B,
                             linear,
                             tiled,
                         );
@@ -237,10 +245,10 @@ trait LinearTiledCopy {
     // No bounding box for this one
     unsafe fn copy_whole_tile(
         tiling: Tiling,
-        row_stride_B: usize,
-        plane_stride_B: usize,
-        linear: usize, 
-        tiled: usize
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
+        linear: usize,
+        tiled: usize,
     ) {
         // Now it is time to break down the tile we have into GOBs. A block
         // is composed of GOBs arranged vertically as follows:
@@ -254,7 +262,7 @@ trait LinearTiledCopy {
         //      |           GOB 3           |
         //      +---------------------------+
         // Normally individual tiles are of tile_width_B = GOB_WIDTH_B, so they
-        // already have the correct width, and we just need to divide by 
+        // already have the correct width, and we just need to divide by
         // gob_height_B, and loop over the vertical dimension. However, in the
         // sparse case, a tile can be multiple GOBs wide, so we also have to
         // account for tile width.
@@ -264,39 +272,45 @@ trait LinearTiledCopy {
         let tile_extent_GOB = tile_extent_B.to_GOB(tiling.gob_height_is_8);
 
         for z_tl in 0..tile_extent_GOB.depth as i32 {
-           for y_gob in 0..tile_extent_GOB.height {
+            for y_gob in 0..tile_extent_GOB.height {
                 let y_B = y_gob * gob_extent_B.height;
                 for x_gob in 0..tile_extent_GOB.width {
                     let x_B = x_gob * gob_extent_B.width;
-                    let gob_offset: u32 = ((x_B >> 6) & (1 << tiling.x_log2)) +
-                                 ((y_B as u32 >> 3) & (1 << tiling.y_log2)) +
-                                 ((z_tl as u32 & (1 << tiling.z_log2)) << tiling.y_log2);
-                
-                    let tiled = tiled.wrapping_add((gob_offset * (gob_extent_B.height * gob_extent_B.width)).try_into().unwrap());
+                    let gob_offset: u32 = ((x_B >> 6) & (1 << tiling.x_log2))
+                        + ((y_B as u32 >> 3) & (1 << tiling.y_log2))
+                        + ((z_tl as u32 & (1 << tiling.z_log2))
+                            << tiling.y_log2);
+
+                    let tiled = tiled.wrapping_add(
+                        (gob_offset
+                            * (gob_extent_B.height * gob_extent_B.width))
+                            .try_into()
+                            .unwrap(),
+                    );
 
                     Self::copy_whole_gob(
-                        row_stride_B,
-                        plane_stride_B,
+                        tiling,
+                        linear_row_stride_B,
+                        linear_plane_stride_B,
                         tiled,
-                        linear
+                        linear,
                     );
                 }
-           }
+            }
         }
     }
 
     unsafe fn copy(
         start_px: Offset4D<units::Pixels>,
         extent_px: Extent4D<units::Pixels>,
-        miplevel: usize, 
+        miplevel: usize,
         nil: Image,
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         Bpp: u8,
         linear: usize,
         tiled: usize,
     ) {
-        
         let start_B = start_px.to_B(nil.format, nil.sample_layout);
         let extent_B = extent_px.to_B(nil.format, nil.sample_layout);
 
@@ -307,7 +321,7 @@ trait LinearTiledCopy {
         // For the general case, blocks and GOBs are comprised of 9 parts as outlined below:
         //
         //                   x_start   x_whole_tile_start   x_whole_tile_end x_end
-        //          
+        //
         //         y_start    |---------|--------------------------|---------|
         //                    |         |                          |         |
         // y_whole_tile_start |---------|--------------------------|---------|
@@ -332,7 +346,8 @@ trait LinearTiledCopy {
         let z_end = (start_B.z + extent_B.depth) as u32;
 
         let lvl_extent_px = Image::level_extent_px(&nil, miplevel as u32);
-        let lvl_extent_tl = lvl_extent_px.to_tl(&tiling, nil.format, nil.sample_layout);
+        let lvl_extent_tl =
+            lvl_extent_px.to_tl(&tiling, nil.format, nil.sample_layout);
 
         let x_start_tl = x_start / tile_extent_B.width as i32;
         let y_start_tl = y_start / tile_extent_B.height as i32;
@@ -345,36 +360,53 @@ trait LinearTiledCopy {
         for z_tl in z_start_tl..z_end_tl as i32 {
             // These are done here to make the inner loops tighter
             let z_B = z_tl * tile_extent_B.depth as i32;
-            let linear = linear.wrapping_add((z_B * plane_stride_B as i32).try_into().unwrap());
-            let tiled = tiled.wrapping_add((z_tl * lvl_extent_tl.width as i32 * lvl_extent_tl.height as i32 * tile_size_B as i32).try_into().unwrap());
+            let linear = linear.wrapping_add(
+                (z_B * linear_plane_stride_B as i32).try_into().unwrap(),
+            );
+            let tiled = tiled.wrapping_add(
+                (z_tl
+                    * lvl_extent_tl.width as i32
+                    * lvl_extent_tl.height as i32
+                    * tile_size_B as i32)
+                    .try_into()
+                    .unwrap(),
+            );
             let z_start = z_start - z_B;
             let z_end = z_end - z_B as u32;
             for y_tl in y_start_tl..y_end_tl as i32 {
                 // See above, done here to tighten the inner loop
                 let y_B = y_tl * tile_extent_B.height as i32;
-                let linear = linear.wrapping_add((y_B * row_stride_B as i32).try_into().unwrap());
-                let tiled = tiled.wrapping_add((y_tl * lvl_extent_tl.width as i32 * tile_size_B as i32).try_into().unwrap());
+                let linear = linear.wrapping_add(
+                    (y_B * linear_row_stride_B as i32).try_into().unwrap(),
+                );
+                let tiled = tiled.wrapping_add(
+                    (y_tl * lvl_extent_tl.width as i32 * tile_size_B as i32)
+                        .try_into()
+                        .unwrap(),
+                );
                 let y_start = y_start - y_B;
                 let y_end = y_end - y_B as u32;
                 for x_tl in x_start_tl..x_end_tl as i32 {
                     let x_B = x_tl * tile_extent_B.width as i32;
                     let linear = linear.wrapping_add(x_B.try_into().unwrap());
-                    let tiled = tiled.wrapping_add((x_tl * tile_size_B as i32).try_into().unwrap());
+                    let tiled = tiled.wrapping_add(
+                        (x_tl * tile_size_B as i32).try_into().unwrap(),
+                    );
                     let x_start = x_start - x_B;
                     let x_end = x_end - x_B as u32;
                     if x_start <= 0
-                    && y_start <= 0
-                    && z_start <= 0
-                    && x_end >= tile_extent_B.width
-                    && y_end >= tile_extent_B.height
-                    && z_end >= tile_extent_B.depth
+                        && y_start <= 0
+                        && z_start <= 0
+                        && x_end >= tile_extent_B.width
+                        && y_end >= tile_extent_B.height
+                        && z_end >= tile_extent_B.depth
                     {
                         Self::copy_whole_tile(
                             tiling,
-                            row_stride_B,
-                            plane_stride_B,
+                            linear_row_stride_B,
+                            linear_plane_stride_B,
                             tiled,
-                            linear
+                            linear,
                         );
                     } else {
                         Self::copy_tile(
@@ -385,8 +417,8 @@ trait LinearTiledCopy {
                             y_end,
                             z_end,
                             tiling,
-                            row_stride_B,
-                            plane_stride_B,
+                            linear_row_stride_B,
+                            linear_plane_stride_B,
                             linear,
                             tiled,
                         );
@@ -405,8 +437,8 @@ impl LinearTiledCopy for CopyTiledToLinear {
         x_end: u32,
         y_end: u32,
         tiling: Tiling,
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
         tiled: usize,
     ) {
@@ -415,7 +447,7 @@ impl LinearTiledCopy for CopyTiledToLinear {
         let x_end = std::cmp::min(x_end as u32, GOB_WIDTH_B);
         let y_start = std::cmp::max(y_start, 0);
         let y_end = std::cmp::min(y_end as u32, gob_height);
-        
+
         let mut x_sector = 0;
         let mut y_sector = 0;
 
@@ -425,8 +457,11 @@ impl LinearTiledCopy for CopyTiledToLinear {
             let x_min = x_sector - x_start;
             let y_min = y_sector - y_start;
 
-            let tiled = tiled.wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
-            let linear = linear.wrapping_add((y_min * (GOB_WIDTH_B as i32) + x_min).try_into().unwrap());
+            let tiled = tiled
+                .wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
+            let linear = linear.wrapping_add(
+                (y_min * (GOB_WIDTH_B as i32) + x_min).try_into().unwrap(),
+            );
 
             let x_start = x_start - x_sector;
             let y_start = y_start - y_sector;
@@ -438,32 +473,40 @@ impl LinearTiledCopy for CopyTiledToLinear {
                 && y_start <= 0
                 && x_end >= SECTOR_WIDTH_B.try_into().unwrap()
                 && y_end >= SECTOR_HEIGHT.try_into().unwrap()
-                {
-                    for y in 0..SECTOR_HEIGHT {
-                        unsafe {
-                            let src_ptr: usize = tiled + (y * SECTOR_WIDTH_B) as usize;
-                            let dst_ptr: usize = linear + (y * GOB_WIDTH_B) as usize;
-                            std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                          dst_ptr as *mut usize,
-                                                          SECTOR_WIDTH_B.try_into().unwrap());
-                        }
-                    }      
-                } else {
-                    let x_min = std::cmp::max(x_start, 0);
-                    let x_max = std::cmp::min(x_end as u32, SECTOR_WIDTH_B);
-                    let y_min = std::cmp::max(y_start, 0);
-                    let y_max = std::cmp::min(y_end as u32, SECTOR_HEIGHT);
-
-                    for y in y_start..y_end as i32 {
-                        unsafe {
-                            let src_ptr: usize = tiled + (y * SECTOR_WIDTH_B as i32 + x_min) as usize;
-                            let dst_ptr: usize = linear + ((y - y_min) * GOB_WIDTH_B as i32) as usize;
-                            std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                          dst_ptr as *mut usize,
-                                                          x_max.try_into().unwrap());
-                        }
+            {
+                for y in 0..SECTOR_HEIGHT {
+                    unsafe {
+                        let src_ptr: usize =
+                            tiled + (y * SECTOR_WIDTH_B) as usize;
+                        let dst_ptr: usize =
+                            linear + (y * GOB_WIDTH_B) as usize;
+                        std::ptr::copy_nonoverlapping(
+                            src_ptr as *const usize,
+                            dst_ptr as *mut usize,
+                            SECTOR_WIDTH_B.try_into().unwrap(),
+                        );
                     }
                 }
+            } else {
+                let x_min = std::cmp::max(x_start, 0);
+                let x_max = std::cmp::min(x_end as u32, SECTOR_WIDTH_B);
+                let y_min = std::cmp::max(y_start, 0);
+                let y_max = std::cmp::min(y_end as u32, SECTOR_HEIGHT);
+
+                for y in y_start..y_end as i32 {
+                    unsafe {
+                        let src_ptr: usize = tiled
+                            + (y * SECTOR_WIDTH_B as i32 + x_min) as usize;
+                        let dst_ptr: usize = linear
+                            + ((y - y_min) * GOB_WIDTH_B as i32) as usize;
+                        std::ptr::copy_nonoverlapping(
+                            src_ptr as *const usize,
+                            dst_ptr as *mut usize,
+                            x_max.try_into().unwrap(),
+                        );
+                    }
+                }
+            }
 
             // Sectors within a GOB are arranged as follows:
             // +----------+----------+----------+----------+
@@ -491,10 +534,11 @@ impl LinearTiledCopy for CopyTiledToLinear {
 
     // No bounding box for this one
     unsafe fn copy_whole_gob(
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        tiling: Tiling,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
-        tiled: usize
+        tiled: usize,
     ) {
         let mut x_sector = 0;
         let mut y_sector = 0;
@@ -502,18 +546,23 @@ impl LinearTiledCopy for CopyTiledToLinear {
         // A GOB is 512B, and a sector is 32B, so there are 16 sectors in a GOB
         // TODO: Not sure if it's a good idea to have it constant due to generational changes
         for sector_idx in 0..16 {
-            let tiled = tiled.wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
-            let linear = linear.wrapping_add((y_sector * GOB_WIDTH_B + x_sector).try_into().unwrap());
+            let tiled = tiled
+                .wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
+            let linear = linear.wrapping_add(
+                (y_sector * GOB_WIDTH_B + x_sector).try_into().unwrap(),
+            );
 
             for y in 0..SECTOR_HEIGHT {
                 unsafe {
                     let src_ptr: usize = tiled + (y * SECTOR_WIDTH_B) as usize;
                     let dst_ptr: usize = linear + (y * GOB_WIDTH_B) as usize;
-                    std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                  dst_ptr as *mut usize,
-                                                  SECTOR_WIDTH_B.try_into().unwrap());
+                    std::ptr::copy_nonoverlapping(
+                        src_ptr as *const usize,
+                        dst_ptr as *mut usize,
+                        SECTOR_WIDTH_B.try_into().unwrap(),
+                    );
                 }
-            }      
+            }
 
             // Sectors within a GOB are arranged as follows:
             // +----------+----------+----------+----------+
@@ -549,8 +598,8 @@ impl LinearTiledCopy for CopyLinearToTiled {
         x_end: u32,
         y_end: u32,
         tiling: Tiling,
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
         tiled: usize,
     ) {
@@ -559,7 +608,7 @@ impl LinearTiledCopy for CopyLinearToTiled {
         let x_end = std::cmp::min(x_end as u32, GOB_WIDTH_B);
         let y_start = std::cmp::max(y_start, 0);
         let y_end = std::cmp::min(y_end as u32, gob_height);
-        
+
         let mut x_sector = 0;
         let mut y_sector = 0;
 
@@ -569,8 +618,10 @@ impl LinearTiledCopy for CopyLinearToTiled {
             let x_min = x_sector - x_start;
             let y_min = y_sector - y_start;
 
-            let tiled = tiled.wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
-            let linear = linear.wrapping_add((y_min * (GOB_WIDTH_B as i32) + x_min) as usize);
+            let tiled = tiled
+                .wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
+            let linear = linear
+                .wrapping_add((y_min * (GOB_WIDTH_B as i32) + x_min) as usize);
 
             let x_start = x_start - x_sector;
             let y_start = y_start - y_sector;
@@ -582,32 +633,40 @@ impl LinearTiledCopy for CopyLinearToTiled {
                 && y_start <= 0
                 && x_end >= SECTOR_WIDTH_B.try_into().unwrap()
                 && y_end >= SECTOR_HEIGHT.try_into().unwrap()
-                {
-                    for y in 0..SECTOR_HEIGHT {
-                        unsafe {
-                            let src_ptr: usize = linear + (y * GOB_WIDTH_B) as usize;
-                            let dst_ptr: usize = tiled + (y * SECTOR_WIDTH_B) as usize;
-                            std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                          dst_ptr as *mut usize,
-                                                          SECTOR_WIDTH_B.try_into().unwrap());
-                        }
-                    }      
-                } else {
-                    let x_min = std::cmp::max(x_start, 0);
-                    let x_max = std::cmp::min(x_end as u32, SECTOR_WIDTH_B);
-                    let y_min = std::cmp::max(y_start, 0);
-                    let y_max = std::cmp::min(y_end as u32, SECTOR_HEIGHT);
-
-                    for y in y_start..y_end as i32 {
-                        unsafe {
-                            let src_ptr: usize = linear + ((y - y_min) * GOB_WIDTH_B as i32) as usize;
-                            let dst_ptr: usize = tiled + (y * SECTOR_WIDTH_B as i32 + x_min) as usize;
-                            std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                          dst_ptr as *mut usize,
-                                                          x_max.try_into().unwrap());
-                        }
+            {
+                for y in 0..SECTOR_HEIGHT {
+                    unsafe {
+                        let src_ptr: usize =
+                            linear + (y * GOB_WIDTH_B) as usize;
+                        let dst_ptr: usize =
+                            tiled + (y * SECTOR_WIDTH_B) as usize;
+                        std::ptr::copy_nonoverlapping(
+                            src_ptr as *const usize,
+                            dst_ptr as *mut usize,
+                            SECTOR_WIDTH_B.try_into().unwrap(),
+                        );
                     }
                 }
+            } else {
+                let x_min = std::cmp::max(x_start, 0);
+                let x_max = std::cmp::min(x_end as u32, SECTOR_WIDTH_B);
+                let y_min = std::cmp::max(y_start, 0);
+                let y_max = std::cmp::min(y_end as u32, SECTOR_HEIGHT);
+
+                for y in y_start..y_end as i32 {
+                    unsafe {
+                        let src_ptr: usize = linear
+                            + ((y - y_min) * GOB_WIDTH_B as i32) as usize;
+                        let dst_ptr: usize = tiled
+                            + (y * SECTOR_WIDTH_B as i32 + x_min) as usize;
+                        std::ptr::copy_nonoverlapping(
+                            src_ptr as *const usize,
+                            dst_ptr as *mut usize,
+                            x_max.try_into().unwrap(),
+                        );
+                    }
+                }
+            }
 
             // Sectors within a GOB are arranged as follows:
             // +----------+----------+----------+----------+
@@ -635,10 +694,11 @@ impl LinearTiledCopy for CopyLinearToTiled {
 
     // No bounding box for this one
     unsafe fn copy_whole_gob(
-        row_stride_B: usize,
-        plane_stride_B: usize,
+        tiling: Tiling,
+        linear_row_stride_B: usize,
+        linear_plane_stride_B: usize,
         linear: usize,
-        tiled: usize
+        tiled: usize,
     ) {
         let mut x_sector = 0;
         let mut y_sector = 0;
@@ -646,18 +706,23 @@ impl LinearTiledCopy for CopyLinearToTiled {
         // A GOB is 512B, and a sector is 32B, so there are 16 sectors in a GOB
         // TODO: Not sure if it's a good idea to have it constant due to generational changes
         for sector_idx in 0..16 {
-            let tiled = tiled.wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
-            let linear = linear.wrapping_add((y_sector * GOB_WIDTH_B + x_sector).try_into().unwrap());
+            let tiled = tiled
+                .wrapping_add((sector_idx * SECTOR_SIZE_B).try_into().unwrap());
+            let linear = linear.wrapping_add(
+                (y_sector * GOB_WIDTH_B + x_sector).try_into().unwrap(),
+            );
 
             for y in 0..SECTOR_HEIGHT {
                 unsafe {
                     let src_ptr: usize = linear + (y * GOB_WIDTH_B) as usize;
                     let dst_ptr: usize = tiled + (y * SECTOR_WIDTH_B) as usize;
-                    std::ptr::copy_nonoverlapping(src_ptr as *const usize,
-                                                  dst_ptr as *mut usize,
-                                                  SECTOR_WIDTH_B.try_into().unwrap());
+                    std::ptr::copy_nonoverlapping(
+                        src_ptr as *const usize,
+                        dst_ptr as *mut usize,
+                        SECTOR_WIDTH_B.try_into().unwrap(),
+                    );
                 }
-            }      
+            }
 
             // Sectors within a GOB are arranged as follows:
             // +----------+----------+----------+----------+
@@ -688,32 +753,50 @@ impl LinearTiledCopy for CopyLinearToTiled {
 pub unsafe extern "C" fn nil_copy_linear_to_tiled(
     start_px: Offset4D<units::Pixels>,
     extent_px: Extent4D<units::Pixels>,
-    miplevel: usize, 
+    miplevel: usize,
     nil: Image,
-    row_stride_B: usize,
-    plane_stride_B: usize,
+    linear_row_stride_B: usize,
+    linear_plane_stride_B: usize,
     Bpp: u8,
     linear: usize,
     tiled: usize,
-)
-{
+) {
     let copy = CopyLinearToTiled {};
-    CopyLinearToTiled::copy(start_px, extent_px, miplevel, nil, row_stride_B, plane_stride_B, Bpp, linear, tiled);
+    CopyLinearToTiled::copy(
+        start_px,
+        extent_px,
+        miplevel,
+        nil,
+        linear_row_stride_B,
+        linear_plane_stride_B,
+        Bpp,
+        linear,
+        tiled,
+    );
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn nil_copy_tiled_to_linear(
     start_px: Offset4D<units::Pixels>,
     extent_px: Extent4D<units::Pixels>,
-    miplevel: usize, 
+    miplevel: usize,
     nil: Image,
-    row_stride_B: usize,
-    plane_stride_B: usize,
+    linear_row_stride_B: usize,
+    linear_plane_stride_B: usize,
     Bpp: u8,
     linear: usize,
     tiled: usize,
-)
-{
+) {
     let copy = CopyTiledToLinear {};
-    CopyTiledToLinear::copy(start_px, extent_px, miplevel, nil, row_stride_B, plane_stride_B, Bpp, linear, tiled); 
+    CopyTiledToLinear::copy(
+        start_px,
+        extent_px,
+        miplevel,
+        nil,
+        linear_row_stride_B,
+        linear_plane_stride_B,
+        Bpp,
+        linear,
+        tiled,
+    );
 }

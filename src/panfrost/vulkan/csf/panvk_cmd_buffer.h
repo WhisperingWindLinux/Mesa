@@ -350,6 +350,7 @@ struct panvk_cmd_graphics_state {
       struct {
          mali_ptr pos, var;
       } spds;
+      bool dirty;
    } vs;
 
    struct {

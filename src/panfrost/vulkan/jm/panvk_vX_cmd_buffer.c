@@ -145,11 +145,11 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
 
          mali_ptr fbd = batch->fb.desc.gpu + (batch->fb.desc_stride * i);
          if (batch->vtc_jc.first_tiler) {
-            cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds.gpu = 0;
+            cmdbuf->state.gfx.render.fb.info.bifrost.pre_post[0].dcds.gpu = 0;
 
             ASSERTED unsigned num_preload_jobs = GENX(pan_preload_fb)(
                &dev->blitter.cache, &cmdbuf->desc_pool.base,
-               &cmdbuf->state.gfx.render.fb.info, i, batch->tls.gpu, NULL);
+               &cmdbuf->state.gfx.render.fb.info, i, false, batch->tls.gpu, NULL);
 
             /* Bifrost GPUs use pre frame DCDs to preload the FB content. We
              * thus expect num_preload_jobs to be zero.
@@ -204,8 +204,8 @@ panvk_per_arch(cmd_alloc_fb_desc)(struct panvk_cmd_buffer *cmdbuf)
                               pan_alignment(FRAMEBUFFER));
    batch->fb.desc_stride = fbd_size;
 
-   memset(&cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds, 0,
-          sizeof(cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds));
+   memset(&cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds[0], 0,
+          sizeof(cmdbuf->state.gfx.render.fb.info.bifrost.pre_post[0].dcds));
 
    return batch->fb.desc.gpu ? VK_SUCCESS : VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }

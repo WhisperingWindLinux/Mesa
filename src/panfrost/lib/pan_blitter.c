@@ -825,17 +825,17 @@ out:
 #endif
 
 static struct pan_blitter_views
-pan_preload_get_views(const struct pan_fb_info *fb, bool zs,
+pan_preload_get_views(const struct pan_fb_info *fb, bool zs, bool preload,
                       struct pan_image_view *patched_s)
 {
    struct pan_blitter_views views = {0};
 
    if (zs) {
-      if (fb->zs.preload.z)
+      if (fb->zs.preload.z || (fb->zs.view.zs && preload))
          views.src_z = views.dst_z = fb->zs.view.zs;
 
-      if (fb->zs.preload.s) {
-         const struct pan_image_view *view = fb->zs.view.s ?: fb->zs.view.zs;
+      const struct pan_image_view *view = fb->zs.view.s ?: fb->zs.view.zs;
+      if (fb->zs.preload.s || (view && preload)) {
          enum pipe_format fmt = util_format_get_depth_only(view->format);
 
          switch (view->format) {
@@ -860,7 +860,7 @@ pan_preload_get_views(const struct pan_fb_info *fb, bool zs,
       }
    } else {
       for (unsigned i = 0; i < fb->rt_count; i++) {
-         if (fb->rts[i].preload) {
+         if (fb->rts[i].preload || preload) {
             views.src_rts[i] = fb->rts[i].view;
             views.dst_rts[i] = fb->rts[i].view;
          }
@@ -1001,18 +1001,18 @@ pan_blitter_emit_textures(struct pan_pool *pool, unsigned tex_count,
 
 static mali_ptr
 pan_preload_emit_textures(struct pan_pool *pool, const struct pan_fb_info *fb,
-                          bool zs, unsigned *tex_count_out)
+                          bool zs, bool preload, unsigned *tex_count_out)
 {
    const struct pan_image_view *views[8];
    struct pan_image_view patched_s_view;
    unsigned tex_count = 0;
 
    if (zs) {
-      if (fb->zs.preload.z)
+      if (fb->zs.preload.z || (fb->zs.view.zs && preload))
          views[tex_count++] = fb->zs.view.zs;
 
-      if (fb->zs.preload.s) {
-         const struct pan_image_view *view = fb->zs.view.s ?: fb->zs.view.zs;
+      const struct pan_image_view *view = fb->zs.view.s ?: fb->zs.view.zs;
+      if (fb->zs.preload.s || (view && preload)) {
          enum pipe_format fmt = util_format_get_depth_only(view->format);
 
          switch (view->format) {
@@ -1036,7 +1036,7 @@ pan_preload_emit_textures(struct pan_pool *pool, const struct pan_fb_info *fb,
       }
    } else {
       for (unsigned i = 0; i < fb->rt_count; i++) {
-         if (fb->rts[i].preload)
+         if (fb->rts[i].preload || preload)
             views[tex_count++] = fb->rts[i].view;
       }
    }
@@ -1103,11 +1103,11 @@ pan_blitter_emit_viewport(struct pan_pool *pool, uint16_t minx, uint16_t miny,
 static void
 pan_preload_emit_dcd(struct pan_blitter_cache *cache,
                      struct pan_pool *pool, struct pan_fb_info *fb, bool zs,
-                     mali_ptr coordinates, mali_ptr tsd, void *out,
+                     bool preload, mali_ptr coordinates, mali_ptr tsd, void *out,
                      bool always_write)
 {
    unsigned tex_count = 0;
-   mali_ptr textures = pan_preload_emit_textures(pool, fb, zs, &tex_count);
+   mali_ptr textures = pan_preload_emit_textures(pool, fb, zs, preload, &tex_count);
    mali_ptr samplers = pan_blitter_emit_sampler(pool, true);
    mali_ptr varyings = pan_blitter_emit_varying(pool);
    mali_ptr varying_buffers =
@@ -1123,7 +1123,7 @@ pan_preload_emit_dcd(struct pan_blitter_cache *cache,
     */
    struct pan_image_view patched_s;
 
-   struct pan_blitter_views views = pan_preload_get_views(fb, zs, &patched_s);
+   struct pan_blitter_views views = pan_preload_get_views(fb, zs, preload, &patched_s);
 
 #if PAN_ARCH <= 7
    pan_pack(out, DRAW, cfg) {
@@ -1175,8 +1175,9 @@ pan_preload_emit_dcd(struct pan_blitter_cache *cache,
    const struct pan_blit_shader_data *blit_shader =
       pan_blitter_get_blit_shader(cache, &key);
 
-   bool z = fb->zs.preload.z;
-   bool s = fb->zs.preload.s;
+   const struct pan_image_view *s_view = fb->zs.view.s ?: fb->zs.view.zs;
+   bool z = fb->zs.preload.z || (fb->zs.view.zs && preload);
+   bool s = fb->zs.preload.s || (s_view && preload);
    bool ms = pan_blitter_is_ms(&views);
 
    struct panfrost_ptr spd = pan_pool_alloc_desc(pool, SHADER_PROGRAM);
@@ -1228,25 +1229,26 @@ pan_preload_emit_dcd(struct pan_blitter_cache *cache,
 
 #if PAN_ARCH >= 6
 static void
-pan_preload_fb_alloc_pre_post_dcds(struct pan_pool *desc_pool,
+pan_preload_fb_alloc_pre_post_dcds(unsigned idx, struct pan_pool *desc_pool,
                                    struct pan_fb_info *fb)
 {
-   if (fb->bifrost.pre_post.dcds.gpu)
+   if (fb->bifrost.pre_post[idx].dcds.gpu)
       return;
 
-   fb->bifrost.pre_post.dcds = pan_pool_alloc_desc_array(desc_pool, 3, DRAW);
+   fb->bifrost.pre_post[idx].dcds = pan_pool_alloc_desc_array(desc_pool, 3, DRAW);
 }
 
 static void
 pan_preload_emit_pre_frame_dcd(struct pan_blitter_cache *cache,
                                struct pan_pool *desc_pool,
-                               struct pan_fb_info *fb, bool zs, mali_ptr coords,
-                               mali_ptr tsd)
+                               struct pan_fb_info *fb, bool zs, bool preload,
+                               mali_ptr coords, mali_ptr tsd)
 {
+   unsigned idx = preload ? PAN_PRE_FRAME_PRELOAD : PAN_PRE_FRAME_DEFAULT;
    unsigned dcd_idx = zs ? 1 : 0;
-   pan_preload_fb_alloc_pre_post_dcds(desc_pool, fb);
-   assert(fb->bifrost.pre_post.dcds.cpu);
-   void *dcd = fb->bifrost.pre_post.dcds.cpu + (dcd_idx * pan_size(DRAW));
+   pan_preload_fb_alloc_pre_post_dcds(idx, desc_pool, fb);
+   assert(fb->bifrost.pre_post[idx].dcds.cpu);
+   void *dcd = fb->bifrost.pre_post[idx].dcds.cpu + (dcd_idx * pan_size(DRAW));
 
    /* We only use crc_rt to determine whether to force writes for updating
     * the CRCs, so use a conservative tile size (16x16).
@@ -1267,7 +1269,7 @@ pan_preload_emit_pre_frame_dcd(struct pan_blitter_cache *cache,
          always_write = true;
    }
 
-   pan_preload_emit_dcd(cache, desc_pool, fb, zs, coords, tsd, dcd,
+   pan_preload_emit_dcd(cache, desc_pool, fb, zs, preload, coords, tsd, dcd,
                         always_write);
    if (zs) {
       enum pipe_format fmt = fb->zs.view.zs
@@ -1292,13 +1294,13 @@ pan_preload_emit_pre_frame_dcd(struct pan_blitter_cache *cache,
        * preferable (saving bandwidth vs having ZS preloaded
        * earlier), so let's leave it like that for now.
        */
-      fb->bifrost.pre_post.modes[dcd_idx] =
+      fb->bifrost.pre_post[idx].modes[dcd_idx] =
          PAN_ARCH > 6
             ? MALI_PRE_POST_FRAME_SHADER_MODE_EARLY_ZS_ALWAYS
          : always ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS
                   : MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
    } else {
-      fb->bifrost.pre_post.modes[dcd_idx] =
+      fb->bifrost.pre_post[idx].modes[dcd_idx] =
          always_write ? MALI_PRE_POST_FRAME_SHADER_MODE_ALWAYS
                       : MALI_PRE_POST_FRAME_SHADER_MODE_INTERSECT;
    }
@@ -1311,7 +1313,7 @@ pan_preload_emit_tiler_job(struct pan_blitter_cache *cache, struct pan_pool *des
 {
    struct panfrost_ptr job = pan_pool_alloc_desc(desc_pool, TILER_JOB);
 
-   pan_preload_emit_dcd(cache, desc_pool, fb, zs, coords, tsd,
+   pan_preload_emit_dcd(cache, desc_pool, fb, zs, false, coords, tsd,
                         pan_section_ptr(job.cpu, TILER_JOB, DRAW), false);
 
    pan_section_pack(job.cpu, TILER_JOB, PRIMITIVE, cfg) {
@@ -1333,13 +1335,13 @@ pan_preload_emit_tiler_job(struct pan_blitter_cache *cache, struct pan_pool *des
 
 static struct panfrost_ptr
 pan_preload_fb_part(struct pan_blitter_cache *cache, struct pan_pool *pool,
-                    struct pan_fb_info *fb, bool zs, mali_ptr coords,
-                    mali_ptr tsd)
+                    struct pan_fb_info *fb, bool zs, bool preload,
+                    mali_ptr coords, mali_ptr tsd)
 {
    struct panfrost_ptr job = {0};
 
 #if PAN_ARCH >= 6
-   pan_preload_emit_pre_frame_dcd(cache, pool, fb, zs, coords, tsd);
+   pan_preload_emit_pre_frame_dcd(cache, pool, fb, zs, preload, coords, tsd);
 #else
    job = pan_preload_emit_tiler_job(cache, pool, fb, zs, coords, tsd);
 #endif
@@ -1348,14 +1350,14 @@ pan_preload_fb_part(struct pan_blitter_cache *cache, struct pan_pool *pool,
 
 unsigned
 GENX(pan_preload_fb)(struct pan_blitter_cache *cache, struct pan_pool *pool,
-                     struct pan_fb_info *fb, unsigned layer_idx, mali_ptr tsd,
-                     struct panfrost_ptr *jobs)
+                     struct pan_fb_info *fb, unsigned layer_idx, bool emit_preload,
+                     mali_ptr tsd, struct panfrost_ptr *jobs)
 {
    bool preload_zs = pan_preload_needed(fb, true);
    bool preload_rts = pan_preload_needed(fb, false);
    mali_ptr coords;
 
-   if (!preload_zs && !preload_rts)
+   if (!preload_zs && !preload_rts && !emit_preload)
       return 0;
 
    float rect[] = {
@@ -1370,16 +1372,35 @@ GENX(pan_preload_fb)(struct pan_blitter_cache *cache, struct pan_pool *pool,
    unsigned njobs = 0;
    if (preload_zs) {
       struct panfrost_ptr job =
-         pan_preload_fb_part(cache, pool, fb, true, coords, tsd);
+         pan_preload_fb_part(cache, pool, fb, true, false, coords, tsd);
       if (jobs && job.cpu)
          jobs[njobs++] = job;
    }
 
    if (preload_rts) {
       struct panfrost_ptr job =
-         pan_preload_fb_part(cache, pool, fb, false, coords, tsd);
+         pan_preload_fb_part(cache, pool, fb, false, false, coords, tsd);
       if (jobs && job.cpu)
          jobs[njobs++] = job;
+   }
+
+   if (!emit_preload)
+      return njobs;
+
+   /* Initialize a second set of pre_post frame shaders in case we need to
+    * preload content from a previous incremental rendering pass */
+
+   if (((!fb->zs.view.s && !fb->zs.view.zs) || preload_zs) &&
+       (fb->rt_count == 0 || preload_rts)) {
+      /* Normal pre/post shaders are already pre-loading, just use those */
+      memcpy(&fb->bifrost.pre_post[PAN_PRE_FRAME_PRELOAD],
+             &fb->bifrost.pre_post[PAN_PRE_FRAME_DEFAULT],
+             sizeof(fb->bifrost.pre_post[PAN_PRE_FRAME_PRELOAD]));
+   } else {
+      if (fb->rt_count)
+         pan_preload_fb_part(cache, pool, fb, false, true, coords, tsd);
+      if (fb->zs.view.zs || fb->zs.view.s)
+         pan_preload_fb_part(cache, pool, fb, true, true, coords, tsd);
    }
 
    return njobs;

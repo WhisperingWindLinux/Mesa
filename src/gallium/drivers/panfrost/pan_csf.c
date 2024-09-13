@@ -462,7 +462,7 @@ GENX(csf_preload_fb)(struct panfrost_batch *batch, struct pan_fb_info *fb)
    struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
 
    GENX(pan_preload_fb)
-   (&dev->blitter, &batch->pool.base, fb, 0, batch->tls.gpu, NULL);
+   (&dev->blitter, &batch->pool.base, fb, 0, false, batch->tls.gpu, NULL);
 }
 
 void

@@ -742,15 +742,16 @@ GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
    pan_section_pack(fbd, FRAMEBUFFER, PARAMETERS, cfg) {
 #if PAN_ARCH >= 6
       bool force_clean_write = pan_force_clean_write(fb, tile_size);
+      unsigned idx = PAN_PRE_POST_DEFAULT;
 
       cfg.sample_locations = fb->sample_positions;
-      cfg.pre_frame_0 = pan_fix_frame_shader_mode(fb->bifrost.pre_post.modes[0],
+      cfg.pre_frame_0 = pan_fix_frame_shader_mode(fb->bifrost.pre_post[idx].modes[0],
                                                   force_clean_write);
-      cfg.pre_frame_1 = pan_fix_frame_shader_mode(fb->bifrost.pre_post.modes[1],
+      cfg.pre_frame_1 = pan_fix_frame_shader_mode(fb->bifrost.pre_post[idx].modes[1],
                                                   force_clean_write);
-      cfg.post_frame = pan_fix_frame_shader_mode(fb->bifrost.pre_post.modes[2],
+      cfg.post_frame = pan_fix_frame_shader_mode(fb->bifrost.pre_post[idx].modes[2],
                                                  force_clean_write);
-      cfg.frame_shader_dcds = fb->bifrost.pre_post.dcds.gpu;
+      cfg.frame_shader_dcds = fb->bifrost.pre_post[idx].dcds.gpu;
       cfg.tiler =
          PAN_ARCH >= 9 ? tiler_ctx->valhall.desc : tiler_ctx->bifrost.desc;
 #endif

@@ -105,11 +105,14 @@ struct pan_tls_info {
    } wls;
 };
 
+#define PAN_PRE_FRAME_DEFAULT 0
+#define PAN_PRE_FRAME_PRELOAD 1
+
 struct pan_fb_bifrost_info {
    struct {
       struct panfrost_ptr dcds;
       unsigned modes[3];
-   } pre_post;
+   } pre_post[2];
 };
 
 struct pan_fb_info {

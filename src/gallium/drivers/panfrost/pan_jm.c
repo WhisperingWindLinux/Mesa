@@ -242,7 +242,7 @@ GENX(jm_preload_fb)(struct panfrost_batch *batch, struct pan_fb_info *fb)
    struct panfrost_ptr preload_jobs[2];
 
    unsigned preload_job_count = GENX(pan_preload_fb)(
-      &dev->blitter, &batch->pool.base, fb, 0, batch->tls.gpu, preload_jobs);
+      &dev->blitter, &batch->pool.base, fb, 0, false, batch->tls.gpu, preload_jobs);
 
    assert(PAN_ARCH < 6 || !preload_job_count);
 

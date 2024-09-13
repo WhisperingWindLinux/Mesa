@@ -92,7 +92,7 @@ GENX(csf_init_batch)(struct panfrost_batch *batch)
    struct cs_builder *b = batch->csf.cs.builder;
    cs_set_scoreboard_entry(b, 2, 0);
 
-   batch->framebuffer = pan_pool_alloc_desc_aggregate(
+   batch->fbds[0] = pan_pool_alloc_desc_aggregate(
       &batch->pool.base, PAN_DESC(FRAMEBUFFER), PAN_DESC(ZS_CRC_EXTENSION),
       PAN_DESC_ARRAY(MAX2(batch->key.nr_cbufs, 1), RENDER_TARGET));
    batch->tls = pan_pool_alloc_desc(&batch->pool.base, LOCAL_STORAGE);
@@ -479,7 +479,8 @@ GENX(csf_emit_fragment_job)(struct panfrost_batch *batch,
    }
 
    /* Set up the fragment job */
-   cs_move64_to(b, cs_reg64(b, 40), batch->framebuffer.gpu);
+   cs_move64_to(b, cs_reg64(b, 40),
+                batch->fbds[PAN_RENDERING_NO_INCREMENTAL_PASS].gpu);
    cs_move32_to(b, cs_reg32(b, 42), (batch->miny << 16) | batch->minx);
    cs_move32_to(b, cs_reg32(b, 43),
                 ((batch->maxy - 1) << 16) | (batch->maxx - 1));

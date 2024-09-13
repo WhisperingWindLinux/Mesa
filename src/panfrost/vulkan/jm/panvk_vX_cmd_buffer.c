@@ -163,7 +163,7 @@ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
 
          fbd |= GENX(pan_emit_fbd)(
             &cmdbuf->state.gfx.render.fb.info, i, &batch->tlsinfo,
-            &batch->tiler.ctx,
+            &batch->tiler.ctx, PAN_RENDERING_NO_INCREMENTAL_PASS,
             batch->fb.desc.cpu + (batch->fb.desc_stride * i));
 
          result = panvk_cmd_prepare_fragment_job(cmdbuf, fbd);

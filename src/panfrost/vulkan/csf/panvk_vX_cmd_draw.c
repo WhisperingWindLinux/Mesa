@@ -1782,7 +1782,7 @@ prepare_fb_desc(struct panvk_cmd_buffer *cmdbuf, uint32_t layer, void *fbd)
    };
 
    return GENX(pan_emit_fbd)(&cmdbuf->state.gfx.render.fb.info, layer, NULL,
-                             &tiler_ctx, fbd);
+                             &tiler_ctx, PAN_RENDERING_NO_INCREMENTAL_PASS, fbd);
 }
 
 static void

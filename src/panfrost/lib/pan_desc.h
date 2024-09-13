@@ -185,10 +185,17 @@ void GENX(pan_emit_tls)(const struct pan_tls_info *info, void *out);
 
 int GENX(pan_select_crc_rt)(const struct pan_fb_info *fb, unsigned tile_size);
 
+enum pan_rendering_pass {
+   PAN_RENDERING_NO_INCREMENTAL_PASS,
+   PAN_RENDERING_FIRST_INCREMENTAL_PASS,
+   PAN_RENDERING_MIDDLE_INCREMENTAL_PASS,
+   PAN_RENDERING_LAST_INCREMENTAL_PASS,
+};
+
 unsigned GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
                             const struct pan_tls_info *tls,
                             const struct pan_tiler_context *tiler_ctx,
-                            void *out);
+                            unsigned pass, void *out);
 
 #if PAN_ARCH <= 9
 void GENX(pan_emit_fragment_job_payload)(const struct pan_fb_info *fb,

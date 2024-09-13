@@ -715,7 +715,8 @@ pan_force_clean_write(const struct pan_fb_info *fb, unsigned tile_size)
 unsigned
 GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
                    const struct pan_tls_info *tls,
-                   const struct pan_tiler_context *tiler_ctx, void *out)
+                   const struct pan_tiler_context *tiler_ctx,
+                   unsigned pass, void *out)
 {
    void *fbd = out;
    void *rtd = out + pan_size(FRAMEBUFFER);
@@ -741,8 +742,11 @@ GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
 
    pan_section_pack(fbd, FRAMEBUFFER, PARAMETERS, cfg) {
 #if PAN_ARCH >= 6
-      bool force_clean_write = pan_force_clean_write(fb, tile_size);
-      unsigned idx = PAN_PRE_POST_DEFAULT;
+      bool force_preload = (pass == PAN_RENDERING_MIDDLE_INCREMENTAL_PASS ||
+                            pass == PAN_RENDERING_LAST_INCREMENTAL_PASS);
+      bool force_clean_write =
+         !force_preload && pan_force_clean_write(fb, tile_size);
+      unsigned idx = force_preload ? PAN_PRE_FRAME_DEFAULT : PAN_PRE_FRAME_PRELOAD;
 
       cfg.sample_locations = fb->sample_positions;
       cfg.pre_frame_0 = pan_fix_frame_shader_mode(fb->bifrost.pre_post[idx].modes[0],
@@ -794,8 +798,10 @@ GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
          cfg.sample_pattern = pan_sample_pattern(fb->force_samples);
       }
 
-      cfg.z_write_enable = (fb->zs.view.zs && !fb->zs.discard.z);
-      cfg.s_write_enable = (fb->zs.view.s && !fb->zs.discard.s);
+      bool force_write_zs = (pass == PAN_RENDERING_FIRST_INCREMENTAL_PASS ||
+                             pass == PAN_RENDERING_MIDDLE_INCREMENTAL_PASS);
+      cfg.z_write_enable = (fb->zs.view.zs && (force_write_zs || !fb->zs.discard.z));
+      cfg.s_write_enable = (fb->zs.view.s && (force_write_zs || !fb->zs.discard.s));
       cfg.has_zs_crc_extension = has_zs_crc_ext;
 
       if (crc_rt >= 0) {
@@ -887,9 +893,11 @@ pan_sfbd_raw_format(unsigned bits)
 unsigned
 GENX(pan_emit_fbd)(const struct pan_fb_info *fb, unsigned layer_idx,
                    const struct pan_tls_info *tls,
-                   const struct pan_tiler_context *tiler_ctx, void *fbd)
+                   const struct pan_tiler_context *tiler_ctx,
+                   unsigned pass, void *fbd)
 {
    assert(fb->rt_count <= 1);
+   assert(pass == PAN_RENDERING_NO_INCREMENTAL_PASS);
 
    GENX(pan_emit_tls)(tls, pan_section_ptr(fbd, FRAMEBUFFER, LOCAL_STORAGE));
    pan_section_pack(fbd, FRAMEBUFFER, PARAMETERS, cfg) {

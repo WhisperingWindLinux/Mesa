@@ -33,6 +33,22 @@ vk_to_nil_extent(VkExtent3D extent, uint32_t array_layers)
    };
 }
 
+static void
+memcpy2d(void *dst, size_t dst_stride_B,
+         const void *src, size_t src_stride_B,
+         size_t width_B, size_t height)
+{
+   if (dst_stride_B == width_B && src_stride_B == width_B) {
+      memcpy(dst, src, width_B * height);
+   } else {
+      for (uint32_t y = 0; y < height; y++) {
+         memcpy(dst, src, width_B);
+         dst += dst_stride_B;
+         src += src_stride_B;
+      }
+   }
+}
+
 /* TODO: remove helpers and merge them with Vk entrypoints. They are split just
  * for ease of editing. 
  */
@@ -94,13 +110,15 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
       if (no_swizzle) {
          memcpy((void *) dst_addr_B, (void *) src_addr_B, src_layer_stride_B);
       } else if (!dst_plane.nil.levels[dst_miplevel].tiling.is_tiled) {
-         uint32_t src_pitch_B = buffer_layout.row_stride_B;
-         for (unsigned y = 0; y < extent_px.height; y++) {
-            memcpy((void *) dst_addr_B + dst_pitch_B * (y + info->imageOffset.y) +
-                   info->imageOffset.x * bpp,
-                   (void *) src_addr_B + src_pitch_B * y,
-                   extent_px.width * bpp);
-         }
+         assert(layer_count == 1);
+         memcpy2d((void *) dst_addr_B +
+                  info->imageOffset.y * dst_pitch_B +
+                  info->imageOffset.x * bpp,
+                  dst_pitch_B,
+                  (void *) src_addr_B,
+                  buffer_layout.row_stride_B,
+                  extent_px.width * bpp,
+                  extent_px.height);
       } else {
          nil_copy_linear_to_tiled(offset4d_px,
                                   extent4d_px,
@@ -219,13 +237,15 @@ nvk_copy_image_to_memory(struct nvk_image *src,
       if (no_swizzle) {
          memcpy((void *) dst_addr_B, (void *) src_addr_B, dst_layer_stride_B);
       } else if (!src_plane.nil.levels[src_miplevel].tiling.is_tiled) {
-         uint32_t dst_pitch_B = buffer_layout.row_stride_B;
-
-         for (unsigned y = 0; y < extent_px.height; y++) {
-            memcpy((void *) dst_addr_B + dst_pitch_B * y,
-                   (void *) src_addr_B + src_pitch_B * (y + info->imageOffset.y) + info->imageOffset.x * bpp,
-                   info->imageExtent.width * bpp);
-         }
+         assert(layer_count == 1);
+         memcpy2d((void *) dst_addr_B,
+                  buffer_layout.row_stride_B,
+                  (void *) src_addr_B +
+                  info->imageOffset.y * src_pitch_B +
+                  info->imageOffset.x * bpp,
+                  src_pitch_B,
+                  extent_px.width * bpp,
+                  extent_px.height);
       } else {
          nil_copy_tiled_to_linear(offset4d_px,
                                   extent4d_px,

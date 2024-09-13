@@ -477,8 +477,6 @@ typedef struct rvcn_enc_hevc_encode_params_s {
 typedef struct rvcn_enc_av1_encode_params_s {
    uint32_t ref_frames[RENCDOE_AV1_REFS_PER_FRAME];
    uint32_t lsm_reference_frame_index[2];
-   uint32_t second_l0_reference_picture_index;
-   uint32_t l1_reference_picture_index;
 } rvcn_enc_av1_encode_params_t;
 
 typedef struct rvcn_enc_h264_deblocking_filter_s {
@@ -734,26 +732,6 @@ typedef struct rvcn_enc_av1_color_description_s
    uint32_t color_range;
    uint32_t chroma_sample_position;
 }rvcn_enc_av1_color_description_t;
-
-#define AV1_ENC_FRAME_TYPE_KEY 0x00
-#define AV1_ENC_FRAME_TYPE_INTER 0x01
-#define AV1_ENC_FRAME_TYPE_INTRA_ONLY 0x02
-#define AV1_ENC_FRAME_TYPE_SWITCH 0x03
-#define AV1_ENC_FRAME_TYPE_SHOW_EXISTING 0x04
-#define AV1_ENC_LAST_FRAME    1
-#define AV1_ENC_LAST2_FRAME   2
-#define AV1_ENC_LAST3_FRAME   3
-#define AV1_ENC_GOLDEN_FRAME  4
-#define AV1_ENC_BWDREF_FRAME  5
-#define AV1_ENC_ALTREF_FRAME  6
-#define AV1_ENC_ALTREF2_FRAME 7
-#define AV1_ENC_REF_IDX_0 (AV1_ENC_LAST_FRAME    - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_1 (AV1_ENC_LAST2_FRAME   - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_2 (AV1_ENC_LAST3_FRAME   - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_3 (AV1_ENC_GOLDEN_FRAME  - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_4 (AV1_ENC_BWDREF_FRAME  - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_5 (AV1_ENC_ALTREF_FRAME  - AV1_ENC_LAST_FRAME)
-#define AV1_ENC_REF_IDX_6 (AV1_ENC_ALTREF2_FRAME - AV1_ENC_LAST_FRAME)
 
 typedef union {
     struct {

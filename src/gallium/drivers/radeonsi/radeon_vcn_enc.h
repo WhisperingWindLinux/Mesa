@@ -156,6 +156,7 @@ struct radeon_enc_pic {
             uint32_t allow_compound:1;
             uint32_t show_frame:1;
             uint32_t showable_frame:1;
+            uint32_t use_input_slot:1;
          };
          uint32_t render_width;
          uint32_t render_height;
@@ -189,6 +190,11 @@ struct radeon_enc_pic {
       rvcn_enc_av1_ref_frame_ctrl av1_ref_frame_ctrl_l0;
       rvcn_enc_av1_ref_frame_ctrl av1_ref_frame_ctrl_l1;
       uint32_t av1_ltr_seq;
+      uint32_t second_l0_reference_picture_index;
+      uint32_t l1_reference_picture_index;
+      uint32_t l0_ref_frame_id;
+      uint32_t l1_ref_frame_id;
+      uint32_t second_l0_ref_frame_id;
    };
 
    rvcn_enc_session_info_t session_info;

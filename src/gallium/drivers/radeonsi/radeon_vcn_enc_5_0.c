@@ -389,6 +389,7 @@ static void radeon_enc_encode_params_hevc(struct radeon_encoder *enc)
 static void radeon_enc_encode_params_av1(struct radeon_encoder *enc)
 {
    rvcn_enc_av1_encode_params_t *params = &enc->enc_pic.av1_enc_params;
+   unsigned ref_index = 0;
 
    for (int i = 0; i < RENCDOE_AV1_REFS_PER_FRAME; i++)
       params->ref_frames[i] = -1;
@@ -396,24 +397,27 @@ static void radeon_enc_encode_params_av1(struct radeon_encoder *enc)
    params->lsm_reference_frame_index[0] = 0xFFFFFFFF;
    params->lsm_reference_frame_index[1] = 0xFFFFFFFF;
 
-   params->ref_frames[AV1_ENC_REF_IDX_0] =
+   if (enc->enc_pic.use_input_slot)
+      ref_index = enc->enc_pic.l0_ref_frame_id;
+
+   params->ref_frames[ref_index] =
             (enc->enc_pic.enc_params.pic_type == RENCODE_PICTURE_TYPE_I) ?
             0xFFFFFFFF : enc->enc_pic.enc_params.reference_picture_index;
    enc->enc_pic.av1_enc_params.lsm_reference_frame_index[0] =
             (enc->enc_pic.enc_params.pic_type == RENCODE_PICTURE_TYPE_I) ?
-            0xFFFFFFFF : AV1_ENC_REF_IDX_0;
+            0xFFFFFFFF : ref_index;
 
    if (enc->enc_pic.allow_compound) {
-      if (params->second_l0_reference_picture_index != 0xFFFFFFFF) {
-         params->ref_frames[AV1_ENC_REF_IDX_3] =
-            params->second_l0_reference_picture_index;
-         params->lsm_reference_frame_index[1] = AV1_ENC_REF_IDX_3;
+      if (enc->enc_pic.second_l0_reference_picture_index != 0xFFFFFFFF) {
+         params->ref_frames[enc->enc_pic.second_l0_ref_frame_id] =
+          enc->enc_pic.second_l0_reference_picture_index;
+         params->lsm_reference_frame_index[1] = enc->enc_pic.second_l0_ref_frame_id;
       }
 
-      if (params->l1_reference_picture_index != 0xFFFFFFFF) {
-         params->ref_frames[AV1_ENC_REF_IDX_4] =
-            params->l1_reference_picture_index;
-         params->lsm_reference_frame_index[1] = AV1_ENC_REF_IDX_4;
+      if (enc->enc_pic.l1_reference_picture_index != 0xFFFFFFFF) {
+         params->ref_frames[enc->enc_pic.l1_ref_frame_id] =
+            enc->enc_pic.l1_reference_picture_index;
+         params->lsm_reference_frame_index[1] = enc->enc_pic.l1_ref_frame_id;
       }
    }
 
@@ -482,11 +486,12 @@ static void radeon_enc_tier2_ref_index(struct radeon_encoder *enc)
    uint32_t av1_ref_frames_all = 0;
 
    enc_pic->allow_compound = 0;
+   enc_pic->use_input_slot = 0;
 
    if (no_reference) {
       enc_pic->enc_params.reference_picture_index = -1;
-      enc_pic->av1_enc_params.second_l0_reference_picture_index = -1;
-      enc_pic->av1_enc_params.l1_reference_picture_index = -1;
+      enc_pic->second_l0_reference_picture_index = -1;
+      enc_pic->l1_reference_picture_index = -1;
       return ;
    }
 
@@ -498,14 +503,16 @@ static void radeon_enc_tier2_ref_index(struct radeon_encoder *enc)
                                     search_slot,
                                     &enc_pic->enc_params.reference_picture_index,
                                     &av1_ref_frames_all);
+      enc_pic->l0_ref_frame_id = search_slot;
    }
 
    if (enc_pic->av1_ref_frame_ctrl_l1.fields.search_idx0) {
       search_slot = enc_pic->av1_ref_frame_ctrl_l1.fields.search_idx0 - 1;
       radeon_enc_tier2_search_index(enc,
                                     search_slot,
-                                    &enc_pic->av1_enc_params.l1_reference_picture_index,
+                                    &enc_pic->l1_reference_picture_index,
                                     &av1_ref_frames_all);
+      enc_pic->l1_ref_frame_id = search_slot;
    }
 
    if (av1_ref_frames_all < MAX_ENC_AV1_REF_FRAMES_IN_ALL) {
@@ -513,13 +520,17 @@ static void radeon_enc_tier2_ref_index(struct radeon_encoder *enc)
          search_slot = enc_pic->av1_ref_frame_ctrl_l0.fields.search_idx1 - 1;
          radeon_enc_tier2_search_index(enc,
                                        search_slot,
-                                       &enc_pic->av1_enc_params.second_l0_reference_picture_index,
+                                       &enc_pic->second_l0_reference_picture_index,
                                        &av1_ref_frames_all);
+         enc_pic->second_l0_ref_frame_id = search_slot;
       }
    }
 
    if (av1_ref_frames_all == MAX_ENC_AV1_REF_FRAMES_IN_ALL)
       enc_pic->allow_compound = 0;  /* disabled for now, 2 reference has problem */
+
+   if (av1_ref_frames_all)
+      enc_pic->use_input_slot = 1;
 }
 
 static unsigned int radeon_enc_frame_context_buffer_size(struct radeon_encoder *enc)
@@ -656,14 +667,11 @@ static void radeon_enc_av1_dpb_tier2(struct radeon_encoder *enc)
       }
    }
 
-   /* this frame should have recon output */
-   if (refresh_frame_slot > -1) {
-      recon_slot_num = radeon_enc_search_reused_res_slot(enc);
-      if (recon_slot_num == -1) /* no valid slot, need a new one  */
-         recon_slot_num = radeon_enc_alloc_tier2_res_slot(enc);
+   recon_slot_num = radeon_enc_search_reused_res_slot(enc);
+   if (recon_slot_num == -1) /* no valid slot, need a new one  */
+      recon_slot_num = radeon_enc_alloc_tier2_res_slot(enc);
 
-      assert(recon_slot_num > -1);
-   }
+   assert(recon_slot_num > -1);
 
    enc_pic->enc_params.reconstructed_picture_index = (uint32_t)recon_slot_num;
 

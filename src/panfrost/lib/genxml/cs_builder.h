@@ -1589,3 +1589,43 @@ cs_nop(struct cs_builder *b)
 {
    cs_emit(b, NOP, I) {};
 }
+
+/* Helpers to load/store register file content from/to memory */
+
+#define CS_REGS_RW_OP(b, addr, op)                                        \
+   int nr_registers = b->conf.nr_registers - b->conf.nr_kernel_registers; \
+   int stride = 16;                                                       \
+   for (int i = 0; i < DIV_ROUND_UP(nr_registers, 16); i++) {             \
+      int offset = i * stride;                                            \
+      if (offset + stride > nr_registers)                                 \
+         stride = nr_registers % stride;                                  \
+      cs_##op(b, cs_reg_tuple(b, offset, stride), addr,                   \
+              BITFIELD_MASK(stride), offset * 4);                         \
+   }                                                                      \
+   cs_wait_slot(b, 0, false);
+
+static inline void
+cs_save_all_regs(struct cs_builder *b, struct cs_index addr)
+{
+   CS_REGS_RW_OP(b, addr, store)
+}
+
+static inline void
+cs_restore_all_regs(struct cs_builder *b, struct cs_index addr)
+{
+   CS_REGS_RW_OP(b, addr, load_to)
+}
+
+static inline void
+cs_save_reg(struct cs_builder *b, struct cs_index idx, struct cs_index addr)
+{
+   assert(idx.type == CS_INDEX_REGISTER);
+   cs_store(b, idx, addr, BITFIELD_MASK(idx.size), idx.reg * 4);
+}
+
+static inline void
+cs_load_reg(struct cs_builder *b, struct cs_index idx, struct cs_index addr)
+{
+   assert(idx.type == CS_INDEX_REGISTER);
+   cs_load_to(b, idx, addr, BITFIELD_MASK(idx.size), idx.reg * 4);
+}

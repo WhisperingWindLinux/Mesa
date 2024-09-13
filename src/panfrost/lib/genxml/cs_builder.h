@@ -875,6 +875,52 @@ cs_while_end(struct cs_builder *b)
         *__loop = cs_while_start(__b, &__loop_storage, cond, val);             \
         __loop != NULL; cs_while_end(__b), __loop = NULL)
 
+struct cs_if {
+   struct cs_label end_if, end_else;
+   struct cs_block block;
+   bool has_else;
+};
+
+static inline struct cs_if *
+cs_push_if(struct cs_builder *b, struct cs_if *if_stmt,
+           enum mali_cs_condition cond, struct cs_index val)
+{
+   assert(cond != MALI_CS_CONDITION_ALWAYS);
+
+   cs_block_start(b, &if_stmt->block);
+   cs_label_init(&if_stmt->end_if);
+   cs_label_init(&if_stmt->end_else);
+   if_stmt->has_else = false;
+
+   cs_branch_label(b, &if_stmt->end_if, cs_invert_cond(cond), val);
+
+   return if_stmt;
+}
+
+static inline void
+cs_push_else(struct cs_builder *b)
+{
+   assert(b->blocks.cur);
+
+   struct cs_if *if_stmt = container_of(b->blocks.cur, struct cs_if, block);
+   assert(!if_stmt->has_else);
+
+   cs_branch_label(b, &if_stmt->end_else, MALI_CS_CONDITION_ALWAYS, cs_undef());
+   cs_set_label(b, &if_stmt->end_if);
+   if_stmt->has_else = true;
+}
+
+static inline void
+cs_pop_if(struct cs_builder *b)
+{
+   assert(b->blocks.cur);
+
+   struct cs_if *if_stmt = container_of(b->blocks.cur, struct cs_if, block);
+
+   cs_set_label(b, if_stmt->has_else ? &if_stmt->end_else : &if_stmt->end_if);
+   cs_block_end(b);
+}
+
 /* Pseudoinstructions follow */
 
 static inline void

@@ -864,35 +864,35 @@ _mesa_hash_table_u64_destroy(struct hash_table_u64 *ht)
    ralloc_free(ht);
 }
 
-void
+struct hash_entry *
 _mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
                             void *data)
 {
+   struct hash_entry *entry;
    if (key == FREED_KEY_VALUE) {
       ht->freed_key_data = data;
-      return;
+      return NULL;
    }
 
    if (key == DELETED_KEY_VALUE) {
       ht->deleted_key_data = data;
-      return;
+      return NULL;
    }
 
    if (sizeof(void *) == 8) {
-      _mesa_hash_table_insert(ht->table, (void *)(uintptr_t)key, data);
+      entry = _mesa_hash_table_insert(ht->table, (void *)(uintptr_t)key, data);
    } else {
       struct hash_key_u64 *_key = CALLOC_STRUCT(hash_key_u64);
 
       if (!_key)
-         return;
+         return NULL;
       _key->value = key;
 
-      struct hash_entry *entry =
-         hash_table_get_entry(ht->table, key_u64_hash(_key), _key);
+      entry = hash_table_get_entry(ht->table, key_u64_hash(_key), _key);
 
       if (!entry) {
          FREE(_key);
-         return;
+         return NULL;
       }
 
       entry->data = data;
@@ -901,6 +901,7 @@ _mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
       else
          FREE(_key);
    }
+   return entry;
 }
 
 static struct hash_entry *

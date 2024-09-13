@@ -203,7 +203,7 @@ _mesa_hash_table_u64_create(void *mem_ctx);
 void
 _mesa_hash_table_u64_destroy(struct hash_table_u64 *ht);
 
-void
+struct hash_entry *
 _mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
                             void *data);
 

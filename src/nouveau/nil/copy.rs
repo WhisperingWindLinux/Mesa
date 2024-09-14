@@ -218,43 +218,58 @@ struct BlockPointer {
     x_mul: usize,
     y_mul: usize,
     z_mul: usize,
+    #[cfg(debug_assertions)]
+    bl_extent: Extent4D<units::Bytes>,
 }
 
 impl BlockPointer {
     fn new(
         pointer: usize,
-        block_extent: Extent4D<units::Bytes>,
+        bl_extent: Extent4D<units::Bytes>,
         extent: Extent4D<units::Bytes>,
     ) -> BlockPointer {
-        debug_assert!(block_extent.array_len == 1);
+        debug_assert!(bl_extent.array_len == 1);
 
-        debug_assert!(extent.width % block_extent.width == 0);
-        debug_assert!(extent.height % block_extent.height == 0);
-        debug_assert!(extent.depth % block_extent.depth == 0);
+        debug_assert!(extent.width % bl_extent.width == 0);
+        debug_assert!(extent.height % bl_extent.height == 0);
+        debug_assert!(extent.depth % bl_extent.depth == 0);
         debug_assert!(extent.array_len == 1);
 
         BlockPointer {
             pointer,
-            // We assume that offsets passed to at() are aligned to
-            // block_extent so offset.x * x_mul is equivalent to:
+            // We assume that offsets passed to at() are aligned to bl_extent so
             //
-            // (offset.x / block_extent.width) * block_extent.size_B()
-            //
-            // The other two fields are a similar calculation but also
-            // multiplied by the row or plane stride in blocks.
-            x_mul: (block_extent.height as usize)
-                * (block_extent.depth as usize),
-            y_mul: (block_extent.width as usize)
-                * (block_extent.depth as usize)
-                * ((extent.width / block_extent.width) as usize),
-            z_mul: (block_extent.width as usize)
-                * (block_extent.height as usize)
-                * ((extent.width / block_extent.width) as usize)
-                * ((extent.height / block_extent.height) as usize),
+            //    x_bl * bl_size_B
+            //  = (x / bl_extent.width) * bl_size_B
+            //  = x * (bl_size_B / bl_extent.width)
+            //  = x * bl_extent.height * bl_extent.depth
+            x_mul: (bl_extent.height as usize) * (bl_extent.depth as usize),
+
+            //   y_bl * width_bl * bl_size_B
+            //   (y / bl_extent.height) * width_bl * bl_size_B
+            // = y * (bl_size_B / bl_extent.height) * width_bl
+            // = y * bl_extent.width * bl_extent.depth * width_bl
+            // = y * (width_bl * bl_extent.width) * bl_extent.depth
+            // = x * extent.width * bl_extent.depth
+            y_mul: (extent.width as usize) * (bl_extent.depth as usize),
+
+            //   z_bl * width_bl * height_bl * bl_size_B
+            // = (z / bl_extent.depth) * width_bl * height_bl * bl_size_B
+            // = z * (bl_size_B / bl_extent.depth) * width_bl * height_bl
+            // = z * (bl_extent.width * bl_extent.height) * width_bl * height_bl
+            // = z * width_bl * bl_extent.width * height_bl * bl_extent.height
+            // = z * extent.width * extent.height
+            z_mul: (extent.width as usize) * (extent.height as usize),
+
+            #[cfg(debug_assertions)]
+            bl_extent,
         }
     }
 
     fn at(&self, offset: Offset4D<units::Bytes>) -> usize {
+        debug_assert!(offset.x % self.bl_extent.width == 0);
+        debug_assert!(offset.y % self.bl_extent.height == 0);
+        debug_assert!(offset.z % self.bl_extent.depth == 0);
         debug_assert!(offset.a == 0);
         self.pointer
             + (offset.x as usize) * self.x_mul

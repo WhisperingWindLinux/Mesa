@@ -266,15 +266,16 @@ impl BlockPointer {
         }
     }
 
+    #[inline]
     fn at(&self, offset: Offset4D<units::Bytes>) -> usize {
         debug_assert!(offset.x % self.bl_extent.width == 0);
         debug_assert!(offset.y % self.bl_extent.height == 0);
         debug_assert!(offset.z % self.bl_extent.depth == 0);
         debug_assert!(offset.a == 0);
         self.pointer
-            + (offset.x as usize) * self.x_mul
-            + (offset.y as usize) * self.y_mul
             + (offset.z as usize) * self.z_mul
+            + (offset.y as usize) * self.y_mul
+            + (offset.x as usize) * self.x_mul
     }
 }
 
@@ -307,9 +308,9 @@ impl LinearPointer {
         LinearPointer {
             pointer: self
                 .pointer
-                .wrapping_sub((offset.x / self.x_divisor) as usize)
+                .wrapping_sub((offset.z as usize) * self.plane_stride_B)
                 .wrapping_sub((offset.y as usize) * self.row_stride_B)
-                .wrapping_sub((offset.z as usize) * self.plane_stride_B),
+                .wrapping_sub((offset.x / self.x_divisor) as usize),
             x_divisor: self.x_divisor,
             row_stride_B: self.row_stride_B,
             plane_stride_B: self.plane_stride_B,
@@ -317,14 +318,18 @@ impl LinearPointer {
     }
 
     #[inline]
-    fn offset(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
+    fn at(self, offset: Offset4D<units::Bytes>) -> usize {
         debug_assert!(offset.a == 0);
+        self.pointer
+            .wrapping_add((offset.z as usize) * self.plane_stride_B)
+            .wrapping_add((offset.y as usize) * self.row_stride_B)
+            .wrapping_add((offset.x / self.x_divisor) as usize)
+    }
+
+    #[inline]
+    fn offset(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
         LinearPointer {
-            pointer: self
-                .pointer
-                .wrapping_add((offset.x / self.x_divisor) as usize)
-                .wrapping_add((offset.y as usize) * self.row_stride_B)
-                .wrapping_add((offset.z as usize) * self.plane_stride_B),
+            pointer: self.at(offset),
             x_divisor: self.x_divisor,
             row_stride_B: self.row_stride_B,
             plane_stride_B: self.plane_stride_B,

@@ -498,6 +498,32 @@ unsafe fn copy_tiled<CG: CopyGOB>(
     });
 }
 
+struct CopyX24S8ToTiled {}
+
+impl Copy16B for CopyX24S8ToTiled {
+    const X_DIVISOR: u32 = 4;
+
+    unsafe fn copy(tiled: *mut u8, linear: *mut u8, bytes: usize) {
+        for i in (3..(bytes as isize)).step_by(4) {
+            tiled.offset(i).write(linear.offset(i / 4).read());
+        }
+    }
+}
+
+struct CopyZ24X8ToTiled {}
+
+impl Copy16B for CopyZ24X8ToTiled {
+    const X_DIVISOR: u32 = 1;
+
+    unsafe fn copy(tiled: *mut u8, linear: *mut u8, bytes: usize) {
+        for i in (0..(bytes as isize)).step_by(4) {
+            tiled.offset(i + 0).write(linear.offset(i + 0).read());
+            tiled.offset(i + 1).write(linear.offset(i + 1).read());
+            tiled.offset(i + 2).write(linear.offset(i + 2).read());
+        }
+    }
+}
+
 trait LinearTiledCopy {
     // No 3D GOBs for now
     unsafe fn copy_gob(

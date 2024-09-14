@@ -6,6 +6,8 @@ use crate::image::Image;
 use crate::tiling::{gob_height, Tiling, GOB_DEPTH, GOB_WIDTH_B};
 use crate::ILog2Ceil;
 
+use std::ops::Range;
+
 pub const SECTOR_WIDTH_B: u32 = 16;
 pub const SECTOR_HEIGHT: u32 = 2;
 pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
@@ -119,6 +121,287 @@ pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
 // The copy_x and copy_whole_x distinction is made because if we can guarantee
 // that tiles/gobs are whole and aligned, we can skip all bounds checking and
 // copy things in fast and tight loops
+
+fn aligned_range(start: u32, end: u32, align: u32) -> Range<u32> {
+    debug_assert!(align.is_power_of_two());
+    let align_1 = align - 1;
+    (start & align_1)..((end + align_1) & align_1)
+}
+
+fn chunk_range(
+    chunk_start: u32,
+    chunk_len: u32,
+    whole_start: u32,
+    whole_end: u32,
+) -> Range<u32> {
+    debug_assert!(chunk_start < whole_end);
+    let start = if chunk_start < whole_start {
+        whole_start - chunk_start
+    } else {
+        0
+    };
+    let end = std::cmp::min(whole_end - chunk_start, chunk_len);
+    start..end
+}
+
+fn for_each_extent4d<U>(
+    start: Offset4D<U>,
+    end: Offset4D<U>,
+    chunk: Extent4D<U>,
+    mut f: impl FnMut(Offset4D<U>, Offset4D<U>, Offset4D<U>),
+) {
+    debug_assert!(chunk.width.is_power_of_two());
+    debug_assert!(chunk.height.is_power_of_two());
+    debug_assert!(chunk.depth.is_power_of_two());
+    debug_assert!(chunk.array_len == 1);
+
+    debug_assert!(start.a == 0);
+    debug_assert!(end.a == 1);
+
+    let x_range = aligned_range(start.x, end.x, chunk.width);
+    let y_range = aligned_range(start.y, end.y, chunk.height);
+    let z_range = aligned_range(start.z, end.z, chunk.depth);
+
+    for z in z_range.step_by(chunk.depth as usize) {
+        let chunk_z = chunk_range(start.z, end.z, z, chunk.depth);
+        for y in y_range.clone().step_by(chunk.height as usize) {
+            let chunk_y = chunk_range(start.y, end.y, y, chunk.height);
+            for x in x_range.clone().step_by(chunk.width as usize) {
+                let chunk_x = chunk_range(start.x, end.x, x, chunk.width);
+                let chunk_start = Offset4D::new(x, y, z, start.a);
+                let start = Offset4D::new(
+                    chunk_x.start,
+                    chunk_y.start,
+                    chunk_z.start,
+                    start.a,
+                );
+                let end =
+                    Offset4D::new(chunk_x.end, chunk_y.end, chunk_z.end, end.a);
+                f(chunk_start, start, end);
+            }
+        }
+    }
+}
+
+fn for_each_extent4d_aligned<U>(
+    start: Offset4D<U>,
+    end: Offset4D<U>,
+    chunk: Extent4D<U>,
+    mut f: impl FnMut(Offset4D<U>),
+) {
+    debug_assert!(start.x % chunk.width == 0);
+    debug_assert!(start.y % chunk.height == 0);
+    debug_assert!(start.z % chunk.depth == 0);
+    debug_assert!(start.a == 0);
+
+    debug_assert!(end.x % chunk.width == 0);
+    debug_assert!(end.y % chunk.height == 0);
+    debug_assert!(end.z % chunk.depth == 0);
+    debug_assert!(end.a == 1);
+
+    debug_assert!(chunk.width.is_power_of_two());
+    debug_assert!(chunk.height.is_power_of_two());
+    debug_assert!(chunk.depth.is_power_of_two());
+    debug_assert!(chunk.array_len == 1);
+
+    for z in (start.z..end.z).step_by(chunk.depth as usize) {
+        for y in (start.y..end.y).step_by(chunk.height as usize) {
+            for x in (start.x..end.x).step_by(chunk.width as usize) {
+                f(Offset4D::new(x, y, z, start.a));
+            }
+        }
+    }
+}
+
+struct BlockPointer {
+    pointer: usize,
+    x_mul: usize,
+    y_mul: usize,
+    z_mul: usize,
+}
+
+impl BlockPointer {
+    fn new(
+        pointer: usize,
+        block_extent: Extent4D<units::Bytes>,
+        extent: Extent4D<units::Bytes>,
+    ) -> BlockPointer {
+        debug_assert!(block_extent.array_len == 1);
+
+        debug_assert!(extent.width % block_extent.width == 0);
+        debug_assert!(extent.height % block_extent.height == 0);
+        debug_assert!(extent.depth % block_extent.depth == 0);
+        debug_assert!(extent.array_len == 1);
+
+        BlockPointer {
+            pointer,
+            // We assume that offsets passed to at() are aligned to
+            // block_extent so offset.x * x_mul is equivalent to:
+            //
+            // (offset.x / block_extent.width) * block_extent.size_B()
+            //
+            // The other two fields are a similar calculation but also
+            // multiplied by the row or plane stride in blocks.
+            x_mul: (block_extent.height as usize)
+                * (block_extent.depth as usize),
+            y_mul: (block_extent.width as usize)
+                * (block_extent.depth as usize)
+                * ((extent.width / block_extent.width) as usize),
+            z_mul: (block_extent.width as usize)
+                * (block_extent.height as usize)
+                * ((extent.width / block_extent.width) as usize)
+                * ((extent.height / block_extent.height) as usize),
+        }
+    }
+
+    fn at(&self, offset: Offset4D<units::Bytes>) -> usize {
+        debug_assert!(offset.a == 0);
+        self.pointer
+            + (offset.x as usize) * self.x_mul
+            + (offset.y as usize) * self.y_mul
+            + (offset.z as usize) * self.z_mul
+    }
+}
+
+#[derive(Copy, Clone)]
+struct LinearPointer {
+    pointer: usize,
+    x_divisor: u32,
+    row_stride_B: usize,
+    plane_stride_B: usize,
+}
+
+impl LinearPointer {
+    fn new(
+        pointer: usize,
+        x_divisor: u32,
+        row_stride_B: usize,
+        plane_stride_B: usize,
+    ) -> LinearPointer {
+        LinearPointer {
+            pointer,
+            x_divisor,
+            row_stride_B,
+            plane_stride_B,
+        }
+    }
+
+    #[inline]
+    fn reverse(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
+        debug_assert!(offset.a == 0);
+        LinearPointer {
+            pointer: self
+                .pointer
+                .wrapping_sub((offset.x / self.x_divisor) as usize)
+                .wrapping_sub((offset.y as usize) * self.row_stride_B)
+                .wrapping_sub((offset.z as usize) * self.plane_stride_B),
+            x_divisor: self.x_divisor,
+            row_stride_B: self.row_stride_B,
+            plane_stride_B: self.plane_stride_B,
+        }
+    }
+
+    #[inline]
+    fn offset(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
+        debug_assert!(offset.a == 0);
+        LinearPointer {
+            pointer: self
+                .pointer
+                .wrapping_add((offset.x / self.x_divisor) as usize)
+                .wrapping_add((offset.y as usize) * self.row_stride_B)
+                .wrapping_add((offset.z as usize) * self.plane_stride_B),
+            x_divisor: self.x_divisor,
+            row_stride_B: self.row_stride_B,
+            plane_stride_B: self.plane_stride_B,
+        }
+    }
+}
+
+trait CopyGOB {
+    const GOB_EXTENT_B: Extent4D<units::Bytes>;
+    const LINEAR_X_DIVISOR: u32;
+
+    unsafe fn copy_gob(
+        tiled: usize,
+        linear: LinearPointer,
+        start: Offset4D<units::Bytes>,
+        end: Offset4D<units::Bytes>,
+    );
+
+    // No bounding box for this one
+    unsafe fn copy_whole_gob(tiled: usize, linear: LinearPointer) {
+        Self::copy_gob(
+            tiled,
+            linear,
+            Offset4D::new(0, 0, 0, 0),
+            Offset4D::new(0, 0, 0, 0) + Self::GOB_EXTENT_B,
+        );
+    }
+}
+
+unsafe fn copy_tile<CG: CopyGOB>(
+    tiling: Tiling,
+    tile_ptr: usize,
+    linear: LinearPointer,
+    start: Offset4D<units::Bytes>,
+    end: Offset4D<units::Bytes>,
+) {
+    debug_assert!(tiling.gob_extent_B() == CG::GOB_EXTENT_B);
+
+    let tile_extent_B = tiling.extent_B();
+    let tile_ptr = BlockPointer::new(tile_ptr, CG::GOB_EXTENT_B, tile_extent_B);
+
+    if start.is_aligned_to(CG::GOB_EXTENT_B)
+        && end.is_aligned_to(CG::GOB_EXTENT_B)
+    {
+        for_each_extent4d_aligned(start, end, CG::GOB_EXTENT_B, |gob| {
+            CG::copy_whole_gob(tile_ptr.at(gob), linear.offset(gob));
+        });
+    } else {
+        for_each_extent4d(start, end, CG::GOB_EXTENT_B, |gob, start, end| {
+            let tiled = tile_ptr.at(gob);
+            let linear = linear.offset(gob);
+            if start == Offset4D::new(0, 0, 0, 0)
+                && end == Offset4D::new(0, 0, 0, 0) + CG::GOB_EXTENT_B
+            {
+                CG::copy_whole_gob(tiled, linear);
+            } else {
+                CG::copy_gob(tiled, linear, start, end);
+            }
+        });
+    }
+}
+
+unsafe fn copy_tiled<CG: CopyGOB>(
+    tiling: Tiling,
+    level_extent_B: Extent4D<units::Bytes>,
+    level_tiled_ptr: usize,
+    linear: LinearPointer,
+    start: Offset4D<units::Bytes>,
+    end: Offset4D<units::Bytes>,
+) {
+    let tile_extent_B = tiling.extent_B();
+    let level_extent_B = level_extent_B.align(&tile_extent_B);
+
+    // Help the compiler constant fold the X divisor
+    debug_assert!(linear.x_divisor == CG::LINEAR_X_DIVISOR);
+    let mut linear = linear;
+    linear.x_divisor = CG::LINEAR_X_DIVISOR;
+
+    // Back up the linear pointer so it also points at the start of the level.
+    // This way, every step of the iteration can assume that both pointers
+    // point to the start chunk of the level, tile, or GOB.
+    let linear = linear.reverse(start);
+
+    let level_tiled_ptr =
+        BlockPointer::new(level_tiled_ptr, tile_extent_B, level_extent_B);
+
+    for_each_extent4d(start, end, tile_extent_B, |tile, start, end| {
+        let tile_ptr = level_tiled_ptr.at(tile);
+        let linear = linear.offset(tile);
+        copy_tile::<CG>(tiling, tile_ptr, linear, start, end);
+    });
+}
 
 trait LinearTiledCopy {
     // No 3D GOBs for now

@@ -355,7 +355,11 @@ copy_image(struct anv_cmd_buffer *cmd_buffer,
    unsigned dst_base_layer, layer_count;
    if (dst_image->vk.image_type == VK_IMAGE_TYPE_3D) {
       dst_base_layer = region->dstOffset.z;
-      layer_count = region->extent.depth;
+      if (src_image->vk.image_type == VK_IMAGE_TYPE_2D)
+         layer_count = vk_image_subresource_layer_count(&src_image->vk,
+                                                        &region->srcSubresource);
+      else
+         layer_count = region->extent.depth;
    } else {
       dst_base_layer = region->dstSubresource.baseArrayLayer;
       layer_count = vk_image_subresource_layer_count(&dst_image->vk,

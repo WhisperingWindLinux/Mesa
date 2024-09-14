@@ -78,7 +78,7 @@ struct ac_llvm_compiler;
 #define SI_CONTEXT_PS_PARTIAL_FLUSH   (1 << 13)
 #define SI_CONTEXT_CS_PARTIAL_FLUSH   (1 << 14)
 #define SI_CONTEXT_VGT_FLUSH          (1 << 15)
-#define SI_CONTEXT_VGT_STREAMOUT_SYNC (1 << 16)
+/* gap */
 /* PFP waits for ME to finish. Used to sync for index and indirect buffers and render
  * condition. It's typically set when doing a VS/PS/CS partial flush for buffers. */
 #define SI_CONTEXT_PFP_SYNC_ME        (1 << 17)
@@ -262,22 +262,6 @@ enum
 
 #define DBG_ALL_SHADERS (((1 << (DBG_CS + 1)) - 1))
 #define DBG(name)       (1ull << DBG_##name)
-
-enum si_cache_policy
-{
-   L2_BYPASS,
-   L2_STREAM, /* same as SLC=1 */
-   L2_LRU,    /* same as SLC=0 */
-};
-
-enum si_coherency
-{
-   SI_COHERENCY_NONE, /* no cache flushes needed */
-   SI_COHERENCY_SHADER,
-   SI_COHERENCY_CB_META,
-   SI_COHERENCY_DB_META,
-   SI_COHERENCY_CP,
-};
 
 #define SI_BIND_CONSTANT_BUFFER_SHIFT     0
 #define SI_BIND_SHADER_BUFFER_SHIFT       6
@@ -1477,32 +1461,40 @@ void si_destroy_compute(struct si_compute *program);
 /* si_compute_blit.c */
 #define SI_OP_SYNC_CS_BEFORE              (1 << 0)
 #define SI_OP_SYNC_PS_BEFORE              (1 << 1)
-#define SI_OP_SYNC_CPDMA_BEFORE           (1 << 2) /* only affects CP DMA calls */
-#define SI_OP_SYNC_BEFORE                 (SI_OP_SYNC_CS_BEFORE | SI_OP_SYNC_PS_BEFORE | SI_OP_SYNC_CPDMA_BEFORE)
+#define SI_OP_SYNC_GE_BEFORE              (1 << 2) /* only sync VS, TCS, TES, GS */
+#define SI_OP_SYNC_BEFORE                 (SI_OP_SYNC_CS_BEFORE | SI_OP_SYNC_PS_BEFORE)
 #define SI_OP_SYNC_AFTER                  (1 << 3)
 #define SI_OP_SYNC_BEFORE_AFTER           (SI_OP_SYNC_BEFORE | SI_OP_SYNC_AFTER)
 #define SI_OP_SKIP_CACHE_INV_BEFORE       (1 << 4) /* don't invalidate caches */
 #define SI_OP_CS_IMAGE                    (1 << 5)
 #define SI_OP_CS_RENDER_COND_ENABLE       (1 << 6)
-#define SI_OP_CPDMA_SKIP_CHECK_CS_SPACE   (1 << 7) /* don't call need_cs_space */
-#define SI_OP_SYNC_GE_BEFORE              (1 << 8) /* only sync VS, TCS, TES, GS */
+/* gap */
 /* Only for si_compute_blit: */
 #define SI_OP_FAIL_IF_SLOW                (1 << 9)
 #define SI_OP_IS_NESTED                   (1 << 10)
 
-unsigned si_get_flush_flags(struct si_context *sctx, enum si_coherency coher,
-                            enum si_cache_policy cache_policy);
+void si_barrier_before_internal_op(struct si_context *sctx, unsigned flags,
+                                   unsigned num_buffers,
+                                   const struct pipe_shader_buffer *buffers,
+                                   unsigned writable_buffers_mask,
+                                   unsigned num_images,
+                                   const struct pipe_image_view *images);
+void si_barrier_after_internal_op(struct si_context *sctx, unsigned flags,
+                                  unsigned num_buffers,
+                                  const struct pipe_shader_buffer *buffers,
+                                  unsigned writable_buffers_mask,
+                                  unsigned num_images,
+                                  const struct pipe_image_view *images);
 bool si_should_blit_clamp_to_edge(const struct pipe_blit_info *info, unsigned coord_mask);
 void si_launch_grid_internal_ssbos(struct si_context *sctx, struct pipe_grid_info *info,
-                                   void *shader, unsigned flags, enum si_coherency coher,
-                                   unsigned num_buffers, const struct pipe_shader_buffer *buffers,
+                                   void *shader, unsigned flags, unsigned num_buffers,
+                                   const struct pipe_shader_buffer *buffers,
                                    unsigned writeable_bitmask);
 bool si_compute_clear_copy_buffer(struct si_context *sctx, struct pipe_resource *dst,
                                   unsigned dst_offset, struct pipe_resource *src,
                                   unsigned src_offset, unsigned size,
                                   const uint32_t *clear_value, unsigned clear_value_size,
-                                  unsigned flags, enum si_coherency coher,
-                                  unsigned dwords_per_thread, bool fail_if_slow);
+                                  unsigned flags, unsigned dwords_per_thread, bool fail_if_slow);
 enum si_clear_method {
   SI_CP_DMA_CLEAR_METHOD,
   SI_COMPUTE_CLEAR_METHOD,
@@ -1511,11 +1503,10 @@ enum si_clear_method {
 void si_clear_buffer(struct si_context *sctx, struct pipe_resource *dst,
                      uint64_t offset, uint64_t size, uint32_t *clear_value,
                      uint32_t clear_value_size, unsigned flags,
-                     enum si_coherency coher, enum si_clear_method method);
+                     enum si_clear_method method);
 void si_compute_clear_buffer_rmw(struct si_context *sctx, struct pipe_resource *dst,
-                                 unsigned dst_offset, unsigned size,
-                                 uint32_t clear_value, uint32_t writebitmask,
-                                 unsigned flags, enum si_coherency coher);
+                                 unsigned dst_offset, unsigned size, uint32_t clear_value,
+                                 uint32_t writebitmask, unsigned flags);
 void si_copy_buffer(struct si_context *sctx, struct pipe_resource *dst, struct pipe_resource *src,
                     uint64_t dst_offset, uint64_t src_offset, unsigned size, unsigned flags);
 void si_compute_shorten_ubyte_buffer(struct si_context *sctx, struct pipe_resource *dst, struct pipe_resource *src,
@@ -1525,7 +1516,7 @@ void si_compute_clear_image_dcc_single(struct si_context *sctx, struct si_textur
                                        const union pipe_color_union *color, unsigned flags);
 void si_retile_dcc(struct si_context *sctx, struct si_texture *tex);
 void gfx9_clear_dcc_msaa(struct si_context *sctx, struct pipe_resource *res, uint32_t clear_value,
-                         unsigned flags, enum si_coherency coher);
+                         unsigned flags);
 void si_compute_expand_fmask(struct pipe_context *ctx, struct pipe_resource *tex);
 bool si_compute_clear_image(struct si_context *sctx, struct pipe_resource *tex,
                             enum pipe_format format, unsigned level, const struct pipe_box *box,
@@ -1544,12 +1535,10 @@ void si_init_compute_blit_functions(struct si_context *sctx);
 void si_cp_dma_wait_for_idle(struct si_context *sctx, struct radeon_cmdbuf *cs);
 void si_cp_dma_clear_buffer(struct si_context *sctx, struct radeon_cmdbuf *cs,
                             struct pipe_resource *dst, uint64_t offset, uint64_t size,
-                            unsigned value, unsigned user_flags, enum si_coherency coher,
-                            enum si_cache_policy cache_policy);
+                            unsigned value, unsigned user_flags);
 void si_cp_dma_copy_buffer(struct si_context *sctx, struct pipe_resource *dst,
                            struct pipe_resource *src, uint64_t dst_offset, uint64_t src_offset,
-                           unsigned size, unsigned user_flags, enum si_coherency coher,
-                           enum si_cache_policy cache_policy);
+                           unsigned size, unsigned user_flags);
 void si_cp_write_data(struct si_context *sctx, struct si_resource *buf, unsigned offset,
                       unsigned size, unsigned dst_sel, unsigned engine, const void *data);
 void si_cp_copy_data(struct si_context *sctx, struct radeon_cmdbuf *cs, unsigned dst_sel,
@@ -1558,6 +1547,19 @@ void si_cp_copy_data(struct si_context *sctx, struct radeon_cmdbuf *cs, unsigned
 
 /* si_cp_reg_shadowing.c */
 void si_init_cp_reg_shadowing(struct si_context *sctx);
+
+/* si_cp_utils.c */
+void si_cp_release_mem_pws(struct si_context *sctx, struct radeon_cmdbuf *cs,
+                           unsigned event_type, unsigned gcr_cntl);
+void si_cp_acquire_mem_pws(struct si_context *sctx, struct radeon_cmdbuf *cs,
+                           unsigned event_type, unsigned stage_sel, unsigned gcr_cntl,
+                           unsigned distance, unsigned sqtt_flush_flags);
+void si_cp_release_acquire_mem_pws(struct si_context *sctx, struct radeon_cmdbuf *cs,
+                                   unsigned event_type, unsigned gcr_cntl, unsigned stage_sel,
+                                   unsigned sqtt_flush_flags);
+void si_cp_acquire_mem(struct si_context *sctx, struct radeon_cmdbuf *cs, unsigned gcr_cntl,
+                       unsigned engine);
+void si_cp_pfp_sync_me(struct radeon_cmdbuf *cs);
 
 /* si_debug.c */
 void si_gather_context_rolls(struct si_context *sctx);
@@ -1600,8 +1602,6 @@ void si_set_tracked_regs_to_clear_state(struct si_context *ctx);
 void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs);
 void si_trace_emit(struct si_context *sctx);
 void si_emit_ts(struct si_context *sctx, struct si_resource* buffer, unsigned int offset);
-void si_emit_surface_sync(struct si_context *sctx, struct radeon_cmdbuf *cs,
-                          unsigned cp_coher_cntl);
 void gfx10_emit_cache_flush(struct si_context *sctx, struct radeon_cmdbuf *cs);
 void gfx6_emit_cache_flush(struct si_context *sctx, struct radeon_cmdbuf *cs);
 /* Replace the sctx->b.draw_vbo function with a wrapper. This can be use to implement

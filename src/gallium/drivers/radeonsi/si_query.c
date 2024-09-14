@@ -980,8 +980,7 @@ static void si_query_hw_do_emit_stop(struct si_context *sctx, struct si_query_hw
 
       radeon_begin(cs);
       if (sctx->screen->use_ngg && query->flags & SI_QUERY_EMULATE_GS_COUNTERS) {
-         radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-         radeon_emit(EVENT_TYPE(V_028A90_VS_PARTIAL_FLUSH) | EVENT_INDEX(4));
+         radeon_event_write(V_028A90_VS_PARTIAL_FLUSH);
 
          if (--sctx->num_pipeline_stat_emulated_queries == 0) {
             si_set_internal_shader_buffer(sctx, SI_GS_QUERY_BUF, NULL);
@@ -1646,8 +1645,7 @@ static void si_query_hw_get_result_resource(struct si_context *sctx, struct si_q
          si_cp_wait_mem(sctx, &sctx->gfx_cs, va, 0x80000000, 0x80000000, WAIT_REG_MEM_EQUAL);
       }
       si_launch_grid_internal_ssbos(sctx, &grid, sctx->query_result_shader,
-                                    SI_OP_SYNC_AFTER, SI_COHERENCY_SHADER,
-                                    3, ssbo, 0x4);
+                                    SI_OP_SYNC_AFTER, 3, ssbo, 0x4);
    }
 
    si_restore_qbo_state(sctx, &saved_state);

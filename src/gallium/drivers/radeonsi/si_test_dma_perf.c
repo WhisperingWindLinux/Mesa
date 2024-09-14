@@ -187,7 +187,7 @@ void si_test_dma_perf(struct si_screen *sscreen)
 
                /* Don't test large sizes with GTT because it's slow. */
                if ((dst_usage == PIPE_USAGE_STREAM || src_usage == PIPE_USAGE_STREAM) &&
-                   size > 32 * 1024 * 1024) {
+                   size > 16 * 1024 * 1024) {
                   printf("%8s,", "n/a");
                   continue;
                }
@@ -215,27 +215,39 @@ void si_test_dma_perf(struct si_screen *sscreen)
                      }
                   } else if (method == METHOD_CP_DMA) {
                      /* CP DMA */
+                     if (sscreen->info.cp_sdma_ge_use_system_memory_scope) {
+                        /* The CP DMA code doesn't implement this case. */
+                        success = false;
+                        continue;
+                     }
+
                      if (is_copy) {
+                        /* CP DMA copies are about as slow as PCIe on GFX6-8. */
+                        if (sctx->gfx_level <= GFX8 && size > 16 * 1024 * 1024) {
+                           success = false;
+                           continue;
+                        }
                         si_cp_dma_copy_buffer(sctx, dst, src, dst_offset, src_offset, size,
-                                              SI_OP_SYNC_BEFORE_AFTER, SI_COHERENCY_SHADER, L2_LRU);
+                                              SI_OP_SYNC_BEFORE_AFTER);
                      } else {
                         /* CP DMA clears must be aligned to 4 bytes. */
-                        if (dst_offset % 4 || size % 4) {
+                        if (dst_offset % 4 || size % 4 ||
+                            /* CP DMA clears are so slow on GFX6-8 that we risk getting a GPU timeout. */
+                            (sctx->gfx_level <= GFX8 && size > 512 * 1024)) {
                            success = false;
                            continue;
                         }
                         assert(clear_value_size == 4);
                         si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, dst, dst_offset, size,
-                                               clear_value[0], SI_OP_SYNC_BEFORE_AFTER,
-                                               SI_COHERENCY_SHADER, L2_LRU);
+                                               clear_value[0], SI_OP_SYNC_BEFORE_AFTER);
                      }
                   } else {
                      /* Compute */
                      success &=
                         si_compute_clear_copy_buffer(sctx, dst, dst_offset, src, src_offset,
                                                      size, clear_value, clear_value_size,
-                                                     SI_OP_SYNC_BEFORE_AFTER, SI_COHERENCY_SHADER,
-                                                     dwords_per_thread, false);
+                                                     SI_OP_SYNC_BEFORE_AFTER, dwords_per_thread,
+                                                     false);
                   }
 
                   sctx->flags |= SI_CONTEXT_INV_L2;
@@ -252,7 +264,10 @@ void si_test_dma_perf(struct si_screen *sscreen)
                ctx->get_query_result(ctx, q, true, &result);
                ctx->destroy_query(ctx, q);
 
-               if (success) {
+               /* Navi10 and Vega10 sometimes incorrectly return elapsed time of 0 nanoseconds
+                * for very small ops.
+                */
+               if (success && result.u64) {
                   double GB = 1024.0 * 1024.0 * 1024.0;
                   double seconds = result.u64 / (double)NUM_RUNS / (1000.0 * 1000.0 * 1000.0);
                   double GBps = (size / GB) / seconds * (test_flavor == TEST_COPY_VRAM_VRAM ? 2 : 1);
@@ -462,8 +477,7 @@ void si_test_clear_buffer(struct si_screen *sscreen)
 
       bool done = si_compute_clear_copy_buffer(sctx, dst, dst_offset, NULL, 0, op_size,
                                                (uint32_t*)clear_value, clear_value_size,
-                                               SI_OP_SYNC_BEFORE_AFTER, SI_COHERENCY_SHADER,
-                                               dwords_per_thread, false);
+                                               SI_OP_SYNC_BEFORE_AFTER, dwords_per_thread, false);
 
       if (done) {
          pipe_buffer_read(ctx, dst, 0, buf_size, read_dst_buffer);
@@ -568,7 +582,7 @@ void si_test_copy_buffer(struct si_screen *sscreen)
 
       bool done = si_compute_clear_copy_buffer(sctx, dst, dst_offset, src, src_offset, op_size,
                                                NULL, 0, SI_OP_SYNC_BEFORE_AFTER,
-                                               SI_COHERENCY_SHADER, dwords_per_thread, false);
+                                               dwords_per_thread, false);
 
       if (done) {
          pipe_buffer_read(ctx, dst, 0, buf_size, read_dst_buffer);

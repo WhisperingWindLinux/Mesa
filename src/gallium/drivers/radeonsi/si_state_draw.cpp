@@ -1212,16 +1212,6 @@ void si_emit_buffered_compute_sh_regs(struct si_context *sctx)
 
 #endif
 
-#define EMIT_SQTT_END_DRAW                                                     \
-  do {                                                                         \
-    if (GFX_VERSION >= GFX9 && unlikely(sctx->sqtt_enabled)) {                 \
-      radeon_begin(&sctx->gfx_cs);                                             \
-      radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));                               \
-      radeon_emit(EVENT_TYPE(V_028A90_THREAD_TRACE_MARKER) | EVENT_INDEX(0));  \
-      radeon_end();                                                            \
-    }                                                                          \
-  } while (0)
-
 template <amd_gfx_level GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
           si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_sh_pairs_packed HAS_SH_PAIRS_PACKED> ALWAYS_INLINE
 static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw_info *info,
@@ -1638,10 +1628,8 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
             radeon_emit(0);
             radeon_emit(V_0287F0_DI_SRC_SEL_AUTO_INDEX | use_opaque);
 
-            for (unsigned i = 0; i < 3; i++) {
-               radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-               radeon_emit(EVENT_TYPE(V_028A90_SQ_NON_EVENT) | EVENT_INDEX(0));
-            }
+            for (unsigned i = 0; i < 3; i++)
+               radeon_event_write(V_028A90_SQ_NON_EVENT);
          } else if (increment_draw_id) {
             for (unsigned i = 0; i < num_draws; i++) {
                if (i > 0) {
@@ -1675,9 +1663,10 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
          }
       }
    }
-   radeon_end();
 
-   EMIT_SQTT_END_DRAW;
+   if (GFX_VERSION >= GFX9 && unlikely(sctx->sqtt_enabled))
+     radeon_event_write(V_028A90_THREAD_TRACE_MARKER);
+   radeon_end();
 }
 
 /* Return false if not bound. */
@@ -2116,6 +2105,11 @@ static void si_draw(struct pipe_context *ctx,
 
          index_offset = 0;
          index_size = 2;
+
+         /* GFX6-7 don't read index buffers through TC L2. */
+         sctx->flags |= SI_CONTEXT_WB_L2 | SI_CONTEXT_PFP_SYNC_ME;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+         si_resource(indexbuf)->TC_L2_dirty = false;
       } else if (!IS_DRAW_VERTEX_STATE && info->has_user_indices) {
          unsigned start_offset;
 
@@ -2349,8 +2343,9 @@ static void si_draw(struct pipe_context *ctx,
    if (((GFX_VERSION == GFX7 && sctx->family == CHIP_HAWAII) ||
         (GFX_VERSION == GFX8 && (sctx->family == CHIP_TONGA || sctx->family == CHIP_FIJI))) &&
        si_get_strmout_en(sctx)) {
-      sctx->flags |= SI_CONTEXT_VGT_STREAMOUT_SYNC;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+      radeon_begin(&sctx->gfx_cs);
+      radeon_event_write(V_028A90_VGT_STREAMOUT_SYNC);
+      radeon_end();
    }
 
    if (unlikely(GFX_VERSION < GFX12 && sctx->decompression_enabled)) {

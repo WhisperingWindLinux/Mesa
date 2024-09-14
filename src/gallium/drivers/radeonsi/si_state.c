@@ -62,8 +62,7 @@ static void si_emit_cb_render_state(struct si_context *sctx, unsigned index)
       sctx->last_cb_target_mask = cb_target_mask;
 
       radeon_begin(cs);
-      radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-      radeon_emit(EVENT_TYPE(V_028A90_BREAK_BATCH) | EVENT_INDEX(0));
+      radeon_event_write(V_028A90_BREAK_BATCH);
       radeon_end();
    }
 
@@ -659,7 +658,9 @@ static void *si_create_blend_state_mode(struct pipe_context *ctx,
          ac_pm4_set_reg(&pm4->base, R_028760_SX_MRT0_BLEND_OPT + i * 4, sx_mrt_blend_opt[i]);
 
       /* RB+ doesn't work with dual source blending, logic op, and RESOLVE. */
-      if (blend->dual_src_blend || logicop_enable || mode == V_028808_CB_RESOLVE)
+      if (blend->dual_src_blend || logicop_enable || mode == V_028808_CB_RESOLVE ||
+          /* Disabling RB+ improves blending performance in synthetic tests on GFX11. */
+          (sctx->gfx_level == GFX11 && blend->blend_enable_4bit))
          color_control |= S_028808_DISABLE_DUAL_QUAD(1);
    }
 
@@ -773,8 +774,7 @@ static void si_bind_blend_state(struct pipe_context *ctx, void *state)
    if ((sctx->screen->info.has_export_conflict_bug &&
         old_blend->blend_enable_4bit != blend->blend_enable_4bit) ||
        (sctx->occlusion_query_mode == SI_OCCLUSION_QUERY_MODE_PRECISE_BOOLEAN &&
-        !!old_blend->cb_target_mask != !!blend->cb_target_enabled_4bit) ||
-       (sctx->gfx_level >= GFX11 && old_blend->alpha_to_coverage != blend->alpha_to_coverage))
+        !!old_blend->cb_target_mask != !!blend->cb_target_enabled_4bit))
       si_mark_atom_dirty(sctx, &sctx->atoms.s.db_render_state);
 
    if (old_blend->cb_target_enabled_4bit != blend->cb_target_enabled_4bit ||
@@ -1792,19 +1792,8 @@ static void si_emit_db_render_state(struct si_context *sctx, unsigned index)
    /* DB_RENDER_CONTROL */
    /* Program OREO_MODE optimally for GFX11+. */
    if (sctx->gfx_level >= GFX11) {
-      /* This ignores CONSERVATIVE_Z_EXPORT, so it's slightly pessimistic. */
-      bool late_z = !G_02880C_DEPTH_BEFORE_SHADER(sctx->ps_db_shader_control) &&
-                    (G_02880C_Z_ORDER(sctx->ps_db_shader_control) == V_02880C_LATE_Z ||
-                     /* Late Z is always used in these cases: */
-                     G_02880C_KILL_ENABLE(sctx->ps_db_shader_control) ||
-                     G_02880C_Z_EXPORT_ENABLE(sctx->ps_db_shader_control) ||
-                     G_02880C_STENCIL_TEST_VAL_EXPORT_ENABLE(sctx->ps_db_shader_control) ||
-                     G_02880C_STENCIL_OP_VAL_EXPORT_ENABLE(sctx->ps_db_shader_control) ||
-                     G_02880C_COVERAGE_TO_MASK_ENABLE(sctx->ps_db_shader_control) ||
-                     G_02880C_MASK_EXPORT_ENABLE(sctx->ps_db_shader_control) ||
-                     sctx->queued.named.blend->alpha_to_coverage);
-
-      db_render_control |= S_028000_OREO_MODE(late_z ? V_028000_OMODE_BLEND : V_028000_OMODE_O_THEN_B);
+      bool z_export = G_02880C_Z_EXPORT_ENABLE(sctx->ps_db_shader_control);
+      db_render_control |= S_028000_OREO_MODE(z_export ? V_028000_OMODE_BLEND : V_028000_OMODE_O_THEN_B);
    }
 
    if (sctx->gfx_level >= GFX12) {
@@ -3191,10 +3180,9 @@ static void gfx6_emit_framebuffer_state(struct si_context *sctx, unsigned index)
                           S_028208_BR_X(state->width) | S_028208_BR_Y(state->height));
 
    if (sctx->screen->dpbb_allowed &&
-       sctx->screen->pbb_context_states_per_bin > 1) {
-      radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-      radeon_emit(EVENT_TYPE(V_028A90_BREAK_BATCH) | EVENT_INDEX(0));
-   }
+       sctx->screen->pbb_context_states_per_bin > 1)
+      radeon_event_write(V_028A90_BREAK_BATCH);
+
    radeon_end();
 
    si_update_display_dcc_dirty(sctx);
@@ -3341,10 +3329,9 @@ static void gfx11_dgpu_emit_framebuffer_state(struct si_context *sctx, unsigned 
    gfx11_end_packed_context_regs();
 
    if (sctx->screen->dpbb_allowed &&
-       sctx->screen->pbb_context_states_per_bin > 1) {
-      radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-      radeon_emit(EVENT_TYPE(V_028A90_BREAK_BATCH) | EVENT_INDEX(0));
-   }
+       sctx->screen->pbb_context_states_per_bin > 1)
+      radeon_event_write(V_028A90_BREAK_BATCH);
+
    radeon_end();
 
    si_update_display_dcc_dirty(sctx);
@@ -3478,10 +3465,9 @@ static void gfx12_emit_framebuffer_state(struct si_context *sctx, unsigned index
    gfx12_end_context_regs();
 
    if (sctx->screen->dpbb_allowed &&
-       sctx->screen->pbb_context_states_per_bin > 1) {
-      radeon_emit(PKT3(PKT3_EVENT_WRITE, 0, 0));
-      radeon_emit(EVENT_TYPE(V_028A90_BREAK_BATCH) | EVENT_INDEX(0));
-   }
+       sctx->screen->pbb_context_states_per_bin > 1)
+      radeon_event_write(V_028A90_BREAK_BATCH);
+
    radeon_end();
 
    sctx->framebuffer.dirty_cbufs = 0;

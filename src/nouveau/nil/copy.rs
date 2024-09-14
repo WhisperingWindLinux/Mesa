@@ -122,6 +122,30 @@ pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
 // that tiles/gobs are whole and aligned, we can skip all bounds checking and
 // copy things in fast and tight loops
 
+// Iterate over all the sectors in a 2D gob.  The given closure is called once
+// for each sector.  The first parameter is the byte offset into the GOB and
+// the second and third are the (x, y) coordinates
+//
+// See Figure 7.55 in the Orin TPM for details
+fn for_each_sector2d(mut f: impl FnMut(u32, u32, u32)) {
+    f(0x000,  0, 0);
+    f(0x020, 16, 0);
+    f(0x040,  0, 2);
+    f(0x060, 16, 2);
+    f(0x080,  0, 4);
+    f(0x0a0, 16, 4);
+    f(0x0c0,  0, 6);
+    f(0x0e0, 16, 6);
+    f(0x100, 32, 0);
+    f(0x120, 48, 0);
+    f(0x140, 32, 2);
+    f(0x160, 48, 2);
+    f(0x180, 32, 4);
+    f(0x1a0, 48, 4);
+    f(0x1c0, 32, 6);
+    f(0x1e0, 48, 6);
+}
+
 fn aligned_range(start: u32, end: u32, align: u32) -> Range<u32> {
     debug_assert!(align.is_power_of_two());
     let align_1 = align - 1;

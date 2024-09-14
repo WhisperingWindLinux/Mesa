@@ -39,7 +39,7 @@ pub struct Extent4D<U> {
 }
 
 impl<U> Extent4D<U> {
-    pub fn new(
+    pub const fn new(
         width: u32,
         height: u32,
         depth: u32,
@@ -205,7 +205,7 @@ pub struct Offset4D<U> {
 }
 
 impl<U> Offset4D<U> {
-    pub fn new(x: u32, y: u32, z: u32, a: u32) -> Offset4D<U> {
+    pub const fn new(x: u32, y: u32, z: u32, a: u32) -> Offset4D<U> {
         Offset4D {
             x,
             y,

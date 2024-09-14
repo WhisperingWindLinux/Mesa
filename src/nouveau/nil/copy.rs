@@ -122,30 +122,6 @@ pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
 // that tiles/gobs are whole and aligned, we can skip all bounds checking and
 // copy things in fast and tight loops
 
-// Iterate over all the sectors in a 2D gob.  The given closure is called once
-// for each sector.  The first parameter is the byte offset into the GOB and
-// the second and third are the (x, y) coordinates
-//
-// See Figure 7.55 in the Orin TPM for details
-fn for_each_sector2d(mut f: impl FnMut(u32, u32, u32)) {
-    f(0x000,  0, 0);
-    f(0x020, 16, 0);
-    f(0x040,  0, 2);
-    f(0x060, 16, 2);
-    f(0x080,  0, 4);
-    f(0x0a0, 16, 4);
-    f(0x0c0,  0, 6);
-    f(0x0e0, 16, 6);
-    f(0x100, 32, 0);
-    f(0x120, 48, 0);
-    f(0x140, 32, 2);
-    f(0x160, 48, 2);
-    f(0x180, 32, 4);
-    f(0x1a0, 48, 4);
-    f(0x1c0, 32, 6);
-    f(0x1e0, 48, 6);
-}
-
 fn aligned_range(start: u32, end: u32, align: u32) -> Range<u32> {
     debug_assert!(align.is_power_of_two());
     let align_1 = align - 1;
@@ -306,7 +282,7 @@ impl BlockPointer {
 #[derive(Copy, Clone)]
 struct LinearPointer {
     pointer: usize,
-    x_divisor: u32,
+    x_shift: u32,
     row_stride_B: usize,
     plane_stride_B: usize,
 }
@@ -318,24 +294,30 @@ impl LinearPointer {
         row_stride_B: usize,
         plane_stride_B: usize,
     ) -> LinearPointer {
+        debug_assert!(x_divisor.is_power_of_two());
         LinearPointer {
             pointer,
-            x_divisor,
+            x_shift: x_divisor.ilog2(),
             row_stride_B,
             plane_stride_B,
         }
     }
 
+    fn x_divisor(&self) -> u32 {
+        1 << self.x_shift
+    }
+
     #[inline]
     fn reverse(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
+        debug_assert!(offset.x % (1 << self.x_shift) == 0);
         debug_assert!(offset.a == 0);
         LinearPointer {
             pointer: self
                 .pointer
                 .wrapping_sub((offset.z as usize) * self.plane_stride_B)
                 .wrapping_sub((offset.y as usize) * self.row_stride_B)
-                .wrapping_sub((offset.x / self.x_divisor) as usize),
-            x_divisor: self.x_divisor,
+                .wrapping_sub((offset.x >> self.x_shift) as usize),
+            x_shift: self.x_shift,
             row_stride_B: self.row_stride_B,
             plane_stride_B: self.plane_stride_B,
         }
@@ -343,27 +325,36 @@ impl LinearPointer {
 
     #[inline]
     fn at(self, offset: Offset4D<units::Bytes>) -> usize {
+        debug_assert!(offset.x % (1 << self.x_shift) == 0);
         debug_assert!(offset.a == 0);
         self.pointer
             .wrapping_add((offset.z as usize) * self.plane_stride_B)
             .wrapping_add((offset.y as usize) * self.row_stride_B)
-            .wrapping_add((offset.x / self.x_divisor) as usize)
+            .wrapping_add((offset.x >> self.x_shift) as usize)
     }
 
     #[inline]
     fn offset(self, offset: Offset4D<units::Bytes>) -> LinearPointer {
         LinearPointer {
             pointer: self.at(offset),
-            x_divisor: self.x_divisor,
+            x_shift: self.x_shift,
             row_stride_B: self.row_stride_B,
             plane_stride_B: self.plane_stride_B,
         }
     }
 }
 
+trait Copy16B {
+    const X_DIVISOR: u32;
+
+    unsafe fn copy(tiled: *mut u8, linear: *mut u8, bytes: usize);
+    unsafe fn copy_16b(tiled: *mut [u8; 16], linear: *mut [u8; 16]) {
+        Self::copy(tiled as *mut _, linear as *mut _, 16);
+    }
+}
+
 trait CopyGOB {
     const GOB_EXTENT_B: Extent4D<units::Bytes>;
-    const LINEAR_X_DIVISOR: u32;
 
     unsafe fn copy_gob(
         tiled: usize,
@@ -380,6 +371,71 @@ trait CopyGOB {
             Offset4D::new(0, 0, 0, 0),
             Offset4D::new(0, 0, 0, 0) + Self::GOB_EXTENT_B,
         );
+    }
+}
+
+struct CopyGOB2D<C: Copy16B> {
+    phantom: std::marker::PhantomData<C>,
+}
+
+fn gob2d_for_each_16b(mut f: impl FnMut(u32, u32, u32)) {
+    for i in 0..2 {
+        f(i * 0x100 + 0x00, i * 32 + 0, 0);
+        f(i * 0x100 + 0x10, i * 32 + 0, 1);
+        f(i * 0x100 + 0x20, i * 32 + 16, 0);
+        f(i * 0x100 + 0x30, i * 32 + 16, 1);
+
+        f(i * 0x100 + 0x40, i * 32 + 0, 2);
+        f(i * 0x100 + 0x50, i * 32 + 0, 3);
+        f(i * 0x100 + 0x60, i * 32 + 16, 2);
+        f(i * 0x100 + 0x70, i * 32 + 16, 3);
+
+        f(i * 0x100 + 0x80, i * 32 + 0, 4);
+        f(i * 0x100 + 0x90, i * 32 + 0, 5);
+        f(i * 0x100 + 0xa0, i * 32 + 16, 4);
+        f(i * 0x100 + 0xb0, i * 32 + 16, 5);
+
+        f(i * 0x100 + 0xc0, i * 32 + 0, 6);
+        f(i * 0x100 + 0xd0, i * 32 + 0, 7);
+        f(i * 0x100 + 0xe0, i * 32 + 16, 6);
+        f(i * 0x100 + 0xf0, i * 32 + 16, 7);
+    }
+}
+
+impl<C: Copy16B> CopyGOB for CopyGOB2D<C> {
+    const GOB_EXTENT_B: Extent4D<units::Bytes> = Extent4D::new(64, 8, 1, 1);
+
+    unsafe fn copy_gob(
+        tiled: usize,
+        linear: LinearPointer,
+        start: Offset4D<units::Bytes>,
+        end: Offset4D<units::Bytes>,
+    ) {
+        debug_assert!(linear.x_divisor() == C::X_DIVISOR);
+        gob2d_for_each_16b(|offset, x, y| {
+            let tiled = tiled + (offset as usize);
+            let linear = linear.at(Offset4D::new(x, y, 0, 0));
+            if x >= start.x && x + 16 <= end.x {
+                C::copy_16b(tiled as *mut _, linear as *mut _);
+            } else if x + 16 >= start.x && x < end.x {
+                let start = (std::cmp::max(x, start.x) - x) as usize;
+                let end = std::cmp::min(end.x - x, 16) as usize;
+                C::copy(
+                    (tiled + start) as *mut _,
+                    (linear + start) as *mut _,
+                    end - start,
+                );
+            }
+        });
+    }
+
+    unsafe fn copy_whole_gob(tiled: usize, linear: LinearPointer) {
+        debug_assert!(linear.x_divisor() == C::X_DIVISOR);
+        gob2d_for_each_16b(|offset, x, y| {
+            let tiled = tiled + (offset as usize);
+            let linear = linear.at(Offset4D::new(x, y, 0, 0));
+            C::copy_16b(tiled as *mut _, linear as *mut _);
+        });
     }
 }
 
@@ -426,11 +482,6 @@ unsafe fn copy_tiled<CG: CopyGOB>(
 ) {
     let tile_extent_B = tiling.extent_B();
     let level_extent_B = level_extent_B.align(&tile_extent_B);
-
-    // Help the compiler constant fold the X divisor
-    debug_assert!(linear.x_divisor == CG::LINEAR_X_DIVISOR);
-    let mut linear = linear;
-    linear.x_divisor = CG::LINEAR_X_DIVISOR;
 
     // Back up the linear pointer so it also points at the start of the level.
     // This way, every step of the iteration can assume that both pointers

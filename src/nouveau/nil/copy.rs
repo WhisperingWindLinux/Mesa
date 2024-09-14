@@ -498,6 +498,28 @@ unsafe fn copy_tiled<CG: CopyGOB>(
     });
 }
 
+struct RawCopyToTiled {}
+
+impl Copy16B for RawCopyToTiled {
+    const X_DIVISOR: u32 = 1;
+
+    unsafe fn copy(tiled: *mut u8, linear: *mut u8, bytes: usize) {
+        // This is backwards from memcpy
+        std::ptr::copy_nonoverlapping(linear, tiled, bytes);
+    }
+}
+
+struct RawCopyToLinear {}
+
+impl Copy16B for RawCopyToLinear {
+    const X_DIVISOR: u32 = 1;
+
+    unsafe fn copy(tiled: *mut u8, linear: *mut u8, bytes: usize) {
+        // This is backwards from memcpy
+        std::ptr::copy_nonoverlapping(tiled, linear, bytes);
+    }
+}
+
 struct CopyX24S8ToTiled {}
 
 impl Copy16B for CopyX24S8ToTiled {

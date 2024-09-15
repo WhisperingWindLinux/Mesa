@@ -540,3 +540,28 @@ of those, as they'll have the right values for your system:
    cpu_family = 'x86_64'
    cpu = 'i686'
    endian = 'little'
+
+5. Profile-Guided Optimization (PGO) builds
+-------------------------------------------
+
+This part basically follows  `"Use profile guided optimization" <https://mesonbuild.com/howtox.html#use-profile-guided-optimization>`__
+
+.. code-block:: sh
+
+   # generate build capable of recording PGO
+   # rustc does not support "get_profile_generate_args", so disable it for this purpose
+   CC="clang" CXX="clang++" meson setup build -D gallium-rusticl=false -D b_pgo=generate
+   meson compile -C build
+
+   # run your workload(s)
+   meson devenv -C build bash -c "eglgears_wayland"
+
+   # merge generated profraw files
+   llvm-profdata merge -sparse build/*profraw -o build/default.profdata
+
+   # rebuild with profiling data
+   CC="clang" CXX="clang++" meson setup build -D gallium-rusticl=false -D b_pgo=use
+   meson compile -C build
+
+   # test your application with optimized build
+   meson devenv -C build bash -c "eglgears_wayland"

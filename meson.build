@@ -858,6 +858,7 @@ if with_platform_android
     dep_android = [
       dependency('cutils'),
       dependency('hardware'),
+      dependency('log'),
       dependency('sync'),
     ]
     if with_libbacktrace

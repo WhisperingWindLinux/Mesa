@@ -201,6 +201,7 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .EXT_external_memory_dma_buf = true,
       .EXT_graphics_pipeline_library = true,
       .EXT_host_query_reset = true,
+      .EXT_host_image_copy = true,
       .EXT_image_2d_view_of_3d = true,
       .EXT_image_robustness = true,
       .EXT_image_sliced_view_of_3d = true,
@@ -557,6 +558,9 @@ nvk_get_device_features(const struct nv_device_info *info,
 
       /* VK_EXT_graphics_pipeline_library */
       .graphicsPipelineLibrary = true,
+   
+      /* VK_EXT_host_image_copy */
+      .hostImageCopy = true,
 
       /* VK_EXT_image_2d_view_of_3d */
       .image2DViewOf3D = true,
@@ -1072,6 +1076,53 @@ nvk_get_device_properties(const struct nvk_instance *instance,
       snprintf(properties->deviceName, sizeof(properties->deviceName),
                "%s (NVK %s)", info->device_name, info->chipset_name);
    }
+
+   /* VK_EXT_host_image_copy */
+
+   /* Not sure if there are layout specific things, so for now just reporting 
+    * all layouts from extensions.
+    */
+   static const VkImageLayout supported_layouts[] = {
+      VK_IMAGE_LAYOUT_GENERAL, /* this one is required by spec */
+      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_PREINITIALIZED,
+      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+      VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+      VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
+   };
+
+   properties->pCopySrcLayouts = (VkImageLayout *)supported_layouts;
+   properties->copySrcLayoutCount = ARRAY_SIZE(supported_layouts);
+   properties->pCopyDstLayouts = (VkImageLayout *)supported_layouts;
+   properties->copyDstLayoutCount = ARRAY_SIZE(supported_layouts);
+
+   {
+      struct mesa_sha1 sha1_ctx;
+      uint8_t sha1[20];
+      uint32_t vendor_id = NVIDIA_VENDOR_ID;
+
+      /* Make sure we don't match with other vendors */
+      _mesa_sha1_init(&sha1_ctx);
+      _mesa_sha1_update(&sha1_ctx, &vendor_id, sizeof(vendor_id));
+      _mesa_sha1_final(&sha1_ctx, sha1);
+
+      memcpy(properties->optimalTilingLayoutUUID, sha1, VK_UUID_SIZE);
+   }
+  
+   /* Should be always able to map every kind of memory */
+   properties->identicalMemoryTypeRequirements = true;
 
    /* VK_EXT_shader_module_identifier */
    STATIC_ASSERT(sizeof(vk_shaderModuleIdentifierAlgorithmUUID) ==

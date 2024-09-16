@@ -74,18 +74,35 @@ impl Tiling {
         self.size_B()
     }
 
-    pub fn extent_B(&self) -> Extent4D<units::Bytes> {
+    #[inline]
+    pub fn gob_extent_B(&self) -> Extent4D<units::Bytes> {
         if self.is_tiled {
             Extent4D::new(
-                GOB_WIDTH_B << self.x_log2,
-                gob_height(self.gob_height_is_8) << self.y_log2,
-                GOB_DEPTH << self.z_log2,
+                GOB_WIDTH_B,
+                gob_height(self.gob_height_is_8),
+                GOB_DEPTH,
                 1,
             )
         } else {
-            // We handle linear images in Image::new()
+            // GOBs don't mean anything for linear
             Extent4D::new(1, 1, 1, 1)
         }
+    }
+
+    #[inline]
+    pub fn extent_gob(&self) -> Extent4D<units::GOBs> {
+        Extent4D::new(1 << self.x_log2, 1 << self.y_log2, 1 << self.z_log2, 1)
+    }
+
+    #[inline]
+    pub fn extent_B(&self) -> Extent4D<units::Bytes> {
+        let gob_B = self.gob_extent_B();
+        Extent4D::new(
+            gob_B.width << self.x_log2,
+            gob_B.height << self.y_log2,
+            gob_B.depth << self.z_log2,
+            1,
+        )
     }
 }
 

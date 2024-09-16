@@ -1054,7 +1054,8 @@ prepare_dcd(struct panvk_cmd_buffer *cmdbuf)
 
             bool writes_zs = writes_z || writes_s;
             bool zs_always_passes = ds_test_always_passes(cmdbuf);
-            bool oq = false; /* TODO: Occlusion queries */
+            bool oq = cmdbuf->state.gfx.occlusion_query.mode !=
+                     MALI_OCCLUSION_MODE_DISABLED;
 
             struct pan_earlyzs_state earlyzs =
                pan_earlyzs_get(pan_earlyzs_analyze(&fs->info), writes_zs || oq,
@@ -1062,6 +1063,7 @@ prepare_dcd(struct panvk_cmd_buffer *cmdbuf)
 
             cfg.pixel_kill_operation = earlyzs.kill;
             cfg.zs_update_operation = earlyzs.update;
+            cfg.occlusion_query = cmdbuf->state.gfx.occlusion_query.mode;
          } else {
             cfg.allow_forward_pixel_to_kill = true;
             cfg.allow_forward_pixel_to_be_killed = true;
@@ -1281,6 +1283,8 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
 
       prepare_dcd(cmdbuf);
       prepare_vp(cmdbuf);
+
+      cs_move64_to(b, cs_reg64(b, 46), cmdbuf->state.gfx.occlusion_query.ptr);
    }
 
    clear_dirty(cmdbuf, draw);

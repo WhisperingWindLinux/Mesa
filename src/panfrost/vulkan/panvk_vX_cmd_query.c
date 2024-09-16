@@ -311,7 +311,7 @@ panvk_per_arch(CmdCopyQueryPoolResults)(
     *    using the results."
     *
     */
-   const VkBufferMemoryBarrier buf_barrier = {
+   const VkBufferMemoryBarrier pre_buf_barrier = {
       .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
       .pNext = NULL,
       .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -327,19 +327,32 @@ panvk_per_arch(CmdCopyQueryPoolResults)(
                           ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
                           : VK_PIPELINE_STAGE_TRANSFER_BIT;
 
+   /* XXX: Revisit this, we might need more here */
    dev->vk.dispatch_table.CmdPipelineBarrier(
       commandBuffer, src_mask, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL,
-      1, &buf_barrier, 0, NULL);
+      1, &pre_buf_barrier, 0, NULL);
 
    uint64_t dst_addr = panvk_buffer_gpu_ptr(dst_buffer, dstOffset);
    panvk_meta_copy_query_pool_results(cmd, pool, firstQuery, queryCount,
                                       dst_addr, stride, flags);
 
+   /* XXX: Revisit this, we might need more here */
+   const VkBufferMemoryBarrier post_buf_barrier = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+      .pNext = NULL,
+      .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+      .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .buffer = dstBuffer,
+      .offset = dstOffset,
+      .size = panvk_buffer_range(dst_buffer, dstOffset, VK_WHOLE_SIZE),
+   };
    dev->vk.dispatch_table.CmdPipelineBarrier(
       commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 1, &buf_barrier, 0, NULL);
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 1, &post_buf_barrier, 0,
+      NULL);
 }
-
 
 #define load_info(__b, __type, __field_name)                                   \
    nir_load_push_constant((__b), 1,                                            \
@@ -507,6 +520,19 @@ panvk_emit_clear_queries(struct panvk_cmd_buffer *cmd,
    struct panvk_cmd_meta_compute_save_ctx save = {0};
    panvk_per_arch(cmd_meta_compute_start)(cmd, &save);
 
+   /* XXX: Narrow this */
+   const VkMemoryBarrier pre_barrier = {
+      .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+   };
+
+   dev->vk.dispatch_table.CmdPipelineBarrier(
+      panvk_cmd_buffer_to_handle(cmd),
+      VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT |
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &pre_barrier, 0, NULL, 0,
+      NULL);
+
    dev->vk.dispatch_table.CmdBindPipeline(panvk_cmd_buffer_to_handle(cmd),
                                           VK_PIPELINE_BIND_POINT_COMPUTE,
                                           pipeline);
@@ -518,6 +544,18 @@ panvk_emit_clear_queries(struct panvk_cmd_buffer *cmd,
    dev->vk.dispatch_table.CmdDispatchBase(
       panvk_cmd_buffer_to_handle(cmd), 0, 0, 0,
       DIV_ROUND_UP(query_count, phys_dev->kmod.props.max_threads_per_wg), 1, 1);
+
+   /* XXX: Narrow this */
+   const VkMemoryBarrier post_barrier = {
+      .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+   };
+
+   dev->vk.dispatch_table.CmdPipelineBarrier(
+      panvk_cmd_buffer_to_handle(cmd), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT |
+         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+      0, 1, &post_barrier, 0, NULL, 0, NULL);
 
    /* Restore previous cmd state */
    panvk_per_arch(cmd_meta_compute_end)(cmd, &save);

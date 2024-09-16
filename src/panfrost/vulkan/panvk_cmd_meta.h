@@ -66,9 +66,7 @@ struct panvk_cmd_meta_graphics_save_ctx {
       struct panvk_shader_desc_state desc;
    } vs;
 
-#if PAN_ARCH <= 9
    struct panvk_occlusion_query_state occlusion_query;
-#endif
 };
 
 void panvk_per_arch(cmd_meta_gfx_start)(

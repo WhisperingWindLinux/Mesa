@@ -114,7 +114,7 @@ lower_urb_read_logical_send_xe2(const fs_builder &bld, fs_inst *inst)
                              LSC_ADDR_SURFTYPE_FLAT, LSC_ADDR_SIZE_A32,
                              LSC_DATA_SIZE_D32, dst_comps /* num_channels */,
                              false /* transpose */,
-                             LSC_CACHE(devinfo, STORE, L1UC_L3UC));
+                             LSC_CACHE(devinfo, LOAD, L1UC_L3UC));
 
    /* Update the original instruction. */
    inst->opcode = SHADER_OPCODE_SEND;
@@ -308,7 +308,6 @@ lower_fb_write_logical_send(const fs_builder &bld, fs_inst *inst,
 
    if (devinfo->ver < 11 &&
       (color1.file != BAD_FILE || key->nr_color_regions > 1)) {
-      assert(devinfo->ver < 20);
 
       /* From the Sandy Bridge PRM, volume 4, page 198:
        *

@@ -1,6 +1,7 @@
 // Copyright © 2024 Valve Corp.
 // SPDX-License-Identifier: MIT
 
+use crate::extent::units::Bytes;
 use crate::extent::{units, Extent4D, Offset4D};
 use crate::image::Image;
 use crate::tiling::{gob_height, Tiling, GOB_DEPTH, GOB_WIDTH_B};

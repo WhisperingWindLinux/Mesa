@@ -22,6 +22,7 @@
 #include "panvk_macros.h"
 #include "panvk_mempool.h"
 #include "panvk_shader.h"
+#include "panvk_query_pool.h"
 
 #include "pan_jc.h"
 
@@ -259,4 +260,14 @@ void panvk_per_arch(cmd_bind_shaders)(struct vk_command_buffer *vk_cmd,
                                       const gl_shader_stage *stages,
                                       struct vk_shader **const shaders);
 
+void panvk_per_arch(cmd_write_timestamp)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkPipelineStageFlags2 stage);
+
+void panvk_per_arch(cmd_begin_end_query)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkQueryControlFlags flags,
+                                         uint32_t index, bool end);
 #endif

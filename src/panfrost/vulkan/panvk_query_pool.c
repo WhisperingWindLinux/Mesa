@@ -3,12 +3,18 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "util/os_time.h"
+#include "util/u_atomic.h"
+
 #include "vk_log.h"
 
 #include "pan_props.h"
 #include "panvk_device.h"
 #include "panvk_entrypoints.h"
+#include "panvk_macros.h"
 #include "panvk_query_pool.h"
+
+#define PANVK_QUERY_TIMEOUT 2000000000ull
 
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_CreateQueryPool(VkDevice _device,
@@ -75,4 +81,133 @@ panvk_DestroyQueryPool(VkDevice _device, VkQueryPool queryPool,
 
    panvk_pool_free_mem(&device->mempools.rw_nc, pool->mem);
    vk_query_pool_destroy(&device->vk, pAllocator, &pool->vk);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+panvk_ResetQueryPool(VkDevice device, VkQueryPool queryPool,
+                     uint32_t firstQuery, uint32_t queryCount)
+{
+   VK_FROM_HANDLE(panvk_query_pool, pool, queryPool);
+
+   uint32_t *available = panvk_query_available_host_addr(pool, firstQuery);
+   memset(available, 0, queryCount * sizeof(*available));
+
+   struct panvk_query_report *reports =
+      panvk_query_report_host_addr(pool, firstQuery);
+   memset(reports, 0, queryCount * pool->query_stride);
+}
+
+static bool
+panvk_query_is_available(struct panvk_query_pool *pool, uint32_t query)
+{
+   uint32_t *available = panvk_query_available_host_addr(pool, query);
+   return p_atomic_read(available) != 0;
+}
+
+static VkResult
+panvk_query_wait_for_available(struct panvk_device *dev,
+                               struct panvk_query_pool *pool, uint32_t query)
+{
+   uint64_t abs_timeout_ns = os_time_get_absolute_timeout(PANVK_QUERY_TIMEOUT);
+
+   while (os_time_get_nano() < abs_timeout_ns) {
+      if (panvk_query_is_available(pool, query))
+         return VK_SUCCESS;
+
+      VkResult status = vk_device_check_status(&dev->vk);
+      if (status != VK_SUCCESS)
+         return status;
+   }
+
+   return vk_device_set_lost(&dev->vk, "query timeout");
+}
+
+static void
+cpu_write_query_result(void *dst, uint32_t idx, VkQueryResultFlags flags,
+                       uint64_t result)
+{
+   if (flags & VK_QUERY_RESULT_64_BIT) {
+      uint64_t *dst64 = dst;
+      dst64[idx] = result;
+   } else {
+      uint32_t *dst32 = dst;
+      dst32[idx] = result;
+   }
+}
+
+static void
+cpu_write_occlusion_query_result(void *dst, uint32_t idx,
+                                 VkQueryResultFlags flags,
+                                 const struct panvk_query_report *src,
+                                 unsigned core_count)
+{
+   uint64_t result = 0;
+
+   for (uint32_t core_idx = 0; core_idx < core_count; core_idx++)
+      result += src[core_idx].value;
+
+   cpu_write_query_result(dst, idx, flags, result);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+panvk_GetQueryPoolResults(VkDevice _device, VkQueryPool queryPool,
+                          uint32_t firstQuery, uint32_t queryCount,
+                          size_t dataSize, void *pData, VkDeviceSize stride,
+                          VkQueryResultFlags flags)
+{
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   VK_FROM_HANDLE(panvk_query_pool, pool, queryPool);
+
+   if (vk_device_is_lost(&device->vk))
+      return VK_ERROR_DEVICE_LOST;
+
+   const struct panvk_physical_device *phys_device =
+      to_panvk_physical_device(device->vk.physical);
+
+   unsigned core_count;
+   panfrost_query_core_count(&phys_device->kmod.props, &core_count);
+
+   VkResult status = VK_SUCCESS;
+   for (uint32_t i = 0; i < queryCount; i++) {
+      const uint32_t query = firstQuery + i;
+
+      bool available = panvk_query_is_available(pool, query);
+
+      if (!available && (flags & VK_QUERY_RESULT_WAIT_BIT)) {
+         status = panvk_query_wait_for_available(device, pool, query);
+         if (status != VK_SUCCESS)
+            return status;
+
+         available = true;
+      }
+
+      bool write_results = available || (flags & VK_QUERY_RESULT_PARTIAL_BIT);
+
+      const struct panvk_query_report *src =
+         panvk_query_report_host_addr(pool, query);
+      assert(i * stride < dataSize);
+      void *dst = (char *)pData + i * stride;
+
+      switch (pool->vk.query_type) {
+      case VK_QUERY_TYPE_OCCLUSION: {
+         if (write_results)
+            cpu_write_occlusion_query_result(dst, 0, flags, src, core_count);
+         break;
+      }
+      case VK_QUERY_TYPE_TIMESTAMP:
+         if (write_results)
+            cpu_write_query_result(dst, 0, flags, src->value);
+         break;
+      default:
+         unreachable("Unsupported query type");
+      }
+
+      if (!write_results)
+         status = VK_NOT_READY;
+
+      if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
+         cpu_write_query_result(dst, 1, flags, available);
+   }
+
+   return status;
 }

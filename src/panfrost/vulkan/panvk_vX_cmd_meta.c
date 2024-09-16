@@ -3,8 +3,15 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "nir_builder.h"
+
+#include "vk_meta.h"
+#include "vk_pipeline.h"
+
+#include "panvk_buffer.h"
 #include "panvk_cmd_meta.h"
 #include "panvk_entrypoints.h"
+#include "panvk_query_pool.h"
 
 void
 panvk_per_arch(cmd_meta_compute_start)(

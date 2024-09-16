@@ -16,6 +16,7 @@
 
 #include "panvk_cmd_desc_state.h"
 #include "panvk_cmd_push_constant.h"
+#include "panvk_query_pool.h"
 #include "panvk_queue.h"
 
 #include "vk_command_buffer.h"
@@ -457,5 +458,16 @@ void panvk_per_arch(cs_pick_iter_sb)(struct panvk_cmd_buffer *cmdbuf,
 void panvk_per_arch(get_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                                  const VkDependencyInfo *in,
                                  struct panvk_cs_deps *out);
+
+void panvk_per_arch(cmd_write_timestamp)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkPipelineStageFlags2 stage);
+
+void panvk_per_arch(cmd_begin_end_query)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkQueryControlFlags flags,
+                                         uint32_t index, bool end);
 
 #endif /* PANVK_CMD_BUFFER_H */

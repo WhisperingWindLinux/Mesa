@@ -130,18 +130,17 @@ fn aligned_range(start: u32, end: u32, align: u32) -> Range<u32> {
 }
 
 fn chunk_range(
+    whole: Range<u32>,
     chunk_start: u32,
     chunk_len: u32,
-    whole_start: u32,
-    whole_end: u32,
 ) -> Range<u32> {
-    debug_assert!(chunk_start < whole_end);
-    let start = if chunk_start < whole_start {
-        whole_start - chunk_start
+    debug_assert!(chunk_start < whole.end);
+    let start = if chunk_start < whole.start {
+        whole.start - chunk_start
     } else {
         0
     };
-    let end = std::cmp::min(whole_end - chunk_start, chunk_len);
+    let end = std::cmp::min(whole.end - chunk_start, chunk_len);
     start..end
 }
 
@@ -164,11 +163,11 @@ fn for_each_extent4d<U>(
     let z_range = aligned_range(start.z, end.z, chunk.depth);
 
     for z in z_range.step_by(chunk.depth as usize) {
-        let chunk_z = chunk_range(start.z, end.z, z, chunk.depth);
+        let chunk_z = chunk_range(start.z..end.z, z, chunk.depth);
         for y in y_range.clone().step_by(chunk.height as usize) {
-            let chunk_y = chunk_range(start.y, end.y, y, chunk.height);
+            let chunk_y = chunk_range(start.y..end.y, y, chunk.height);
             for x in x_range.clone().step_by(chunk.width as usize) {
-                let chunk_x = chunk_range(start.x, end.x, x, chunk.width);
+                let chunk_x = chunk_range(start.x..end.x, x, chunk.width);
                 let chunk_start = Offset4D::new(x, y, z, start.a);
                 let start = Offset4D::new(
                     chunk_x.start,

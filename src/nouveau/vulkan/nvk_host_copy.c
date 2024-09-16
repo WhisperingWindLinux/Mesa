@@ -93,14 +93,19 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
                             dst_plane.nil.sample_layout);
    assert(extent_el.depth == 1 || extent_el.array_len == 1);
 
-   const unsigned start_layer = (dst->vk.image_type == VK_IMAGE_TYPE_3D) ?
-      info->imageOffset.z : info->imageSubresource.baseArrayLayer;
+   const unsigned start_layer = info->imageSubresource.baseArrayLayer;
    const unsigned dst_pitch_B =
       dst_plane.nil.levels[dst_miplevel].row_stride_B;
    VkDeviceSize src_addr_B = (uint64_t) info->pHostPointer + start_layer * dst_pitch_B;
-   VkDeviceSize dst_addr_B = (uint64_t) mem_map_dst + host_offset;
+   VkDeviceSize dst_addr_B = (uint64_t) mem_map_dst + host_offset + 
+                             dst_plane.nil.levels[dst_miplevel].offset_B;
 
-   for (unsigned z = 0; z < layer_count; z++) {
+   struct nil_Offset4D_Elements offset_el =
+         nil_offset4d_px_to_el(offset4d_px, dst_plane.nil.format,
+                               dst_plane.nil.sample_layout);
+   dst_addr_B += offset_el.a * dst_plane.nil.array_stride_B;
+
+   for (unsigned a = 0; a < layer_count; a++) {
       uint64_t layer_size_B = nil_image_level_size_B(&dst_plane.nil,
                                                      dst_miplevel);
 
@@ -132,15 +137,10 @@ nvk_copy_memory_to_image(struct nvk_image *dst,
       }
 
       src_addr_B += src_layer_stride_B;
-      struct nil_Offset4D_Elements offset_el =
-         nil_offset4d_px_to_el(offset4d_px, dst_plane.nil.format,
-                               dst_plane.nil.sample_layout);
-      if (dst->vk.image_type != VK_IMAGE_TYPE_3D)
-         dst_addr_B += (z + offset_el.a) * dst_plane.nil.array_stride_B;
+      dst_addr_B += dst_plane.nil.array_stride_B;
 
       if (!dst_plane.nil.levels[dst_miplevel].tiling.is_tiled) {
-         dst_addr_B += offset_el.x * bpp +
-                       offset_el.y * dst_pitch_B;
+         dst_addr_B += buffer_layout.image_stride_B;
       }
    }
 
@@ -220,14 +220,19 @@ nvk_copy_image_to_memory(struct nvk_image *src,
                             src_plane.nil.sample_layout);
    assert(extent_el.depth == 1 || extent_el.array_len == 1);
 
-   const unsigned start_layer = (src->vk.image_type == VK_IMAGE_TYPE_3D) ?
-      info->imageOffset.z : info->imageSubresource.baseArrayLayer;
+   const unsigned start_layer = info->imageSubresource.baseArrayLayer;
    const unsigned src_pitch_B =
       src_plane.nil.levels[src_miplevel].row_stride_B;
-   VkDeviceSize src_addr_B = (uint64_t) mem_map_src + host_offset;
+   VkDeviceSize src_addr_B = (uint64_t) mem_map_src + host_offset +
+                              src_plane.nil.levels[src_miplevel].offset_B;
    VkDeviceSize dst_addr_B = (uint64_t) info->pHostPointer + start_layer * src_pitch_B;
 
-   for (unsigned z = 0; z < layer_count; z++) {
+   struct nil_Offset4D_Elements offset_el =
+         nil_offset4d_px_to_el(offset4d_px, src_plane.nil.format,
+                               src_plane.nil.sample_layout);
+   src_addr_B += offset_el.a * src_plane.nil.array_stride_B;
+
+   for (unsigned a = 0; a < layer_count; a++) {
       uint64_t layer_size_B = nil_image_level_size_B(&src_plane.nil,
                                                      src_miplevel);
 
@@ -261,12 +266,10 @@ nvk_copy_image_to_memory(struct nvk_image *src,
       struct nil_Offset4D_Elements offset_el =
          nil_offset4d_px_to_el(offset4d_px, src_plane.nil.format,
                                src_plane.nil.sample_layout);
-      if (src->vk.image_type != VK_IMAGE_TYPE_3D)
-         src_addr_B += (z + offset_el.a) * src_plane.nil.array_stride_B;
+      src_addr_B += src_plane.nil.array_stride_B;
 
       if (!src_plane.nil.levels[src_miplevel].tiling.is_tiled) {
-         src_addr_B += offset_el.x * bpp +
-                     offset_el.y * src_pitch_B;
+         src_addr_B += buffer_layout.image_stride_B;
       }
 
       dst_addr_B += dst_layer_stride_B;
@@ -420,7 +423,7 @@ nvk_copy_image_to_image(struct nvk_device *device,
             tiling = dst_img_plane.nil.levels[dst_miplevel].tiling;
          }
 
-         void *tmp_mem = vk_alloc(&device->vk.alloc, temp_tile_size_B, temp_tile_align_B,
+         void *tmp_mem = vk_alloc(&device->vk.alloc, temp_tile_size_B, 8,
                                   VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
 
          uint32_t tl_w_B = NIL_GOB_WIDTH_B << tiling.x_log2;

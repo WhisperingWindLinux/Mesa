@@ -126,7 +126,7 @@ pub const SECTOR_SIZE_B: u32 = SECTOR_WIDTH_B * SECTOR_HEIGHT;
 fn aligned_range(start: u32, end: u32, align: u32) -> Range<u32> {
     debug_assert!(align.is_power_of_two());
     let align_1 = align - 1;
-    (start & align_1)..((end + align_1) & align_1)
+    (start & !align_1)..((end + align_1) & !align_1)
 }
 
 fn chunk_range(

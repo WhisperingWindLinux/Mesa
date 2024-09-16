@@ -546,6 +546,75 @@ impl Copy16B for CopyZ24X8ToTiled {
     }
 }
 
+
+#[no_mangle]
+pub unsafe extern "C" fn nil_copy_linear_to_tiled(
+    start_px: Offset4D<units::Pixels>,
+    extent_px: Extent4D<units::Pixels>,
+    miplevel: usize,
+    nil: Image,
+    linear_row_stride_B: usize,
+    linear_plane_stride_B: usize,
+    Bpp: u8,
+    linear: usize,
+    tiled: usize,
+) {
+    // TODO: This is a bit hacky; will rework the C side entry points instead
+    let tiling: Tiling = nil.levels[miplevel].tiling;
+    let start_B = start_px.to_B(nil.format, nil.sample_layout);
+    let extent_B = extent_px.to_B(nil.format, nil.sample_layout);
+
+    let end_B: Offset4D<Bytes> = Offset4D::new(start_B.x + extent_B.width, start_B.y + extent_B.height, start_B.z + extent_B.depth, 1);
+
+    let lvl_extent_px = Image::level_extent_px(&nil, miplevel as u32);
+    let lvl_extent_B = lvl_extent_px.to_B(nil.format, nil.sample_layout);
+
+    let linear_pointer = LinearPointer::new(linear, 1, linear_row_stride_B, linear_plane_stride_B);
+
+    copy_tiled::<CopyGOB2D<RawCopyToTiled>>(
+        tiling,
+        lvl_extent_B,
+        tiled,
+        linear_pointer,
+        start_B,
+        end_B,
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nil_copy_tiled_to_linear(
+    start_px: Offset4D<units::Pixels>,
+    extent_px: Extent4D<units::Pixels>,
+    miplevel: usize,
+    nil: Image,
+    linear_row_stride_B: usize,
+    linear_plane_stride_B: usize,
+    Bpp: u8,
+    linear: usize,
+    tiled: usize,
+) {
+    let tiling: Tiling = nil.levels[miplevel].tiling;
+    let start_B = start_px.to_B(nil.format, nil.sample_layout);
+    let extent_B = extent_px.to_B(nil.format, nil.sample_layout);
+
+    let end_B: Offset4D<Bytes> = Offset4D::new(start_B.x + extent_B.width, start_B.y + extent_B.height, start_B.z + extent_B.depth, 1);
+
+    let lvl_extent_px = Image::level_extent_px(&nil, miplevel as u32);
+    let lvl_extent_B = lvl_extent_px.to_B(nil.format, nil.sample_layout);
+
+    let linear_pointer = LinearPointer::new(linear, 1, linear_row_stride_B, linear_plane_stride_B);
+
+    copy_tiled::<CopyGOB2D<RawCopyToLinear>>(
+        tiling,
+        lvl_extent_B,
+        tiled,
+        linear_pointer,
+        start_B,
+        end_B,
+    );
+}
+
+/* TODO: Just leaving this here in case we need it for anything, otherwise will delete for merge
 trait LinearTiledCopy {
     // No 3D GOBs for now
     unsafe fn copy_gob(
@@ -1174,55 +1243,4 @@ impl LinearTiledCopy for CopyLinearToTiled {
         }
     }
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn nil_copy_linear_to_tiled(
-    start_px: Offset4D<units::Pixels>,
-    extent_px: Extent4D<units::Pixels>,
-    miplevel: usize,
-    nil: Image,
-    linear_row_stride_B: usize,
-    linear_plane_stride_B: usize,
-    Bpp: u8,
-    linear: usize,
-    tiled: usize,
-) {
-    let copy = CopyLinearToTiled {};
-    CopyLinearToTiled::copy(
-        start_px,
-        extent_px,
-        miplevel,
-        nil,
-        linear_row_stride_B,
-        linear_plane_stride_B,
-        Bpp,
-        linear,
-        tiled,
-    );
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn nil_copy_tiled_to_linear(
-    start_px: Offset4D<units::Pixels>,
-    extent_px: Extent4D<units::Pixels>,
-    miplevel: usize,
-    nil: Image,
-    linear_row_stride_B: usize,
-    linear_plane_stride_B: usize,
-    Bpp: u8,
-    linear: usize,
-    tiled: usize,
-) {
-    let copy = CopyTiledToLinear {};
-    CopyTiledToLinear::copy(
-        start_px,
-        extent_px,
-        miplevel,
-        nil,
-        linear_row_stride_B,
-        linear_plane_stride_B,
-        Bpp,
-        linear,
-        tiled,
-    );
-}
+    */

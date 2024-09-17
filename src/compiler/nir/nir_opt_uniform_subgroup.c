@@ -151,6 +151,9 @@ bool
 nir_opt_uniform_subgroup(nir_shader *shader,
                          const nir_lower_subgroups_options *options)
 {
+   nir_foreach_function_impl(impl, shader)
+      nir_metadata_require(impl, nir_metadata_divergence);
+
    bool progress = nir_shader_lower_instructions(shader,
                                                  opt_uniform_subgroup_filter,
                                                  opt_uniform_subgroup_instr,

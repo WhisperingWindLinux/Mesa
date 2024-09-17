@@ -3957,7 +3957,7 @@ compile_module(struct zink_screen *screen, struct zink_shader *zs, nir_shader *n
    case MESA_SHADER_VERTEX:
    case MESA_SHADER_TESS_EVAL:
    case MESA_SHADER_GEOMETRY:
-      NIR_PASS_V(nir, nir_divergence_analysis);
+      nir_divergence_analysis(nir_shader_get_entrypoint(nir));
       break;
    default: break;
    }

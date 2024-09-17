@@ -39,6 +39,7 @@ variables:
   tags:
     - $RUNNER_TAG
   after_script:
+    - ./artifacts/lava/lava-finish.sh
     - curl -L --retry 4 -f --retry-all-errors --retry-delay 60 -s "https://${JOB_RESULTS_PATH}" | tar --zstd -x
   needs:
     - !reference [.required-for-hardware-jobs, needs]

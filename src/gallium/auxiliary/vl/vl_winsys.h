@@ -38,6 +38,7 @@ extern "C" {
 
 #ifdef HAVE_X11_PLATFORM
 #include <X11/Xlib.h>
+#include <xcb/xcb.h>
 #endif
 #ifdef _WIN32
 #include <windows.h>
@@ -82,6 +83,8 @@ struct vl_screen
 };
 
 #ifdef HAVE_X11_PLATFORM
+xcb_screen_t *
+vl_dri_get_screen_for_root(xcb_connection_t *conn, xcb_window_t root);
 uint32_t
 vl_dri2_format_for_depth(struct vl_screen *vscreen, int depth);
 
@@ -95,9 +98,13 @@ vl_dri2_screen_create(void *display, int screen) { return NULL; };
 #if defined(HAVE_X11_PLATFORM) && defined(HAVE_LIBDRM)
 struct vl_screen *
 vl_dri3_screen_create(Display *display, int screen);
+struct vl_screen *
+vl_kopper_screen_create(Display *display, int screen);
 #else
 static inline struct vl_screen *
 vl_dri3_screen_create(void *display, int screen) { return NULL; };
+static inline struct vl_screen *
+vl_kopper_screen_create(void *display, int screen) { return NULL; };
 #endif
 
 #ifdef _WIN32

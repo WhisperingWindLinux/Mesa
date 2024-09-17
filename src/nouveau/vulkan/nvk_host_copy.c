@@ -263,9 +263,6 @@ nvk_copy_image_to_memory(struct nvk_image *src,
                                   src_addr_B);
       }
 
-      struct nil_Offset4D_Elements offset_el =
-         nil_offset4d_px_to_el(offset4d_px, src_plane.nil.format,
-                               src_plane.nil.sample_layout);
       src_addr_B += src_plane.nil.array_stride_B;
 
       if (!src_plane.nil.levels[src_miplevel].tiling.is_tiled) {
@@ -367,14 +364,24 @@ nvk_copy_image_to_image(struct nvk_device *device,
       src_img_plane.nil.levels[src_miplevel].row_stride_B;
    uint64_t src_layer_size_B = nil_image_level_size_B(&src_img_plane.nil,
                                                       src_miplevel);
+   struct nil_Offset4D_Elements src_offset_el =
+      nil_offset4d_px_to_el(src_offset4d_px, src_img_plane.nil.format,
+                            src_img_plane.nil.sample_layout);
 
    uint32_t dst_layer_stride_B =
       dst_img_plane.nil.levels[dst_miplevel].row_stride_B;
    uint64_t dst_layer_size_B = nil_image_level_size_B(&dst_img_plane.nil,
                                                       dst_miplevel);
+   struct nil_Offset4D_Elements dst_offset_el =
+      nil_offset4d_px_to_el(dst_offset4d_px, dst_img_plane.nil.format,
+                            dst_img_plane.nil.sample_layout);
 
-   VkDeviceSize src_addr_B = (uint64_t) mem_map_src + src_host_offset;
-   VkDeviceSize dst_addr_B = (uint64_t) mem_map_dst + dst_host_offset;
+   VkDeviceSize src_addr_B = (uint64_t) mem_map_src + src_host_offset +
+                             src_img_plane.nil.levels[src_miplevel].offset_B;
+   src_addr_B += src_offset_el.a * src_img_plane.nil.array_stride_B;
+   VkDeviceSize dst_addr_B = (uint64_t) mem_map_dst + dst_host_offset +
+                             dst_img_plane.nil.levels[dst_miplevel].offset_B;
+   dst_addr_B += dst_offset_el.a * dst_img_plane.nil.array_stride_B;
 
    for (unsigned z = 0; z < layer_count; z++) {
       if (no_swizzle) {
@@ -409,17 +416,14 @@ nvk_copy_image_to_image(struct nvk_device *device,
                                   src_addr_B);
       } else {
          uint32_t temp_tile_size_B = 0;
-         uint32_t temp_tile_align_B = 0;
          struct nil_tiling tiling;
          const uint32_t src_tile_size_B = nil_tiling_size_B(&src_img_plane.nil.levels[src_miplevel].tiling);
          const uint32_t dst_tile_size_B = nil_tiling_size_B(&dst_img_plane.nil.levels[dst_miplevel].tiling);
          if (src_tile_size_B >= dst_tile_size_B) {
             temp_tile_size_B = src_tile_size_B;
-            temp_tile_align_B = src_img_plane.nil.align_B;
             tiling = src_img_plane.nil.levels[src_miplevel].tiling;
          } else {
             temp_tile_size_B = dst_tile_size_B;
-            temp_tile_align_B = dst_img_plane.nil.align_B;
             tiling = dst_img_plane.nil.levels[dst_miplevel].tiling;
          }
 
@@ -433,64 +437,100 @@ nvk_copy_image_to_image(struct nvk_device *device,
          uint32_t tmp_pitch = tl_w_B * src_bpp;
          uint32_t tmp_plane_stride = tmp_pitch * tl_h_B;
 
-         for (uint32_t a = 0; a < info->srcSubresource.layerCount; a++) {
-            for (uint32_t z = 0; z < info->extent.depth; z += tl_d_B) {
-               for (uint32_t y = 0; y < info->extent.height; y += tl_h_B) {
-                  for (uint32_t x = 0; x < info->extent.width; x += tl_w_B) {
-                     struct nil_Offset4D_Pixels tmp_src_offset = {
-                        .x = info->srcOffset.x + x,
-                        .y = info->srcOffset.y + y,
-                        .z = info->srcOffset.z + z,
-                        .a = info->srcSubresource.baseArrayLayer + a,
-                     };
-                     struct nil_Offset4D_Pixels tmp_dst_offset = {
-                        .x = info->dstOffset.x + x,
-                        .y = info->dstOffset.y + y,
-                        .z = info->dstOffset.z + z,
-                        .a = info->dstSubresource.baseArrayLayer + a,
-                     };
+         struct nil_Extent4D_Tiles extent4d_tl =
+            nil_extent4d_px_to_tl(extent4d_px,
+                                  &src_img_plane.nil.levels[src_miplevel].tiling,
+                                  src_img_plane.nil.format,
+                                  src_img_plane.nil.sample_layout);
+         struct nil_Offset4D_Tiles src_offset4d_tl =
+            nil_offset4d_px_to_tl(src_offset4d_px,
+                                  &src_img_plane.nil.levels[src_miplevel].tiling,
+                                  src_img_plane.nil.format,
+                                  src_img_plane.nil.sample_layout);
 
-                     struct nil_Extent4D_Pixels tmp_extent = {
-                        .width  = MIN2(info->extent.width - tmp_src_offset.x,
-                                       tl_w_B),
-                        .height = MIN2(info->extent.height - tmp_src_offset.y,
-                                       tl_h_B),
-                        .depth  = MIN2(info->extent.depth - tmp_src_offset.z,
-                                       tl_d_B),
-                        .array_len = 1,
-                     };
+         for (uint32_t z = src_offset4d_tl.z; z < extent4d_tl.depth; z++) {
+            // TODO: I am not sure this is correct yet
+            const struct nil_Extent4D_Samples src_sa = nil_px_extent_sa(src_img_plane.nil.sample_layout);
+            const unsigned src_block_depth = util_format_get_blockdepth(src_img_plane.nil.format.p_format);
 
-                     nil_copy_tiled_to_linear(tmp_src_offset, tmp_extent,
-                                              src_miplevel,
-                                              src_img_plane.nil,
-                                              tmp_pitch, tmp_plane_stride,
-                                              src_bpp, (size_t) tmp_mem,
-                                              src_addr_B);
-                     nil_copy_linear_to_tiled(tmp_dst_offset, tmp_extent,
-                                              dst_miplevel,
-                                              dst_img_plane.nil,
-                                              tmp_pitch, tmp_plane_stride,
-                                              dst_bpp, (size_t) tmp_mem,
-                                              dst_addr_B);
+            const uint32_t z_el = z * tl_d_B;
+            const uint32_t src_z_sa = z_el * src_block_depth;
+            const uint32_t src_z_px = src_z_sa / src_sa.depth; 
 
-                  }
+            uint32_t src_z_start_px = MAX2(src_offset4d_px.z, src_z_px);
+            uint32_t dst_z_start_px = src_z_start_px - src_offset4d_px.z + dst_offset4d_px.z;
+
+            uint32_t depth =
+               MIN2((src_z_px), src_offset4d_px.z + extent4d_px.depth) - src_z_start_px;
+
+            for (uint32_t y = src_offset4d_tl.y; y < extent4d_tl.height; y++) {
+               const unsigned src_block_height = util_format_get_blockheight(src_img_plane.nil.format.p_format);
+
+               const uint32_t y_el = y * tl_h_B;
+               const uint32_t src_y_sa = y_el * src_block_height;
+               const uint32_t src_y_px = src_y_sa / src_sa.height; 
+
+               uint32_t src_y_start_px = MAX2(src_offset4d_px.y, src_y_px);
+               uint32_t dst_y_start_px = src_y_start_px - src_offset4d_px.y + dst_offset4d_px.y;
+
+               uint32_t height =
+                  MIN2((src_y_px), src_offset4d_px.y + extent4d_px.height) - src_y_start_px;
+               for (uint32_t x = src_offset4d_tl.x; x < extent4d_tl.width; x++) {
+                  const unsigned src_block_width = util_format_get_blockwidth(src_img_plane.nil.format.p_format);
+                  const unsigned src_block_size = util_format_get_blocksize(src_img_plane.nil.format.p_format);
+
+                  const uint32_t x_B = x * tl_w_B;
+                  const uint32_t x_el = x_B / src_block_size;
+                  const uint32_t src_x_sa = x_el * src_block_width;
+                  const uint32_t src_x_px = src_x_sa / src_sa.width; 
+
+                  uint32_t src_x_start_px = MAX2(src_offset4d_px.x, src_x_px);
+                  uint32_t dst_x_start_px = src_x_start_px - src_offset4d_px.x + dst_offset4d_px.x;
+
+                  uint32_t width =
+                     MIN2((src_x_px), src_offset4d_px.x + extent4d_px.width) - src_x_start_px;
+                  
+                  struct nil_Offset4D_Pixels tmp_src_offset = {
+                     .x = src_x_start_px,
+                     .y = src_y_start_px,
+                     .z = src_z_start_px,
+                     .a = 0,
+                  };
+
+                  struct nil_Offset4D_Pixels tmp_dst_offset = {
+                     .x = dst_x_start_px,
+                     .y = dst_y_start_px,
+                     .z = dst_z_start_px,
+                     .a = 0,
+                  };
+
+                  struct nil_Extent4D_Pixels tmp_extent = {
+                     .width  = width,
+                     .height = height,
+                     .depth  = depth,
+                     .array_len = 1,
+                  };
+                  nil_copy_tiled_to_linear(tmp_src_offset, tmp_extent,
+                                           src_miplevel,
+                                           src_img_plane.nil,
+                                           tmp_pitch, tmp_plane_stride,
+                                           src_bpp, (size_t) tmp_mem,
+                                           src_addr_B);
+                  nil_copy_linear_to_tiled(tmp_dst_offset, tmp_extent,
+                                           dst_miplevel,
+                                           dst_img_plane.nil,
+                                           tmp_pitch, tmp_plane_stride,
+                                           dst_bpp, (size_t) tmp_mem,
+                                           dst_addr_B);
                }
             }
          }
+         
          vk_free(&device->vk.alloc, tmp_mem);
       }
-
-      struct nil_Offset4D_Elements src_offset_el =
-         nil_offset4d_px_to_el(src_offset4d_px, src_img_plane.nil.format,
-                               src_img_plane.nil.sample_layout);
-      if (src->vk.image_type != VK_IMAGE_TYPE_3D)
-         src_addr_B += (z + src_offset_el.a) * src_img_plane.nil.array_stride_B;
-
-      struct nil_Offset4D_Elements dst_offset_el =
-         nil_offset4d_px_to_el(dst_offset4d_px, dst_img_plane.nil.format,
-                               dst_img_plane.nil.sample_layout);
-      if (dst->vk.image_type != VK_IMAGE_TYPE_3D)
-         dst_addr_B += (z + dst_offset_el.a) * dst_img_plane.nil.array_stride_B;
+      
+      src_addr_B += src_img_plane.nil.array_stride_B;
+      dst_addr_B += dst_img_plane.nil.array_stride_B;
 
       if (!src_img_plane.nil.levels[src_miplevel].tiling.is_tiled) {
          src_addr_B += src_offset_el.x * src_bpp +

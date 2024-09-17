@@ -47,41 +47,38 @@ struct ac_llvm_compiler;
 /* Alignment for optimal CP DMA performance. */
 #define SI_CPDMA_ALIGNMENT 32
 
-/* Pipeline & streamout query controls. */
-#define SI_CONTEXT_START_PIPELINE_STATS  (1 << 0)
-#define SI_CONTEXT_STOP_PIPELINE_STATS   (1 << 1)
-/* gap */
+/* Pipeline & streamout query start/stop events. */
+#define SI_BARRIER_EVENT_PIPELINESTAT_START     BITFIELD_BIT(0)
+#define SI_BARRIER_EVENT_PIPELINESTAT_STOP      BITFIELD_BIT(1)
+/* Events only used by workarounds. These shouldn't be used for API barriers. */
+#define SI_BARRIER_EVENT_FLUSH_AND_INV_DB_META  BITFIELD_BIT(2)
+#define SI_BARRIER_EVENT_VGT_FLUSH              BITFIELD_BIT(3)
+/* PFP waits for ME to finish. Used to sync for index and indirect buffers and render condition. */
+#define SI_BARRIER_PFP_SYNC_ME                  BITFIELD_BIT(4)
 /* Instruction cache. */
-#define SI_CONTEXT_INV_ICACHE (1 << 3)
-/* Scalar cache. (GFX6-9: scalar L1; GFX10: scalar L0)
+#define SI_BARRIER_INV_ICACHE                   BITFIELD_BIT(5)
+/* Scalar cache. (GFX6-9: scalar L1; GFX10+: scalar L0)
  * GFX10: This also invalidates the L1 shader array cache. */
-#define SI_CONTEXT_INV_SCACHE (1 << 4)
-/* Vector cache. (GFX6-9: vector L1; GFX10: vector L0)
+#define SI_BARRIER_INV_SMEM                     BITFIELD_BIT(6)
+/* Vector cache. (GFX6-9: vector L1; GFX10+: vector L0)
  * GFX10: This also invalidates the L1 shader array cache. */
-#define SI_CONTEXT_INV_VCACHE (1 << 5)
+#define SI_BARRIER_INV_VMEM                     BITFIELD_BIT(7)
 /* L2 cache + L2 metadata cache writeback & invalidate.
- * GFX6-8: Used by shaders only. GFX9-10: Used by everything. */
-#define SI_CONTEXT_INV_L2 (1 << 6)
+ * GFX6-8: Used by shaders only. GFX9+: Used by everything. */
+#define SI_BARRIER_INV_L2                       BITFIELD_BIT(8)
 /* L2 writeback (write dirty L2 lines to memory for non-L2 clients).
  * Only used for coherency with non-L2 clients like CB, DB, CP on GFX6-8.
- * GFX6-7 will do complete invalidation, because the writeback is unsupported. */
-#define SI_CONTEXT_WB_L2 (1 << 7)
-/* Writeback & invalidate the L2 metadata cache only. It can only be coupled with
- * a CB or DB flush. */
-#define SI_CONTEXT_INV_L2_METADATA (1 << 8)
+ * GFX6-7 will do complete invalidation because the writeback is unsupported. */
+#define SI_BARRIER_WB_L2                        BITFIELD_BIT(9)
+/* Writeback & invalidate the L2 metadata cache only. */
+#define SI_BARRIER_INV_L2_METADATA              BITFIELD_BIT(10)
+/* These wait for shaders to finish. (SYNC_VS = wait for the whole geometry pipeline to finish) */
+#define SI_BARRIER_SYNC_VS                      BITFIELD_BIT(11)
+#define SI_BARRIER_SYNC_PS                      BITFIELD_BIT(12)
+#define SI_BARRIER_SYNC_CS                      BITFIELD_BIT(13)
 /* Framebuffer caches. */
-#define SI_CONTEXT_FLUSH_AND_INV_DB      (1 << 9)
-#define SI_CONTEXT_FLUSH_AND_INV_DB_META (1 << 10)
-#define SI_CONTEXT_FLUSH_AND_INV_CB      (1 << 11)
-/* Engine synchronization. */
-#define SI_CONTEXT_VS_PARTIAL_FLUSH   (1 << 12)
-#define SI_CONTEXT_PS_PARTIAL_FLUSH   (1 << 13)
-#define SI_CONTEXT_CS_PARTIAL_FLUSH   (1 << 14)
-#define SI_CONTEXT_VGT_FLUSH          (1 << 15)
-/* gap */
-/* PFP waits for ME to finish. Used to sync for index and indirect buffers and render
- * condition. It's typically set when doing a VS/PS/CS partial flush for buffers. */
-#define SI_CONTEXT_PFP_SYNC_ME        (1 << 17)
+#define SI_BARRIER_SYNC_AND_INV_DB              BITFIELD_BIT(14)
+#define SI_BARRIER_SYNC_AND_INV_CB              BITFIELD_BIT(15)
 
 #define SI_PREFETCH_LS              (1 << 1)
 #define SI_PREFETCH_HS              (1 << 2)
@@ -324,7 +321,7 @@ struct si_resource {
     * an index buffer. The reason is that VGT DMA index fetching doesn't
     * use L2.
     */
-   bool TC_L2_dirty;
+   bool L2_cache_dirty;
 
    /* Whether this resource is referenced by bindless handles. */
    bool texture_handle_allocated;
@@ -955,7 +952,7 @@ struct si_context {
       struct si_resource *csa;
    } shadowing;
 
-   void (*emit_cache_flush)(struct si_context *ctx, struct radeon_cmdbuf *cs);
+   void (*emit_barrier)(struct si_context *ctx, struct radeon_cmdbuf *cs);
 
    struct blitter_context *blitter;
    void *noop_blend;
@@ -1007,7 +1004,7 @@ struct si_context {
       unsigned with_cb;
       unsigned with_db;
    } num_draw_calls_sh_coherent;
-   unsigned flags; /* flush flags */
+   unsigned barrier_flags;
 
    /* Atoms (state emit functions). */
    union si_state_atoms atoms;
@@ -1363,6 +1360,31 @@ struct si_context {
    unsigned int last_timestamp_cmd_cdw;
 };
 
+/* si_barrier.c */
+#define SI_FB_BARRIER_SYNC_CB      BITFIELD_BIT(0)
+#define SI_FB_BARRIER_SYNC_DB      BITFIELD_BIT(1)
+#define SI_FB_BARRIER_SYNC_ALL     BITFIELD_RANGE(0, 2)
+
+void si_barrier_before_internal_op(struct si_context *sctx, unsigned flags,
+                                   unsigned num_buffers,
+                                   const struct pipe_shader_buffer *buffers,
+                                   unsigned writable_buffers_mask,
+                                   unsigned num_images,
+                                   const struct pipe_image_view *images);
+void si_barrier_after_internal_op(struct si_context *sctx, unsigned flags,
+                                  unsigned num_buffers,
+                                  const struct pipe_shader_buffer *buffers,
+                                  unsigned writable_buffers_mask,
+                                  unsigned num_images,
+                                  const struct pipe_image_view *images);
+void si_barrier_before_simple_buffer_op(struct si_context *sctx, unsigned flags,
+                                        struct pipe_resource *dst, struct pipe_resource *src);
+void si_barrier_after_simple_buffer_op(struct si_context *sctx, unsigned flags,
+                                       struct pipe_resource *dst, struct pipe_resource *src);
+void si_fb_barrier_before_rendering(struct si_context *sctx);
+void si_fb_barrier_after_rendering(struct si_context *sctx, unsigned flags);
+void si_init_barrier_functions(struct si_context *sctx);
+
 /* si_blit.c */
 enum si_blitter_op /* bitmask */
 {
@@ -1458,64 +1480,40 @@ void si_init_clear_functions(struct si_context *sctx);
 void si_destroy_compute(struct si_compute *program);
 
 /* si_compute_blit.c */
-#define SI_OP_SYNC_CS_BEFORE              (1 << 0)
-#define SI_OP_SYNC_PS_BEFORE              (1 << 1)
-#define SI_OP_SYNC_GE_BEFORE              (1 << 2) /* only sync VS, TCS, TES, GS */
-#define SI_OP_SYNC_BEFORE                 (SI_OP_SYNC_CS_BEFORE | SI_OP_SYNC_PS_BEFORE)
-#define SI_OP_SYNC_AFTER                  (1 << 3)
-#define SI_OP_SYNC_BEFORE_AFTER           (SI_OP_SYNC_BEFORE | SI_OP_SYNC_AFTER)
-#define SI_OP_SKIP_CACHE_INV_BEFORE       (1 << 4) /* don't invalidate caches */
-#define SI_OP_CS_IMAGE                    (1 << 5)
-#define SI_OP_CS_RENDER_COND_ENABLE       (1 << 6)
-/* gap */
-/* Only for si_compute_blit: */
-#define SI_OP_FAIL_IF_SLOW                (1 << 9)
-#define SI_OP_IS_NESTED                   (1 << 10)
-
-void si_barrier_before_internal_op(struct si_context *sctx, unsigned flags,
-                                   unsigned num_buffers,
-                                   const struct pipe_shader_buffer *buffers,
-                                   unsigned writable_buffers_mask,
-                                   unsigned num_images,
-                                   const struct pipe_image_view *images);
-void si_barrier_after_internal_op(struct si_context *sctx, unsigned flags,
-                                  unsigned num_buffers,
-                                  const struct pipe_shader_buffer *buffers,
-                                  unsigned writable_buffers_mask,
-                                  unsigned num_images,
-                                  const struct pipe_image_view *images);
 bool si_should_blit_clamp_to_edge(const struct pipe_blit_info *info, unsigned coord_mask);
 void si_launch_grid_internal_ssbos(struct si_context *sctx, struct pipe_grid_info *info,
-                                   void *shader, unsigned flags, unsigned num_buffers,
+                                   void *shader, unsigned num_buffers,
                                    const struct pipe_shader_buffer *buffers,
-                                   unsigned writeable_bitmask);
+                                   unsigned writeable_bitmask, bool render_condition_enable);
 bool si_compute_clear_copy_buffer(struct si_context *sctx, struct pipe_resource *dst,
                                   unsigned dst_offset, struct pipe_resource *src,
                                   unsigned src_offset, unsigned size,
                                   const uint32_t *clear_value, unsigned clear_value_size,
-                                  unsigned flags, unsigned dwords_per_thread, bool fail_if_slow);
+                                  unsigned dwords_per_thread, bool render_condition_enable,
+                                  bool fail_if_slow);
 enum si_clear_method {
-  SI_CP_DMA_CLEAR_METHOD,
   SI_COMPUTE_CLEAR_METHOD,
   SI_AUTO_SELECT_CLEAR_METHOD
 };
 void si_clear_buffer(struct si_context *sctx, struct pipe_resource *dst,
                      uint64_t offset, uint64_t size, uint32_t *clear_value,
-                     uint32_t clear_value_size, unsigned flags,
-                     enum si_clear_method method);
+                     uint32_t clear_value_size, enum si_clear_method method,
+                     bool render_condition_enable);
 void si_compute_clear_buffer_rmw(struct si_context *sctx, struct pipe_resource *dst,
                                  unsigned dst_offset, unsigned size, uint32_t clear_value,
-                                 uint32_t writebitmask, unsigned flags);
+                                 uint32_t writebitmask, bool render_condition_enable);
 void si_copy_buffer(struct si_context *sctx, struct pipe_resource *dst, struct pipe_resource *src,
-                    uint64_t dst_offset, uint64_t src_offset, unsigned size, unsigned flags);
+                    uint64_t dst_offset, uint64_t src_offset, unsigned size);
 void si_compute_shorten_ubyte_buffer(struct si_context *sctx, struct pipe_resource *dst, struct pipe_resource *src,
-                                     uint64_t dst_offset, uint64_t src_offset, unsigned size, unsigned flags);
+                                     uint64_t dst_offset, uint64_t src_offset, unsigned size,
+                                     bool render_condition_enable);
 void si_compute_clear_image_dcc_single(struct si_context *sctx, struct si_texture *tex,
                                        unsigned level, enum pipe_format format,
-                                       const union pipe_color_union *color, unsigned flags);
+                                       const union pipe_color_union *color,
+                                       bool render_condition_enable);
 void si_retile_dcc(struct si_context *sctx, struct si_texture *tex);
 void gfx9_clear_dcc_msaa(struct si_context *sctx, struct pipe_resource *res, uint32_t clear_value,
-                         unsigned flags);
+                         bool render_condition_enable);
 void si_compute_expand_fmask(struct pipe_context *ctx, struct pipe_resource *tex);
 bool si_compute_clear_image(struct si_context *sctx, struct pipe_resource *tex,
                             enum pipe_format format, unsigned level, const struct pipe_box *box,
@@ -1527,17 +1525,17 @@ bool si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
                            bool fail_if_slow);
 bool si_compute_blit(struct si_context *sctx, const struct pipe_blit_info *info,
                      const union pipe_color_union *clear_color, unsigned dst_access,
-                     unsigned src_access, unsigned flags);
+                     unsigned src_access, bool fail_if_slow);
 void si_init_compute_blit_functions(struct si_context *sctx);
 
 /* si_cp_dma.c */
 void si_cp_dma_wait_for_idle(struct si_context *sctx, struct radeon_cmdbuf *cs);
 void si_cp_dma_clear_buffer(struct si_context *sctx, struct radeon_cmdbuf *cs,
                             struct pipe_resource *dst, uint64_t offset, uint64_t size,
-                            unsigned value, unsigned user_flags);
+                            unsigned value);
 void si_cp_dma_copy_buffer(struct si_context *sctx, struct pipe_resource *dst,
                            struct pipe_resource *src, uint64_t dst_offset, uint64_t src_offset,
-                           unsigned size, unsigned user_flags);
+                           unsigned size);
 void si_cp_write_data(struct si_context *sctx, struct si_resource *buf, unsigned offset,
                       unsigned size, unsigned dst_sel, unsigned engine, const void *data);
 void si_cp_copy_data(struct si_context *sctx, struct radeon_cmdbuf *cs, unsigned dst_sel,
@@ -1601,8 +1599,6 @@ void si_set_tracked_regs_to_clear_state(struct si_context *ctx);
 void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs);
 void si_trace_emit(struct si_context *sctx);
 void si_emit_ts(struct si_context *sctx, struct si_resource* buffer, unsigned int offset);
-void gfx10_emit_cache_flush(struct si_context *sctx, struct radeon_cmdbuf *cs);
-void gfx6_emit_cache_flush(struct si_context *sctx, struct radeon_cmdbuf *cs);
 /* Replace the sctx->b.draw_vbo function with a wrapper. This can be use to implement
  * optimizations without affecting the normal draw_vbo functions perf.
  */
@@ -1882,57 +1878,57 @@ static inline void si_saved_cs_reference(struct si_saved_cs **dst, struct si_sav
 static inline void si_make_CB_shader_coherent(struct si_context *sctx, unsigned num_samples,
                                               bool shaders_read_metadata, bool dcc_pipe_aligned)
 {
-   sctx->flags |= SI_CONTEXT_FLUSH_AND_INV_CB | SI_CONTEXT_INV_VCACHE;
+   sctx->barrier_flags |= SI_BARRIER_SYNC_AND_INV_CB | SI_BARRIER_INV_VMEM;
    sctx->force_shader_coherency.with_cb = false;
 
    if (sctx->gfx_level >= GFX10 && sctx->gfx_level < GFX12) {
       if (sctx->screen->info.tcc_rb_non_coherent)
-         sctx->flags |= SI_CONTEXT_INV_L2;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2;
       else if (shaders_read_metadata)
-         sctx->flags |= SI_CONTEXT_INV_L2_METADATA;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2_METADATA;
    } else if (sctx->gfx_level == GFX9) {
       /* Single-sample color is coherent with shaders on GFX9, but
        * L2 metadata must be flushed if shaders read metadata.
        * (DCC, CMASK).
        */
       if (num_samples >= 2 || (shaders_read_metadata && !dcc_pipe_aligned))
-         sctx->flags |= SI_CONTEXT_INV_L2;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2;
       else if (shaders_read_metadata)
-         sctx->flags |= SI_CONTEXT_INV_L2_METADATA;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2_METADATA;
    } else if (sctx->gfx_level <= GFX8) {
       /* GFX6-GFX8 */
-      sctx->flags |= SI_CONTEXT_INV_L2;
+      sctx->barrier_flags |= SI_BARRIER_INV_L2;
    }
 
-   si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+   si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
 }
 
 static inline void si_make_DB_shader_coherent(struct si_context *sctx, unsigned num_samples,
                                               bool include_stencil, bool shaders_read_metadata)
 {
-   sctx->flags |= SI_CONTEXT_FLUSH_AND_INV_DB | SI_CONTEXT_INV_VCACHE;
+   sctx->barrier_flags |= SI_BARRIER_SYNC_AND_INV_DB | SI_BARRIER_INV_VMEM;
    sctx->force_shader_coherency.with_db = false;
 
    if (sctx->gfx_level >= GFX10 && sctx->gfx_level < GFX12) {
       if (sctx->screen->info.tcc_rb_non_coherent)
-         sctx->flags |= SI_CONTEXT_INV_L2;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2;
       else if (shaders_read_metadata)
-         sctx->flags |= SI_CONTEXT_INV_L2_METADATA;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2_METADATA;
    } else if (sctx->gfx_level == GFX9) {
       /* Single-sample depth (not stencil) is coherent with shaders
        * on GFX9, but L2 metadata must be flushed if shaders read
        * metadata.
        */
       if (num_samples >= 2 || include_stencil)
-         sctx->flags |= SI_CONTEXT_INV_L2;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2;
       else if (shaders_read_metadata)
-         sctx->flags |= SI_CONTEXT_INV_L2_METADATA;
+         sctx->barrier_flags |= SI_BARRIER_INV_L2_METADATA;
    } else if (sctx->gfx_level <= GFX8) {
       /* GFX6-GFX8 */
-      sctx->flags |= SI_CONTEXT_INV_L2;
+      sctx->barrier_flags |= SI_BARRIER_INV_L2;
    }
 
-   si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+   si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
 }
 
 static inline bool si_can_sample_zs(struct si_texture *tex, bool stencil_sampler)
@@ -2207,18 +2203,20 @@ si_set_rasterized_prim(struct si_context *sctx, enum mesa_prim rast_prim,
 /* There are 3 ways to flush caches and all of them are correct.
  *
  * 1) sctx->flags |= ...;
- *    si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush); // deferred
+ *    si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier); // deferred
  *
  * 2) sctx->flags |= ...;
- *    si_emit_cache_flush_direct(sctx); // immediate
+ *    si_emit_barrier_direct(sctx); // immediate
  *
  * 3) sctx->flags |= ...;
- *    sctx->emit_cache_flush(sctx, cs); // immediate (2 is better though)
+ *    sctx->emit_barrier(sctx, cs); // immediate (2 is better though)
  */
-static inline void si_emit_cache_flush_direct(struct si_context *sctx)
+static inline void si_emit_barrier_direct(struct si_context *sctx)
 {
-   sctx->emit_cache_flush(sctx, &sctx->gfx_cs);
-   sctx->dirty_atoms &= ~SI_ATOM_BIT(cache_flush);
+   if (sctx->barrier_flags) {
+      sctx->emit_barrier(sctx, &sctx->gfx_cs);
+      sctx->dirty_atoms &= ~SI_ATOM_BIT(barrier);
+   }
 }
 
 #define PRINT_ERR(fmt, args...)                                                                    \

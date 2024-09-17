@@ -207,8 +207,9 @@ void si_test_dma_perf(struct si_screen *sscreen)
 
                   if (method == METHOD_DEFAULT) {
                      if (is_copy) {
-                        si_copy_buffer(sctx, dst, src, dst_offset, src_offset, size,
-                                       SI_OP_SYNC_BEFORE_AFTER);
+                        si_barrier_before_simple_buffer_op(sctx, 0, dst, src);
+                        si_copy_buffer(sctx, dst, src, dst_offset, src_offset, size);
+                        si_barrier_after_simple_buffer_op(sctx, 0, dst, src);
                      } else {
                         sctx->b.clear_buffer(&sctx->b, dst, dst_offset, size, &clear_value,
                                              clear_value_size);
@@ -227,8 +228,10 @@ void si_test_dma_perf(struct si_screen *sscreen)
                            success = false;
                            continue;
                         }
-                        si_cp_dma_copy_buffer(sctx, dst, src, dst_offset, src_offset, size,
-                                              SI_OP_SYNC_BEFORE_AFTER);
+
+                        si_barrier_before_simple_buffer_op(sctx, 0, dst, src);
+                        si_cp_dma_copy_buffer(sctx, dst, src, dst_offset, src_offset, size);
+                        si_barrier_after_simple_buffer_op(sctx, 0, dst, src);
                      } else {
                         /* CP DMA clears must be aligned to 4 bytes. */
                         if (dst_offset % 4 || size % 4 ||
@@ -237,20 +240,24 @@ void si_test_dma_perf(struct si_screen *sscreen)
                            success = false;
                            continue;
                         }
+
                         assert(clear_value_size == 4);
+                        si_barrier_before_simple_buffer_op(sctx, 0, dst, src);
                         si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, dst, dst_offset, size,
-                                               clear_value[0], SI_OP_SYNC_BEFORE_AFTER);
+                                               clear_value[0]);
+                        si_barrier_after_simple_buffer_op(sctx, 0, dst, src);
                      }
                   } else {
                      /* Compute */
+                     si_barrier_before_simple_buffer_op(sctx, 0, dst, src);
                      success &=
                         si_compute_clear_copy_buffer(sctx, dst, dst_offset, src, src_offset,
                                                      size, clear_value, clear_value_size,
-                                                     SI_OP_SYNC_BEFORE_AFTER, dwords_per_thread,
-                                                     false);
+                                                     dwords_per_thread, false, false);
+                     si_barrier_after_simple_buffer_op(sctx, 0, dst, src);
                   }
 
-                  sctx->flags |= SI_CONTEXT_INV_L2;
+                  sctx->barrier_flags |= SI_BARRIER_INV_L2;
                }
 
                ctx->end_query(ctx, q);
@@ -475,9 +482,11 @@ void si_test_clear_buffer(struct si_screen *sscreen)
       printf("%s, ", COLOR_RESET);
       fflush(stdout);
 
+      si_barrier_before_simple_buffer_op(sctx, 0, dst, NULL);
       bool done = si_compute_clear_copy_buffer(sctx, dst, dst_offset, NULL, 0, op_size,
                                                (uint32_t*)clear_value, clear_value_size,
-                                               SI_OP_SYNC_BEFORE_AFTER, dwords_per_thread, false);
+                                               dwords_per_thread, false, false);
+      si_barrier_after_simple_buffer_op(sctx, 0, dst, NULL);
 
       if (done) {
          pipe_buffer_read(ctx, dst, 0, buf_size, read_dst_buffer);
@@ -580,9 +589,10 @@ void si_test_copy_buffer(struct si_screen *sscreen)
       }
       fflush(stdout);
 
+      si_barrier_before_simple_buffer_op(sctx, 0, dst, src);
       bool done = si_compute_clear_copy_buffer(sctx, dst, dst_offset, src, src_offset, op_size,
-                                               NULL, 0, SI_OP_SYNC_BEFORE_AFTER,
-                                               dwords_per_thread, false);
+                                               NULL, 0, dwords_per_thread, false, false);
+      si_barrier_after_simple_buffer_op(sctx, 0, dst, src);
 
       if (done) {
          pipe_buffer_read(ctx, dst, 0, buf_size, read_dst_buffer);

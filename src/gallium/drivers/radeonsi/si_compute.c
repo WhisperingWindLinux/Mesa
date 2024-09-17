@@ -1175,8 +1175,8 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
                            info->block[0] * info->block[1] * info->block[2] > 256;
 
    if (cs_regalloc_hang) {
-      sctx->flags |= SI_CONTEXT_PS_PARTIAL_FLUSH | SI_CONTEXT_CS_PARTIAL_FLUSH;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+      sctx->barrier_flags |= SI_BARRIER_SYNC_PS | SI_BARRIER_SYNC_CS;
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
    }
 
    if (program->ir_type != PIPE_SHADER_IR_NATIVE && program->shader.compilation_failed)
@@ -1187,22 +1187,21 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    if (sctx->has_graphics) {
       if (sctx->num_draw_calls_sh_coherent.with_cb != sctx->num_draw_calls ||
           sctx->num_draw_calls_sh_coherent.with_db != sctx->num_draw_calls) {
-         si_update_fb_dirtiness_after_rendering(sctx);
+         bool sync_cb = sctx->force_shader_coherency.with_cb ||
+                        si_check_needs_implicit_sync(sctx, RADEON_USAGE_CB_NEEDS_IMPLICIT_SYNC);
+         bool sync_db = sctx->gfx_level == GFX12 &&
+                        (sctx->force_shader_coherency.with_db ||
+                         si_check_needs_implicit_sync(sctx, RADEON_USAGE_DB_NEEDS_IMPLICIT_SYNC));
 
-         if (sctx->force_shader_coherency.with_cb ||
-             si_check_needs_implicit_sync(sctx, RADEON_USAGE_CB_NEEDS_IMPLICIT_SYNC)) {
+         si_fb_barrier_after_rendering(sctx,
+                                       (sync_cb ? SI_FB_BARRIER_SYNC_CB : 0) |
+                                       (sync_db ? SI_FB_BARRIER_SYNC_DB : 0));
+
+         if (sync_cb)
             sctx->num_draw_calls_sh_coherent.with_cb = sctx->num_draw_calls;
-            si_make_CB_shader_coherent(sctx, 0,
-                                       sctx->framebuffer.CB_has_shader_readable_metadata,
-                                       sctx->framebuffer.all_DCC_pipe_aligned);
-         }
 
-         if (sctx->gfx_level == GFX12 &&
-             (sctx->force_shader_coherency.with_db ||
-              si_check_needs_implicit_sync(sctx, RADEON_USAGE_DB_NEEDS_IMPLICIT_SYNC))) {
+         if (sync_db)
             sctx->num_draw_calls_sh_coherent.with_db = sctx->num_draw_calls;
-            si_make_DB_shader_coherent(sctx, 0, false, false);
-         }
       }
 
       if (sctx->gfx_level < GFX11)
@@ -1214,10 +1213,10 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    if (info->indirect) {
       /* Indirect buffers are read through L2 on GFX9-GFX11, but not other hw. */
       if ((sctx->gfx_level <= GFX8 || sctx->gfx_level == GFX12) &&
-          si_resource(info->indirect)->TC_L2_dirty) {
-         sctx->flags |= SI_CONTEXT_WB_L2 | SI_CONTEXT_PFP_SYNC_ME;
-         si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
-         si_resource(info->indirect)->TC_L2_dirty = false;
+          si_resource(info->indirect)->L2_cache_dirty) {
+         sctx->barrier_flags |= SI_BARRIER_WB_L2 | SI_BARRIER_PFP_SYNC_ME;
+         si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
+         si_resource(info->indirect)->L2_cache_dirty = false;
       }
    }
 
@@ -1268,8 +1267,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    }
 
    /* Registers that are not read from memory should be set before this: */
-   if (sctx->flags)
-      si_emit_cache_flush_direct(sctx);
+   si_emit_barrier_direct(sctx);
 
    if (sctx->has_graphics && si_is_atom_dirty(sctx, &sctx->atoms.s.render_cond)) {
       sctx->atoms.s.render_cond.emit(sctx, -1);
@@ -1311,8 +1309,8 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       trace_si_end_compute(&sctx->trace, info->grid[0], info->grid[1], info->grid[2]);
 
    if (cs_regalloc_hang) {
-      sctx->flags |= SI_CONTEXT_CS_PARTIAL_FLUSH;
-      si_mark_atom_dirty(sctx, &sctx->atoms.s.cache_flush);
+      sctx->barrier_flags |= SI_BARRIER_SYNC_CS;
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.barrier);
    }
 }
 

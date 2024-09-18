@@ -151,9 +151,6 @@ struct float_mode {
       };
       uint8_t val = 0;
    };
-   /* if false, optimizations which may remove infs/nan/-0.0 can be done */
-   bool preserve_signed_zero_inf_nan32 : 1;
-   bool preserve_signed_zero_inf_nan16_64 : 1;
    /* if false, optimizations which may remove denormal flushing can be done */
    bool must_flush_denorms32 : 1;
    bool must_flush_denorms16_64 : 1;
@@ -164,10 +161,7 @@ struct float_mode {
     * current one instead. */
    bool canReplace(float_mode other) const noexcept
    {
-      return val == other.val &&
-             (preserve_signed_zero_inf_nan32 || !other.preserve_signed_zero_inf_nan32) &&
-             (preserve_signed_zero_inf_nan16_64 || !other.preserve_signed_zero_inf_nan16_64) &&
-             (must_flush_denorms32 || !other.must_flush_denorms32) &&
+      return val == other.val && (must_flush_denorms32 || !other.must_flush_denorms32) &&
              (must_flush_denorms16_64 || !other.must_flush_denorms16_64) &&
              (care_about_round32 || !other.care_about_round32) &&
              (care_about_round16_64 || !other.care_about_round16_64);
@@ -911,7 +905,8 @@ private:
 class Definition final {
 public:
    constexpr Definition()
-       : temp(Temp(0, s1)), reg_(0), isFixed_(0), isKill_(0), isPrecise_(0), isNUW_(0), isNoCSE_(0)
+       : temp(Temp(0, s1)), reg_(0), isFixed_(0), isKill_(0), isPrecise_(0), isInfPreserve_(0),
+         isNaNPreserve_(0), isSZPreserve_(0), isNUW_(0), isNoCSE_(0)
    {}
    Definition(uint32_t index, RegClass type) noexcept : temp(index, type) {}
    explicit Definition(Temp tmp) noexcept : temp(tmp) {}
@@ -955,6 +950,18 @@ public:
 
    constexpr bool isPrecise() const noexcept { return isPrecise_; }
 
+   constexpr void setInfPreserve(bool inf_preserve) noexcept { isInfPreserve_ = inf_preserve; }
+
+   constexpr bool isInfPreserve() const noexcept { return isInfPreserve_; }
+
+   constexpr void setNaNPreserve(bool nan_preserve) noexcept { isNaNPreserve_ = nan_preserve; }
+
+   constexpr bool isNaNPreserve() const noexcept { return isNaNPreserve_; }
+
+   constexpr void setSZPreserve(bool sz_preserve) noexcept { isSZPreserve_ = sz_preserve; }
+
+   constexpr bool isSZPreserve() const noexcept { return isSZPreserve_; }
+
    /* No Unsigned Wrap */
    constexpr void setNUW(bool nuw) noexcept { isNUW_ = nuw; }
 
@@ -972,6 +979,9 @@ private:
          uint8_t isFixed_ : 1;
          uint8_t isKill_ : 1;
          uint8_t isPrecise_ : 1;
+         uint8_t isInfPreserve_ : 1;
+         uint8_t isNaNPreserve_ : 1;
+         uint8_t isSZPreserve_ : 1;
          uint8_t isNUW_ : 1;
          uint8_t isNoCSE_ : 1;
       };

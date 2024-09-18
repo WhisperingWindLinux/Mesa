@@ -527,6 +527,13 @@ option(
 )
 
 option(
+  'tools-for-development',
+  type : 'boolean',
+  value : false,
+  description : 'Support running tools from the build tree (for developers)',
+)
+
+option(
   'power8',
   type : 'feature',
   deprecated: {'true': 'enabled', 'false': 'disabled'},

@@ -82,6 +82,7 @@ if with_tools.contains('all')
     'imagination',
   ]
 endif
+with_tools_for_development = get_option('tools-for-development')
 
 with_any_vulkan_layers = get_option('vulkan-layers').length() != 0
 with_intel_tools = with_tools.contains('intel') or with_tools.contains('intel-ui')

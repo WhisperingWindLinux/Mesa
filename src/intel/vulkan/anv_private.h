@@ -954,6 +954,7 @@ struct anv_queue_family {
    uint32_t       queueCount;
 
    enum intel_engine_class engine_class;
+   bool supports_perf;
 };
 
 #define ANV_MAX_QUEUE_FAMILIES 5
@@ -1952,6 +1953,7 @@ struct anv_device {
     struct anv_cmd_buffer                      *cmd_buffer_being_decoded;
 
     int                                         perf_fd; /* -1 if no opened */
+    struct anv_queue                            *perf_queue;
 
     struct intel_aux_map_context                *aux_map_ctx;
 

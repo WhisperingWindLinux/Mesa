@@ -1287,6 +1287,16 @@ void st_init_extensions(struct pipe_screen *screen,
       extensions->ARB_arrays_of_arrays = GL_TRUE;
       extensions->MESA_shader_integer_functions = GL_TRUE;
 
+      switch (screen->get_param(screen, PIPE_CAP_MULTIVIEW)) {
+      case 1:
+         extensions->OVR_multiview = GL_TRUE;
+         break;
+      case 2:
+         extensions->OVR_multiview = GL_TRUE;
+         extensions->OVR_multiview2 = GL_TRUE;
+         break;
+      }
+
       if (screen->get_param(screen, PIPE_CAP_OPENCL_INTEGER_FUNCTIONS) &&
           screen->get_param(screen, PIPE_CAP_INTEGER_MULTIPLY_32X16)) {
          extensions->INTEL_shader_integer_functions2 = GL_TRUE;

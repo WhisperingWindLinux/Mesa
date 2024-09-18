@@ -186,7 +186,7 @@ debian-build-testing:
     - !reference [.meson-build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     UNWIND: "enabled"
     DRI_LOADERS: >
       -D glx=dri
@@ -367,7 +367,7 @@ debian-android:
     - !reference [.use-debian/android_build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     UNWIND: "disabled"
     C_ARGS: >
       -Wno-error=asm-operand-widths
@@ -571,7 +571,7 @@ debian-clang:
     - !reference [.meson-build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     LLVM_VERSION: 15
     UNWIND: "enabled"
     C_ARGS: >
@@ -661,7 +661,7 @@ debian-vulkan:
     - !reference [.meson-build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     LLVM_VERSION: 15
     UNWIND: "disabled"
     DRI_LOADERS: >
@@ -699,7 +699,7 @@ debian-x86_32:
     - !reference [.use-debian/x86_32_build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     CROSS: i386
     VULKAN_DRIVERS: intel,amd,swrast,virtio
     GALLIUM_DRIVERS: "iris,nouveau,r300,r600,radeonsi,llvmpipe,softpipe,virgl,zink,crocus,d3d12"
@@ -750,7 +750,7 @@ debian-ppc64el:
     - !reference [.use-debian/ppc64el_build, needs]
     - !reference [.build-for-tests-jobs]
   variables:
-    BUILDTYPE: debug
+    BUILDTYPE: "debugoptimized"
     CROSS: ppc64el
     GALLIUM_DRIVERS: "nouveau,radeonsi,llvmpipe,softpipe,virgl,zink"
     VULKAN_DRIVERS: "amd,swrast"

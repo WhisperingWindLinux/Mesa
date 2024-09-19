@@ -1003,6 +1003,8 @@ enum isl_aux_state {
     */
    ISL_AUX_STATE_PARTIAL_CLEAR,
 
+   ISL_AUX_STATE_COMPRESSED_HIZ,
+
    /** Compressed with clear color
     *
     * In this state, neither the auxiliary surface nor the primary surface has

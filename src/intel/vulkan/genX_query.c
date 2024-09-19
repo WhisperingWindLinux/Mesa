@@ -264,7 +264,7 @@ VkResult genX(CreateQueryPool)(
          struct mi_builder b;
          struct anv_batch batch = {
             .start = pool->bo->map + khr_perf_query_preamble_offset(pool, p),
-            .end = pool->bo->map + khr_perf_query_preamble_offset(pool, p) + pool->data_offset,
+            .end = pool->bo->map + khr_perf_query_preamble_offset(pool, p) + pool->khr_perf_preamble_stride,
          };
          batch.next = batch.start;
 
@@ -339,14 +339,14 @@ void genX(DestroyQueryPool)(
 static uint64_t
 khr_perf_query_availability_offset(struct anv_query_pool *pool, uint32_t query, uint32_t pass)
 {
-   return query * (uint64_t)pool->stride + pass * (uint64_t)pool->pass_size;
+   return (query * (uint64_t)pool->stride) + (pass * (uint64_t)pool->pass_size);
 }
 
 static uint64_t
 khr_perf_query_data_offset(struct anv_query_pool *pool, uint32_t query, uint32_t pass, bool end)
 {
-   return query * (uint64_t)pool->stride + pass * (uint64_t)pool->pass_size +
-      pool->data_offset + (end ? pool->snapshot_size : 0);
+   return khr_perf_query_availability_offset(pool, query, pass) +
+          pool->data_offset + (end ? pool->snapshot_size : 0);
 }
 
 static struct anv_address
@@ -834,7 +834,7 @@ void genX(CmdResetQueryPool)(
     * mode.
     */
    if (anv_cmd_buffer_is_render_or_compute_queue(cmd_buffer) &&
-       (cmd_buffer->vk.pool->flags & VK_COMMAND_POOL_CREATE_PROTECTED_BIT) != 0 &&
+       (cmd_buffer->vk.pool->flags & VK_COMMAND_POOL_CREATE_PROTECTED_BIT) == 0 &&
        queryCount >= pdevice->instance->query_clear_with_blorp_threshold) {
       trace_intel_begin_query_clear_blorp(&cmd_buffer->trace);
 

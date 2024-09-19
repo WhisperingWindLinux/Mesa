@@ -91,10 +91,6 @@ dri_drivers_path = get_option('dri-drivers-path')
 if dri_drivers_path == ''
   dri_drivers_path = join_paths(get_option('prefix'), get_option('libdir'), 'dri')
 endif
-dri_search_path = get_option('dri-search-path')
-if dri_search_path == ''
-  dri_search_path = dri_drivers_path
-endif
 
 gbm_backends_path = get_option('gbm-backends-path')
 if gbm_backends_path == ''
@@ -1667,7 +1663,7 @@ with_gallium_drisw_kms = false
 if system_has_kms_drm
   dep_libdrm = dependency(
     'libdrm', version : '>=' + _drm_ver,
-    required : with_dri2 or with_dri
+    required : with_dri2 or with_dri or with_gbm
   )
 else
   # We should prevent libdrm from being available when the target doesn't have it to avoid transitive

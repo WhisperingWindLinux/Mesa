@@ -27,6 +27,9 @@
 #include "common/intel_gem.h"
 #include "common/xe/intel_engine.h"
 
+#include "util/os_time.h"
+#include "util/timespec.h"
+
 bool
 xe_gem_read_render_timestamp(int fd, uint64_t *value)
 {
@@ -93,4 +96,30 @@ xe_gem_read_correlate_cpu_gpu_timestamp(int fd,
       *cpu_delta = engine_cycles.cpu_delta;
 
    return true;
+}
+
+bool
+xe_gem_supports_protected_exec_queue(int fd)
+{
+   struct drm_xe_query_pxp_status pxp_status;
+   struct drm_xe_device_query query = {
+      .query = DRM_XE_DEVICE_QUERY_PXP_STATUS,
+      .size = sizeof(pxp_status),
+      .data = (uintptr_t)&pxp_status,
+   };
+   int64_t now = os_time_get_nano();
+   int64_t timeout = now + (10LL * NSEC_PER_SEC);
+
+   while (now < timeout) {
+      memset(&pxp_status, 0, sizeof(pxp_status));
+      if (intel_ioctl(fd, DRM_IOCTL_XE_DEVICE_QUERY, &query))
+         return false;
+
+      if (pxp_status.status == 1)
+         return true;
+
+      now = os_time_get_nano();
+   }
+
+   return false;
 }

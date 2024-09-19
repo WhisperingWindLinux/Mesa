@@ -30,6 +30,7 @@
 #include "common/intel_engine.h"
 #include "common/xe/intel_device_query.h"
 #include "common/xe/intel_engine.h"
+#include "common/xe/intel_gem.h"
 
 #include "drm-uapi/xe_drm.h"
 #include "drm-uapi/gpu_scheduler.h"
@@ -53,7 +54,8 @@ static bool
 iris_xe_init_batch(struct iris_bufmgr *bufmgr,
                    struct intel_query_engine_info *engines_info,
                    enum intel_engine_class engine_class,
-                   enum iris_context_priority priority, uint32_t *exec_queue_id)
+                   enum iris_context_priority priority, uint32_t *exec_queue_id,
+                   bool protected)
 
 {
    struct drm_xe_engine_class_instance *instances;
@@ -87,18 +89,27 @@ iris_xe_init_batch(struct iris_bufmgr *bufmgr,
       instances[count].engine_instance = engine.engine_instance;
       instances[count++].gt_id = engine.gt_id;
    }
-   struct drm_xe_ext_set_property ext = {
-      .base.name = DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+   struct drm_xe_ext_set_property priority_ext = {
       .property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_PRIORITY,
       .value = allowed_priority,
+   };
+   struct drm_xe_ext_set_property pxp_ext = {
+      .property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_PXP_TYPE,
+      .value = DRM_XE_PXP_TYPE_HWDRM,
    };
    struct drm_xe_exec_queue_create create = {
          .instances = (uintptr_t)instances,
          .vm_id = iris_bufmgr_get_global_vm_id(bufmgr),
          .width = 1,
          .num_placements = count,
-         .extensions = (uintptr_t)&ext,
    };
+   intel_xe_gem_add_ext(&create.extensions,
+                        DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+                        &priority_ext.base);
+   if (protected)
+      intel_xe_gem_add_ext(&create.extensions,
+                           DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+                           &pxp_ext.base);
    int ret = intel_ioctl(iris_bufmgr_get_fd(bufmgr),
                          DRM_IOCTL_XE_EXEC_QUEUE_CREATE, &create);
    free(instances);
@@ -144,7 +155,8 @@ void iris_xe_init_batches(struct iris_context *ice)
       ASSERTED bool ret;
 
       ret = iris_xe_init_batch(bufmgr, engines_info, engine_classes[name],
-                               ice->priority, &batch->xe.exec_queue_id);
+                               ice->priority, &batch->xe.exec_queue_id,
+                               ice->protected);
       assert(ret);
    }
 
@@ -231,7 +243,7 @@ bool iris_xe_replace_batch(struct iris_batch *batch)
    iris_xe_map_intel_engine_class(bufmgr, engines_info, engine_classes);
 
    ret = iris_xe_init_batch(bufmgr, engines_info, engine_classes[batch->name],
-                            ice->priority, &new_exec_queue_id);
+                            ice->priority, &new_exec_queue_id, ice->protected);
    if (ret) {
       iris_xe_destroy_exec_queue(batch);
       batch->xe.exec_queue_id = new_exec_queue_id;

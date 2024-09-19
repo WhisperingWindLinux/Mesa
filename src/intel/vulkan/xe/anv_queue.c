@@ -25,6 +25,7 @@
 #include "anv_private.h"
 
 #include "common/xe/intel_engine.h"
+#include "common/xe/intel_gem.h"
 #include "common/intel_gem.h"
 
 #include "xe/anv_device.h"
@@ -99,10 +100,14 @@ create_engine(struct anv_device *device,
    }
 
    assert(device->vm_id != 0);
-   struct drm_xe_ext_set_property ext = {
-      .base.name = DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+   const bool pxp_needed = pCreateInfo->flags & VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT;
+   struct drm_xe_ext_set_property priority_ext = {
       .property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_PRIORITY,
       .value = anv_vk_priority_to_drm_sched_priority(priority),
+   };
+   struct drm_xe_ext_set_property pxp_ext = {
+      .property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_PXP_TYPE,
+      .value = DRM_XE_PXP_TYPE_HWDRM,
    };
    struct drm_xe_exec_queue_create create = {
          /* Allows KMD to pick one of those engines for the submission queue */
@@ -110,8 +115,14 @@ create_engine(struct anv_device *device,
          .vm_id = device->vm_id,
          .width = 1,
          .num_placements = count,
-         .extensions = (uintptr_t)&ext,
    };
+   intel_xe_gem_add_ext(&create.extensions,
+                        DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+                        &priority_ext.base);
+   if (pxp_needed)
+      intel_xe_gem_add_ext(&create.extensions,
+                           DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+                           &pxp_ext.base);
    int ret = intel_ioctl(device->fd, DRM_IOCTL_XE_EXEC_QUEUE_CREATE, &create);
    vk_free(&device->vk.alloc, instances);
    if (ret)

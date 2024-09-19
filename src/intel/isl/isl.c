@@ -1143,6 +1143,11 @@ isl_surf_choose_tiling(const struct isl_device *dev,
       CHOOSE(ISL_TILING_SKL_Ys);
    }
 
+   if (info->usage & ISL_SURF_USAGE_PREFER_TILE64) {
+      CHOOSE(ISL_TILING_64);
+      CHOOSE(ISL_TILING_64_XE2);
+   }
+
    /* Choose suggested 4K tilings first, then 64K tilings:
     *
     * Then following quotes can be found in the SKL PRMs,
@@ -3975,6 +3980,17 @@ isl_surf_get_uncompressed_surf(const struct isl_device *dev,
          .d = view_depth_el  > 1 ? view_depth_el  << ucompr_level : 1,
       };
 
+      isl_surf_usage_flags_t usage = surf->usage;
+      /* CCS-enabled surfaces can have different layout requirements than
+       * surfaces without CCS support. So, for accuracy, disable CCS
+       * support if the original surface lacked it.
+       */
+      if (_isl_surf_info_supports_ccs(dev, surf->format, surf->usage) !=
+            _isl_surf_info_supports_ccs(dev, view_format, usage)) {
+         assert(_isl_surf_info_supports_ccs(dev, view_format, usage));
+         usage |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
+      }
+
       bool ok UNUSED;
       ok = isl_surf_init(dev, ucompr_surf,
                          .dim = surf->dim,
@@ -3988,7 +4004,7 @@ isl_surf_get_uncompressed_surf(const struct isl_device *dev,
                          .min_miptail_start_level =
                             (int) (view->base_level < surf->miptail_start_level),
                          .row_pitch_B = surf->row_pitch_B,
-                         .usage = surf->usage,
+                         .usage = usage,
                          .tiling_flags = (1u << surf->tiling));
       assert(ok);
 

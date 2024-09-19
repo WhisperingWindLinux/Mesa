@@ -298,9 +298,9 @@ anv_image_choose_isl_surf_usage(struct anv_physical_device *device,
 
 static isl_tiling_flags_t
 choose_isl_tiling_flags(const struct intel_device_info *devinfo,
+                        const struct anv_image *image,
                         const struct anv_image_create_info *anv_info,
-                        const struct isl_drm_modifier_info *isl_mod_info,
-                        bool legacy_scanout)
+                        const struct isl_drm_modifier_info *isl_mod_info)
 {
    const VkImageCreateInfo *base_info = anv_info->vk_info;
    isl_tiling_flags_t flags = 0;
@@ -326,7 +326,7 @@ choose_isl_tiling_flags(const struct intel_device_info *devinfo,
       flags &= anv_info->isl_tiling_flags;
    }
 
-   if (legacy_scanout) {
+   if (image->vk.wsi_legacy_scanout) {
       isl_tiling_flags_t legacy_mask = ISL_TILING_LINEAR_BIT;
       if (devinfo->has_tiling_uapi)
          legacy_mask |= ISL_TILING_X_BIT;
@@ -1704,8 +1704,7 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
       isl_extra_usage_flags |= ISL_SURF_USAGE_DISPLAY_BIT;
 
    const isl_tiling_flags_t isl_tiling_flags =
-      choose_isl_tiling_flags(device->info, create_info, isl_mod_info,
-                              image->vk.wsi_legacy_scanout);
+      choose_isl_tiling_flags(device->info, image, create_info, isl_mod_info);
 
    const VkImageFormatListCreateInfo *fmt_list =
       vk_find_struct_const(pCreateInfo->pNext,
@@ -1745,6 +1744,12 @@ anv_image_init(struct anv_device *device, struct anv_image *image,
          isl_extra_usage_flags |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
       }
    }
+
+   const bool aux_disabled = INTEL_DEBUG(DEBUG_NO_CCS) ||
+      (isl_extra_usage_flags & ISL_SURF_USAGE_DISABLE_AUX_BIT);
+
+   if (!aux_disabled)
+      isl_extra_usage_flags |= ISL_SURF_USAGE_PREFER_TILE64;
 
    if (mod_explicit_info) {
       r = add_all_surfaces_explicit_layout(device, image, fmt_list,

@@ -545,7 +545,7 @@ static struct iris_resource *
 iris_alloc_resource(struct pipe_screen *pscreen,
                     const struct pipe_resource *templ)
 {
-   struct iris_resource *res = calloc(1, sizeof(struct iris_resource));
+   struct iris_resource *res = CALLOC_STRUCT(iris_resource);
    if (!res)
       return NULL;
 
@@ -782,6 +782,12 @@ iris_resource_configure_main(const struct iris_screen *screen,
 
    else if (isl_drm_modifier_needs_display_layout(modifier))
       usage |= ISL_SURF_USAGE_DISPLAY_BIT;
+
+   if (templ->bind & PIPE_BIND_SHARED)
+      usage &= ~ISL_SURF_USAGE_PREFER_TILE64;
+
+   if (templ->usage & ISL_SURF_USAGE_DISABLE_AUX_BIT)
+      usage &= ~ISL_SURF_USAGE_PREFER_TILE64;
 
    if (templ->target == PIPE_TEXTURE_CUBE ||
        templ->target == PIPE_TEXTURE_CUBE_ARRAY) {
@@ -1877,6 +1883,9 @@ iris_resource_get_handle(struct pipe_screen *pscreen,
              aux_state == ISL_AUX_STATE_PASS_THROUGH);
    }
 #endif
+
+   /* TODO: TILE64 modifier support in the KMD */
+   assert(res->surf.tiling != ISL_TILING_64);
 
    switch (whandle->type) {
    case WINSYS_HANDLE_TYPE_SHARED:

@@ -510,6 +510,242 @@ FreedrenoDriver::setup_a7xx_counters()
    auto PERF_CMPDECMP_VBIF_READ_DATA = countable("CMP", "PERF_CMPDECMP_VBIF_READ_DATA");
 
    /**
+    * GPU Compute
+    */
+   counter("Avg Load-Store Instructions Per Cycle", Counter::Units::None, [=]() {
+         /* Number of average Load-Store instructions per cycle. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_27 = PERF_SP_LM_LOAD_INSTRUCTIONS
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_28 = PERF_SP_LM_STORE_INSTRUCTIONS
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_30 = PERF_SP_GM_LOAD_INSTRUCTIONS
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_31 = PERF_SP_GM_STORE_INSTRUCTIONS
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_0 = PERF_SP_BUSY_CYCLES
+          * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
+          *   - Equation: 4*sum(PERF_SP_{LM,GM}_{LOAD,STORE}_INSTRUCTIONS) / PERF_SP_BUSY_CYCLES
+          */
+         return 42;
+      }
+   );
+   counter("Bytes Data Actually Written", Counter::Units::None, [=]() {
+         /* Number of bytes requested to be written by the GPU. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_18 = PERF_UCHE_EVICTS
+          * Notes:
+          *   - Equation: PERF_UCHE_EVICTS * 64
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Bytes Data Write Requested", Counter::Units::None, [=]() {
+         /* Number of bytes requested to be written by the GPU. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_15 = PERF_UCHE_WRITE_REQUESTS_SP
+          * Notes:
+          *   - Equation: PERF_UCHE_WRITE_REQUESTS_SP * 16
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Buffer Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+         /* Number of bytes of global buffer data read in by the GPU, per second from the system memory (when the data is not found in L2 cache). */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_8 = PERF_UCHE_VBIF_READ_BEATS_SP
+          * Notes:
+          *   - Equation: (PERF_UCHE_VBIF_READ_BEATS_SP * 32) / time
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Buffer Data Read Request BW (Bytes/sec)", Counter::Units::None, [=]() {
+         /* Number of bytes of global buffer read requests, made by a compute kernel to the L2 cache, per second. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_13 = PERF_UCHE_READ_REQUESTS_SP
+          * Notes:
+          *   - Equation: (PERF_UCHE_READ_REQUESTS_SP * 16) / time
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("% Global Buffer Read L2 Hit", Counter::Units::None, [=]() {
+         /* Percentage of total global buffer read requests that were fulfilled by L2 cache hit which is populated by looking at the number of read requests that were forwarded to VBIF to read from the system memory. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_8 = PERF_UCHE_VBIF_READ_BEATS_SP
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_13 = PERF_UCHE_READ_REQUESTS_SP
+          * Notes:
+          *   - Equation: (PERF_UCHE_READ_REQUESTS_SP - (PERF_UCHE_VBIF_READ_BEATS_SP / 2)) / PERF_UCHE_READ_REQUESTS_SP
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("% Global Buffer Write L2 Hit", Counter::Units::None, [=]() {
+         /* Percentage of global write L2 Hit. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_18 = PERF_UCHE_EVICTS
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_15 = PERF_UCHE_WRITE_REQUESTS_SP
+          * Notes:
+          *   - Equation: (PERF_UCHE_WRITE_REQUESTS_SP - PERF_UCHE_EVICTS) / PERF_UCHE_WRITE_REQUESTS_SP
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Image Compressed Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+         /* Number of bytes of global Image data (compressed) read in by the GPU per second from the system memory (when the data is not found in L2 cache). */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_CMP::COUNTABLE_7 = PERF_CMPDECMP_VBIF_READ_DATA
+          * Notes:
+          *   - Equation: (PERF_CMPDECMP_VBIF_READ_DATA * 32) / time
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Image Data Read Request BW (Bytes/sec)", Counter::Units::None, [=]() {
+         /* Number of bytes of image buffer read requests, made by a compute kernel to the L2 cache, per second. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_9 = PERF_UCHE_READ_REQUESTS_TP
+          * Notes:
+          *   - Equation: (PERF_UCHE_READ_REQUESTS_TP * 16) / time
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Image Uncompressed Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+         /* Number of bytes of global Image data (uncompressed) read in by the GPU per second from the system memory (when the data is not found in L2 cache). */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_4 = PERF_UCHE_VBIF_READ_BEATS_TP
+          * Notes:
+          *   - Equation: (PERF_UCHE_VBIF_READ_BEATS_TP * 32) / time
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Memory Atomic Instructions", Counter::Units::None, [=]() {
+         /* Number of Global Memory Atomic Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_32 = PERF_SP_GM_ATOMICS
+          * Notes:
+          *   - Equation: PERF_SP_GM_ATOMICS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Memory Load Instructions", Counter::Units::None, [=]() {
+         /* Number of Global Memory Load Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_30 = PERF_SP_GM_LOAD_INSTRUCTIONS
+          * Notes:
+          *   - Equation: PERF_SP_GM_LOAD_INSTRUCTIONS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Global Memory Store Instructions", Counter::Units::None, [=]() {
+         /* Number of Global Memory Store Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_31 = PERF_SP_GM_STORE_INSTRUCTIONS
+          * Notes:
+          *   - Equation: PERF_SP_GM_STORE_INSTRUCTIONS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("% Image Read L2 Hit", Counter::Units::None, [=]() {
+         /* Percentage of total image read requests that were fulfilled by L2 cache hit which is populated by looking at the number of read requests that were forwarded to VBIF to read from the system memory. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_4 = PERF_UCHE_VBIF_READ_BEATS_TP
+          * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_9 = PERF_UCHE_READ_REQUESTS_TP
+          * Notes:
+          *   - Equation: (PERF_UCHE_READ_REQUESTS_TP - (PERF_UCHE_VBIF_READ_BEATS_TP / 2)) / PERF_UCHE_READ_REQUESTS_TP
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("% Kernel Load Cycles", Counter::Units::None, [=]() {
+         /* Percentage of cycles used for a compute kernel loading; excludes execution cycles. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_CP::COUNTABLE_0 = PERF_CP_ALWAYS_COUNT
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_0 = PERF_SP_BUSY_CYCLES
+          * KGSL_PERFCOUNTER_GROUP_RBBM::COUNTABLE_6 = PERF_RBBM_STATUS_MASKED
+          * Notes:
+          *   - Equation: (PERF_RBBM_STATUS_MASKED - (PERF_SP_BUSY_CYCLES * #uSPTP)) / PERF_CP_ALWAYS_COUNT
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("% L1 Hit", Counter::Units::None, [=]() {
+         /* Percentage of L1 texture cache requests that were hits. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_TP::COUNTABLE_6 = PERF_TP_L1_CACHELINE_REQUESTS
+          * KGSL_PERFCOUNTER_GROUP_TP::COUNTABLE_7 = PERF_TP_L1_CACHELINE_MISSES
+          * Notes:
+          *   - Equation: (PERF_TP_L1_CACHELINE_REQUESTS - PERF_TP_L1_CACHELINE_MISSES) / PERF_TP_L1_CACHELINE_REQUESTS
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+
+   counter("Load-Store Utilization", Counter::Units::None, [=]() {
+         /* Percentage of the Load-Store unit is utilized compared to theoretical Load/Store throughput. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_63 = PERF_SP_LOAD_CONTROL_WORKING_CYCLES
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_0 = PERF_SP_BUSY_CYCLES
+          * Notes:
+          *   - Equation: PERF_SP_LOAD_CONTROL_WORKING_CYCLES / PERF_SP_BUSY_CYCLES
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Local Memory Atomic Instructions", Counter::Units::None, [=]() {
+         /* Number of Local Memory Atomic Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_29 = PERF_SP_LM_ATOMICS
+          * Notes:
+          *   - Equation: PERF_SP_LM_ATOMICS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Local Memory Load Instructions", Counter::Units::None, [=]() {
+         /* Number of Local Memory Load Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_27 = PERF_SP_LM_LOAD_INSTRUCTIONS
+          * Notes:
+          *   - Equation: PERF_SP_LM_LOAD_INSTRUCTIONS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+   counter("Local Memory Store Instructions", Counter::Units::None, [=]() {
+         /* Number of Local Memory Store Instructions executed by SP during a given sample period. */
+         /* Countables:
+          * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_28 = PERF_SP_LM_STORE_INSTRUCTIONS
+          * Notes:
+          *   - Equation: PERF_SP_LM_STORE_INSTRUCTIONS * 4
+          */
+         /* TODO: enable */
+         return 42;
+      }
+   );
+
+   /**
     * GPU General
     */
    counter("Clocks / Second", Counter::Units::None, [=]() {

@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <time.h>
 #include <sys/sysinfo.h>
 
 #include "util/disk_cache.h"
@@ -63,6 +64,7 @@ get_device_extensions(const struct panvk_physical_device *device,
 {
    *ext = (struct vk_device_extension_table){
       .KHR_buffer_device_address = true,
+      .KHR_calibrated_timestamps = true,
       .KHR_copy_commands2 = true,
       .KHR_device_group = true,
       .KHR_descriptor_update_template = true,
@@ -80,8 +82,10 @@ get_device_extensions(const struct panvk_physical_device *device,
       .KHR_synchronization2 = true,
       .KHR_variable_pointers = true,
       .EXT_buffer_device_address = true,
+      .EXT_calibrated_timestamps = true,
       .EXT_custom_border_color = true,
       .EXT_graphics_pipeline_library = true,
+      .EXT_host_query_reset = true,
       .EXT_index_type_uint8 = true,
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
@@ -108,6 +112,7 @@ get_features(const struct panvk_physical_device *device,
       .logicOp = true,
       .wideLines = true,
       .largePoints = true,
+      .occlusionQueryPrecise = true,
       .textureCompressionETC2 = true,
       .textureCompressionASTC_LDR = true,
       .samplerAnisotropy = true,
@@ -169,7 +174,7 @@ get_features(const struct panvk_physical_device *device,
       .uniformBufferStandardLayout = false,
       .shaderSubgroupExtendedTypes = false,
       .separateDepthStencilLayouts = false,
-      .hostQueryReset = false,
+      .hostQueryReset = true,
       .timelineSemaphore = false,
       .bufferDeviceAddress = true,
       .bufferDeviceAddressCaptureReplay = false,
@@ -234,6 +239,16 @@ get_features(const struct panvk_physical_device *device,
       /* VK_EXT_shader_module_identifier */
       .shaderModuleIdentifier = true,
    };
+}
+
+float
+panvk_get_gpu_system_timestamp_period(const struct panvk_physical_device *device)
+{
+   if (!device->kmod.props.gpu_can_query_timestamp ||
+       !device->kmod.props.timestamp_frequency)
+      return 0;
+
+   return 1000000000.0 / (float)device->kmod.props.timestamp_frequency;
 }
 
 static void
@@ -451,8 +466,8 @@ get_device_properties(const struct panvk_instance *instance,
       .sampledImageStencilSampleCounts = sample_counts,
       .storageImageSampleCounts = VK_SAMPLE_COUNT_1_BIT,
       .maxSampleMaskWords = 1,
-      .timestampComputeAndGraphics = false,
-      .timestampPeriod = 0,
+      .timestampComputeAndGraphics = device->kmod.props.gpu_can_query_timestamp,
+      .timestampPeriod = panvk_get_gpu_system_timestamp_period(device),
       .maxClipDistances = 0,
       .maxCullDistances = 0,
       .maxCombinedClipAndCullDistances = 0,
@@ -797,25 +812,25 @@ fail:
    return result;
 }
 
-static const VkQueueFamilyProperties panvk_queue_family_properties = {
-   .queueFlags =
-      VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT,
-   .queueCount = 1,
-   .timestampValidBits = 0,
-   .minImageTransferGranularity = {1, 1, 1},
-};
-
 VKAPI_ATTR void VKAPI_CALL
 panvk_GetPhysicalDeviceQueueFamilyProperties2(
    VkPhysicalDevice physicalDevice, uint32_t *pQueueFamilyPropertyCount,
    VkQueueFamilyProperties2 *pQueueFamilyProperties)
 {
+   VK_FROM_HANDLE(panvk_physical_device, pdev, physicalDevice);
    VK_OUTARRAY_MAKE_TYPED(VkQueueFamilyProperties2, out, pQueueFamilyProperties,
                           pQueueFamilyPropertyCount);
 
    vk_outarray_append_typed(VkQueueFamilyProperties2, &out, p)
    {
-      p->queueFamilyProperties = panvk_queue_family_properties;
+      p->queueFamilyProperties = (VkQueueFamilyProperties){
+         .queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT |
+                       VK_QUEUE_TRANSFER_BIT,
+         .queueCount = 1,
+         .timestampValidBits =
+            pdev->kmod.props.gpu_can_query_timestamp ? 64 : 0,
+         .minImageTransferGranularity = {1, 1, 1},
+      };
    }
 }
 
@@ -1428,4 +1443,36 @@ panvk_GetPhysicalDeviceExternalBufferProperties(
    VkExternalBufferProperties *pExternalBufferProperties)
 {
    panvk_stub();
+}
+
+static const VkTimeDomainKHR panvk_time_domains[] = {
+   VK_TIME_DOMAIN_DEVICE_KHR,
+   VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR,
+#ifdef CLOCK_MONOTONIC_RAW
+   VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR,
+#endif
+};
+
+VKAPI_ATTR VkResult VKAPI_CALL
+panvk_GetPhysicalDeviceCalibrateableTimeDomainsKHR(
+   VkPhysicalDevice physicalDevice, uint32_t *pTimeDomainCount,
+   VkTimeDomainKHR *pTimeDomains)
+{
+   VK_FROM_HANDLE(panvk_physical_device, pdev, physicalDevice);
+   VK_OUTARRAY_MAKE_TYPED(VkTimeDomainKHR, out, pTimeDomains, pTimeDomainCount);
+
+   int d = 0;
+
+   /* If GPU query timestamp isn't supported, skip device domain */
+   if (!pdev->kmod.props.gpu_can_query_timestamp)
+      d++;
+
+   for (; d < ARRAY_SIZE(panvk_time_domains); d++) {
+      vk_outarray_append_typed(VkTimeDomainKHR, &out, i)
+      {
+         *i = panvk_time_domains[d];
+      }
+   }
+
+   return vk_outarray_status(&out);
 }

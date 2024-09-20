@@ -32,6 +32,7 @@ renaming_overrides_prefixing = true
 "Tiling" = "nil_tiling"
 "View" = "nil_view"
 "ViewType" = "nil_view_type"
+"CopySwizzle" = "nil_copy_swizzle"
 
 # There's just no good solution for this one
 "ImageUsageFlags" = "nil_image_usage_flags"

@@ -105,7 +105,7 @@ lower_fragcoord_instr(nir_builder *b, nir_instr *instr, UNUSED void *_data)
 void
 nvk_cg_preprocess_nir(nir_shader *nir)
 {
-   NIR_PASS(_, nir, nir_split_struct_vars, nir_var_function_temp);
+   NIR_PASS(_, nir, nir_split_struct_vars, nir_var_function_temp, false);
    NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
    NIR_PASS(_, nir, nir_split_var_copies);
@@ -134,7 +134,7 @@ nvk_cg_optimize_nir(nir_shader *nir)
    do {
       progress = false;
 
-      NIR_PASS(progress, nir, nir_split_array_vars, nir_var_function_temp);
+      NIR_PASS(progress, nir, nir_split_array_vars, nir_var_function_temp, false);
       NIR_PASS(progress, nir, nir_shrink_vec_array_vars, nir_var_function_temp);
 
       if (!nir->info.var_copies_lowered) {

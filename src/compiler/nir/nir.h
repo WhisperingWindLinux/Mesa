@@ -5444,10 +5444,10 @@ void nir_group_loads(nir_shader *shader, nir_load_grouping grouping,
                      unsigned max_distance);
 
 bool nir_shrink_vec_array_vars(nir_shader *shader, nir_variable_mode modes);
-bool nir_split_array_vars(nir_shader *shader, nir_variable_mode modes);
+bool nir_split_array_vars(nir_shader *shader, nir_variable_mode modes, bool preserve_driver_locations);
 bool nir_split_var_copies(nir_shader *shader);
 bool nir_split_per_member_structs(nir_shader *shader);
-bool nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes);
+bool nir_split_struct_vars(nir_shader *shader, nir_variable_mode modes, bool preserve_driver_locations);
 
 bool nir_lower_returns_impl(nir_function_impl *impl);
 bool nir_lower_returns(nir_shader *shader);

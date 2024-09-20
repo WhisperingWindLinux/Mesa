@@ -650,6 +650,8 @@ setup_isel_context(Program* program, unsigned shader_count, struct nir_shader* c
    init_program(program, Stage{info->hw_stage, sw_stage}, info, options->gfx_level, options->family,
                 options->wgp_mode, config);
 
+   program->is_opengl = options->is_opengl;
+
    isel_context ctx = {};
    ctx.program = program;
    ctx.args = args;

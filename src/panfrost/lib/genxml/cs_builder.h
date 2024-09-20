@@ -30,7 +30,6 @@
 #include "gen_macros.h"
 
 #include "util/bitset.h"
-#include "util/list.h"
 #include "util/u_dynarray.h"
 
 /*
@@ -122,7 +121,7 @@ struct cs_chunk {
  */
 struct cs_block {
    /* Used to insert the block in the block stack. */
-   struct list_head node;
+   struct cs_block *next;
 };
 
 #define CS_LABEL_INVALID_POS ~0u
@@ -143,6 +142,12 @@ struct cs_label {
    uint32_t target;
 };
 
+/* CS if/else block. */
+struct cs_if_else {
+   struct cs_block block;
+   struct cs_label end_label;
+};
+
 struct cs_builder {
    /* CS builder configuration */
    struct cs_builder_conf conf;
@@ -161,9 +166,9 @@ struct cs_builder {
     * jump in the middle.
     */
    struct {
-      struct list_head stack;
-      struct cs_block *cur;
+      struct cs_block *stack;
       struct util_dynarray instrs;
+      struct cs_if_else pending_if;
    } blocks;
 
    /* Move immediate instruction at the end of the last CS chunk that needs to
@@ -193,7 +198,6 @@ cs_builder_init(struct cs_builder *b, const struct cs_builder_conf *conf,
     */
    b->conf.nr_kernel_registers = MAX2(b->conf.nr_kernel_registers, 3);
 
-   list_inithead(&b->blocks.stack);
    util_dynarray_init(&b->blocks.instrs, NULL);
 }
 
@@ -249,23 +253,6 @@ cs_wrap_chunk(struct cs_builder *b)
 
    if (b->root_chunk.buffer.gpu == b->cur_chunk.buffer.gpu)
       b->root_chunk.size = b->cur_chunk.size;
-}
-
-/* Call this when you are done building a command stream and want to prepare
- * it for submission.
- */
-static inline void
-cs_finish(struct cs_builder *b)
-{
-   if (!cs_is_valid(b))
-      return;
-
-   cs_wrap_chunk(b);
-
-   /* This prevents adding instructions after that point. */
-   memset(&b->cur_chunk, 0, sizeof(b->cur_chunk));
-
-   util_dynarray_fini(&b->blocks.instrs);
 }
 
 enum cs_index_type {
@@ -428,18 +415,27 @@ cs_extract32(struct cs_builder *b, struct cs_index idx, unsigned word)
    return cs_reg32(b, idx.reg + word);
 }
 
+static inline struct cs_block *
+cs_cur_block(struct cs_builder *b)
+{
+   return b->blocks.stack;
+}
+
 #define JUMP_SEQ_INSTR_COUNT 4
 
 static inline void *
-cs_alloc_ins(struct cs_builder *b, uint32_t num_instrs)
+cs_alloc_ins_block(struct cs_builder *b, uint32_t num_instrs)
 {
+   /* Don't call this function with num_instrs=0. */
+   assert(num_instrs > 0);
+
    /* If an allocation failure happened before, we just discard all following
     * instructions.
     */
    if (unlikely(!cs_is_valid(b)))
       return &b->discard_instr_slot;
 
-   if (b->blocks.cur)
+   if (cs_cur_block(b))
       return util_dynarray_grow(&b->blocks.instrs, uint64_t, num_instrs);
 
    /* Lazy root chunk allocation. */
@@ -451,6 +447,9 @@ cs_alloc_ins(struct cs_builder *b, uint32_t num_instrs)
          return &b->discard_instr_slot;
       }
    }
+
+   /* Make sure the instruction sequence fits in a single chunk. */
+   assert(b->cur_chunk.buffer.capacity >= num_instrs);
 
    /* If the current chunk runs out of space, allocate a new one and jump to it.
     * We actually do this a few instructions before running out, because the
@@ -505,12 +504,116 @@ cs_alloc_ins(struct cs_builder *b, uint32_t num_instrs)
    return b->cur_chunk.buffer.cpu + pos;
 }
 
+static inline void
+cs_flush_block_instrs(struct cs_builder *b)
+{
+   if (cs_cur_block(b) != NULL)
+      return;
+
+   uint32_t num_instrs =
+      util_dynarray_num_elements(&b->blocks.instrs, uint64_t);
+   if (!num_instrs)
+      return;
+
+   void *buffer = cs_alloc_ins_block(b, num_instrs);
+
+   if (likely(cs_is_valid(b)))
+      memcpy(buffer, b->blocks.instrs.data, b->blocks.instrs.size);
+
+   util_dynarray_clear(&b->blocks.instrs);
+}
+
+static inline uint32_t
+cs_block_next_pos(struct cs_builder *b)
+{
+   assert(cs_cur_block(b) != NULL);
+
+   return util_dynarray_num_elements(&b->blocks.instrs, uint64_t);
+}
+
+static inline void
+cs_label_init(struct cs_label *label)
+{
+   label->last_forward_ref = CS_LABEL_INVALID_POS;
+   label->target = CS_LABEL_INVALID_POS;
+}
+
+static inline void
+cs_set_label(struct cs_builder *b, struct cs_label *label)
+{
+   assert(label->target == CS_LABEL_INVALID_POS);
+   label->target = cs_block_next_pos(b);
+
+   for (uint32_t next_forward_ref, forward_ref = label->last_forward_ref;
+        forward_ref != CS_LABEL_INVALID_POS; forward_ref = next_forward_ref) {
+      uint64_t *ins =
+         util_dynarray_element(&b->blocks.instrs, uint64_t, forward_ref);
+
+      assert(forward_ref < label->target);
+      assert(label->target - forward_ref <= INT16_MAX);
+
+      /* Save the next forward reference to this target before overwritting
+       * it with the final offset.
+       */
+      int16_t offset = *ins & BITFIELD64_MASK(16);
+
+      next_forward_ref =
+         offset > 0 ? forward_ref - offset : CS_LABEL_INVALID_POS;
+
+      assert(next_forward_ref == CS_LABEL_INVALID_POS ||
+             next_forward_ref < forward_ref);
+
+      *ins &= ~BITFIELD64_MASK(16);
+      *ins |= label->target - forward_ref - 1;
+   }
+}
+
+static inline void
+cs_flush_pending_if(struct cs_builder *b)
+{
+   if (likely(cs_cur_block(b) != &b->blocks.pending_if.block))
+      return;
+
+   cs_set_label(b, &b->blocks.pending_if.end_label);
+   b->blocks.stack = b->blocks.pending_if.block.next;
+}
+
+static inline void *
+cs_alloc_ins(struct cs_builder *b)
+{
+   /* If an instruction is emitted after an if_end(), it flushes the pending if,
+    * causing further cs_else_start() instructions to be invalid. */
+   cs_flush_pending_if(b);
+   cs_flush_block_instrs(b);
+
+   return cs_alloc_ins_block(b, 1);
+}
+
+/* Call this when you are done building a command stream and want to prepare
+ * it for submission.
+ */
+static inline void
+cs_finish(struct cs_builder *b)
+{
+   if (!cs_is_valid(b))
+      return;
+
+   cs_flush_pending_if(b);
+   cs_flush_block_instrs(b);
+   cs_wrap_chunk(b);
+
+   /* This prevents adding instructions after that point. */
+   memset(&b->cur_chunk, 0, sizeof(b->cur_chunk));
+
+   util_dynarray_fini(&b->blocks.instrs);
+}
+
 /*
  * Helper to emit a new instruction into the command queue. The allocation needs
  * to be separated out being pan_pack can evaluate its argument multiple times,
  * yet cs_alloc has side effects.
  */
-#define cs_emit(b, T, cfg) pan_pack(cs_alloc_ins(b, 1), CS_##T, cfg)
+#define cs_emit(b, T, cfg) pan_pack(cs_alloc_ins(b), CS_##T, cfg)
 
 /* Asynchronous operations take a mask of scoreboard slots to wait on
  * before executing the instruction, and signal a scoreboard slot when
@@ -610,38 +713,21 @@ cs_move48_to(struct cs_builder *b, struct cs_index dest, uint64_t imm)
 static inline void
 cs_block_start(struct cs_builder *b, struct cs_block *block)
 {
-   list_addtail(&block->node, &b->blocks.stack);
-   b->blocks.cur = block;
+   cs_flush_pending_if(b);
+   block->next = b->blocks.stack;
+   b->blocks.stack = block;
 }
 
 static inline void
-cs_block_end(struct cs_builder *b)
+cs_block_end(struct cs_builder *b, struct cs_block *block)
 {
-   assert(b->blocks.cur);
+   cs_flush_pending_if(b);
 
-   list_del(&b->blocks.cur->node);
+   assert(cs_cur_block(b) == block);
 
-   if (!list_is_empty(&b->blocks.stack)) {
-      b->blocks.cur = list_last_entry(&b->blocks.stack, struct cs_block, node);
-      return;
-   }
+   b->blocks.stack = block->next;
 
-   b->blocks.cur = NULL;
-
-   uint32_t num_instrs =
-      util_dynarray_num_elements(&b->blocks.instrs, uint64_t);
-   void *buffer = cs_alloc_ins(b, num_instrs);
-
-   memcpy(buffer, b->blocks.instrs.data, b->blocks.instrs.size);
-   util_dynarray_clear(&b->blocks.instrs);
-}
-
-static inline uint32_t
-cs_block_next_pos(struct cs_builder *b)
-{
-   assert(b->blocks.cur);
-
-   return util_dynarray_num_elements(&b->blocks.instrs, uint64_t);
+   cs_flush_block_instrs(b);
 }
 
 static inline void
@@ -659,7 +745,7 @@ static inline void
 cs_branch_label(struct cs_builder *b, struct cs_label *label,
                 enum mali_cs_condition cond, struct cs_index val)
 {
-   assert(b->blocks.cur);
+   assert(cs_cur_block(b) != NULL);
 
    if (label->target == CS_LABEL_INVALID_POS) {
       uint32_t branch_ins_pos = cs_block_next_pos(b);
@@ -701,52 +787,6 @@ cs_branch_label(struct cs_builder *b, struct cs_label *label,
    }
 }
 
-static inline void
-cs_label_init(struct cs_label *label)
-{
-   label->last_forward_ref = CS_LABEL_INVALID_POS;
-   label->target = CS_LABEL_INVALID_POS;
-}
-
-static inline void
-cs_set_label(struct cs_builder *b, struct cs_label *label)
-{
-   assert(label->target == CS_LABEL_INVALID_POS);
-   label->target = cs_block_next_pos(b);
-
-   for (uint32_t next_forward_ref, forward_ref = label->last_forward_ref;
-        forward_ref != CS_LABEL_INVALID_POS; forward_ref = next_forward_ref) {
-      uint64_t *ins =
-         util_dynarray_element(&b->blocks.instrs, uint64_t, forward_ref);
-
-      assert(forward_ref < label->target);
-      assert(label->target - forward_ref <= INT16_MAX);
-
-      /* Save the next forward reference to this target before overwritting
-       * it with the final offset.
-       */
-      int16_t offset = *ins & BITFIELD64_MASK(16);
-
-      next_forward_ref =
-         offset > 0 ? forward_ref - offset : CS_LABEL_INVALID_POS;
-
-      assert(next_forward_ref == CS_LABEL_INVALID_POS ||
-             next_forward_ref < forward_ref);
-
-      *ins &= ~BITFIELD64_MASK(16);
-      *ins |= label->target - forward_ref - 1;
-   }
-}
-
-struct cs_loop {
-   struct cs_label start, end;
-   struct cs_block block;
-   enum mali_cs_condition cond;
-   struct cs_index val;
-   struct cs_load_store_tracker *orig_ls_state;
-   struct cs_load_store_tracker ls_state;
-};
-
 static inline enum mali_cs_condition
 cs_invert_cond(enum mali_cs_condition cond)
 {
@@ -769,6 +809,68 @@ cs_invert_cond(enum mali_cs_condition cond)
       unreachable("invalid cond");
    }
 }
+
+static inline struct cs_if_else *
+cs_if_start(struct cs_builder *b, struct cs_if_else *if_else,
+            enum mali_cs_condition cond, struct cs_index val)
+{
+   cs_block_start(b, &if_else->block);
+   cs_label_init(&if_else->end_label);
+   cs_branch_label(b, &if_else->end_label, cs_invert_cond(cond), val);
+   return if_else;
+}
+
+static inline void
+cs_if_end(struct cs_builder *b, struct cs_if_else *if_else)
+{
+   assert(cs_cur_block(b) == &if_else->block);
+
+   b->blocks.pending_if.block.next = if_else->block.next;
+   b->blocks.stack = &b->blocks.pending_if.block;
+   b->blocks.pending_if.end_label = if_else->end_label;
+}
+
+static inline struct cs_if_else *
+cs_else_start(struct cs_builder *b, struct cs_if_else *if_else)
+{
+   assert(cs_cur_block(b) == &b->blocks.pending_if.block);
+
+   if_else->block.next = b->blocks.pending_if.block.next;
+   b->blocks.stack = &if_else->block;
+   cs_label_init(&if_else->end_label);
+   cs_branch_label(b, &if_else->end_label, MALI_CS_CONDITION_ALWAYS,
+                   cs_undef());
+   cs_set_label(b, &b->blocks.pending_if.end_label);
+   cs_label_init(&b->blocks.pending_if.end_label);
+
+   return if_else;
+}
+
+static inline void
+cs_else_end(struct cs_builder *b, struct cs_if_else *if_else)
+{
+   cs_set_label(b, &if_else->end_label);
+   cs_block_end(b, &if_else->block);
+}
+
+#define cs_if(__b, __cond, __val)                                              \
+   for (struct cs_if_else __storage,                                           \
+        *__if_else = cs_if_start(__b, &__storage, __cond, __val);              \
+        __if_else != NULL; cs_if_end(__b, __if_else), __if_else = NULL)
+
+#define cs_else(__b)                                                           \
+   for (struct cs_if_else __storage,                                           \
+        *__if_else = cs_else_start(__b, &__storage);                           \
+        __if_else != NULL; cs_else_end(__b, __if_else), __if_else = NULL)
+
+struct cs_loop {
+   struct cs_label start, end;
+   struct cs_block block;
+   enum mali_cs_condition cond;
+   struct cs_index val;
+   struct cs_load_store_tracker *orig_ls_state;
+   struct cs_load_store_tracker ls_state;
+};
 
 static inline void
 cs_loop_diverge_ls_update(struct cs_builder *b, struct cs_loop *loop)
@@ -825,39 +927,32 @@ cs_while_start(struct cs_builder *b, struct cs_loop *loop,
 }
 
 static inline void
-cs_loop_continue(struct cs_builder *b, enum mali_cs_condition cond,
-                 struct cs_index val)
+cs_loop_conditional_continue(struct cs_builder *b, struct cs_loop *loop,
+                             enum mali_cs_condition cond, struct cs_index val)
 {
-   assert(b->blocks.cur);
-
-   struct cs_loop *loop = container_of(b->blocks.cur, struct cs_loop, block);
-
+   cs_flush_pending_if(b);
+   assert(cs_cur_block(b) == &loop->block);
    cs_branch_label(b, &loop->start, cond, val);
    cs_loop_diverge_ls_update(b, loop);
 }
 
 static inline void
-cs_loop_break(struct cs_builder *b, enum mali_cs_condition cond,
-              struct cs_index val)
+cs_loop_conditional_break(struct cs_builder *b, struct cs_loop *loop,
+                          enum mali_cs_condition cond, struct cs_index val)
 {
-   assert(b->blocks.cur);
-
-   struct cs_loop *loop = container_of(b->blocks.cur, struct cs_loop, block);
-
+   cs_flush_pending_if(b);
+   assert(cs_cur_block(b) == &loop->block);
    cs_branch_label(b, &loop->end, cond, val);
    cs_loop_diverge_ls_update(b, loop);
 }
 
 static inline void
-cs_while_end(struct cs_builder *b)
+cs_while_end(struct cs_builder *b, struct cs_loop *loop)
 {
-   assert(b->blocks.cur);
-
-   struct cs_loop *loop = container_of(b->blocks.cur, struct cs_loop, block);
-
+   cs_flush_pending_if(b);
    cs_branch_label(b, &loop->start, loop->cond, loop->val);
    cs_set_label(b, &loop->end);
-   cs_block_end(b);
+   cs_block_end(b, &loop->block);
 
    if (unlikely(loop->orig_ls_state)) {
       BITSET_OR(loop->orig_ls_state->pending_loads,
@@ -870,10 +965,17 @@ cs_while_end(struct cs_builder *b)
    }
 }
 
-#define cs_while(__b, cond, val)                                               \
+#define cs_while(__b, __cond, __val)                                           \
    for (struct cs_loop __loop_storage,                                         \
-        *__loop = cs_while_start(__b, &__loop_storage, cond, val);             \
-        __loop != NULL; cs_while_end(__b), __loop = NULL)
+        *__loop = cs_while_start(__b, &__loop_storage, __cond, __val);         \
+        __loop != NULL; cs_while_end(__b, __loop), __loop = NULL)
+
+#define cs_continue(__b)                                                       \
+   cs_loop_conditional_continue(__b, __loop, MALI_CS_CONDITION_ALWAYS,         \
+                                cs_undef())
+
+#define cs_break(__b)                                                          \
+   cs_loop_conditional_break(__b, __loop, MALI_CS_CONDITION_ALWAYS, cs_undef())
 
 /* Pseudoinstructions follow */
 
@@ -1439,14 +1541,11 @@ cs_match_case_ls_get(struct cs_match *match)
 static inline void
 cs_match_case(struct cs_builder *b, struct cs_match *match, uint32_t id)
 {
-   assert(b->blocks.cur && (b->blocks.cur == &match->block ||
-                            b->blocks.cur == &match->case_block));
    assert(!match->default_emitted || !"default case must be last");
    if (match->next_case_label.last_forward_ref != CS_LABEL_INVALID_POS) {
       cs_branch_label(b, &match->break_label, MALI_CS_CONDITION_ALWAYS,
                       cs_undef());
-      assert(b->blocks.cur == &match->case_block);
-      cs_block_end(b);
+      cs_block_end(b, &match->case_block);
       cs_match_case_ls_get(match);
       cs_set_label(b, &match->next_case_label);
       cs_label_init(&match->next_case_label);
@@ -1465,15 +1564,13 @@ cs_match_case(struct cs_builder *b, struct cs_match *match, uint32_t id)
 static inline void
 cs_match_default(struct cs_builder *b, struct cs_match *match)
 {
-   assert(b->blocks.cur && (b->blocks.cur == &match->block ||
-                            b->blocks.cur == &match->case_block));
    assert(match->next_case_label.last_forward_ref != CS_LABEL_INVALID_POS ||
           !"default case requires at least one other case");
    cs_branch_label(b, &match->break_label, MALI_CS_CONDITION_ALWAYS,
                    cs_undef());
 
-   if (b->blocks.cur == &match->case_block) {
-      cs_block_end(b);
+   if (cs_cur_block(b) == &match->case_block) {
+      cs_block_end(b, &match->case_block);
       cs_match_case_ls_get(match);
    }
 
@@ -1487,12 +1584,9 @@ cs_match_default(struct cs_builder *b, struct cs_match *match)
 static inline void
 cs_match_end(struct cs_builder *b, struct cs_match *match)
 {
-   assert(b->blocks.cur && (b->blocks.cur == &match->block ||
-                            b->blocks.cur == &match->case_block));
-
-   if (b->blocks.cur == &match->case_block) {
+   if (cs_cur_block(b) == &match->case_block) {
       cs_match_case_ls_get(match);
-      cs_block_end(b);
+      cs_block_end(b, &match->case_block);
    }
 
    if (unlikely(match->orig_ls_state)) {
@@ -1516,7 +1610,7 @@ cs_match_end(struct cs_builder *b, struct cs_match *match)
    cs_set_label(b, &match->next_case_label);
    cs_set_label(b, &match->break_label);
 
-   cs_block_end(b);
+   cs_block_end(b, &match->block);
 }
 
 #define cs_match(__b, __val, __scratch)                                        \

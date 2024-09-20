@@ -1395,6 +1395,7 @@ struct drm_xe_wait_user_fence {
 enum drm_xe_observation_type {
 	/** @DRM_XE_OBSERVATION_TYPE_OA: OA observation stream type */
 	DRM_XE_OBSERVATION_TYPE_OA,
+	DRM_XE_OBSERVATION_TYPE_EU_STALL,
 };
 
 /**
@@ -1693,6 +1694,130 @@ struct drm_xe_oa_stream_info {
 	/** @reserved: reserved for future use */
 	__u64 reserved[3];
 };
+
+enum drm_xe_eu_stall_property_id {
+	/**
+	 * @DRM_XE_EU_STALL_PROP_BUF_SZ: Per DSS Memory Buffer Size.
+	 * Valid values are 128 KB, 256 KB, and 512 KB.
+	 */
+	DRM_XE_EU_STALL_PROP_BUF_SZ = 1,
+
+	/**
+	 * @DRM_XE_EU_STALL_PROP_SAMPLE_RATE: Sampling rate
+	 * in multiples of 251 cycles. Valid values are 1 to 7.
+	 * If the value is 1, sampling interval is 251 cycles.
+	 * If the value is 7, sampling interval is 7 x 251 cycles.
+	 */
+	DRM_XE_EU_STALL_PROP_SAMPLE_RATE,
+
+	/**
+	 * @DRM_XE_EU_STALL_PROP_POLL_PERIOD: EU stall data
+	 * poll period in nanoseconds. should be at least 100000 ns.
+	 */
+	DRM_XE_EU_STALL_PROP_POLL_PERIOD,
+
+	/**
+	 * @DRM_XE_EU_STALL_PROP_EVENT_REPORT_COUNT: Minimum number of
+	 * EU stall data rows to be present in the kernel buffer for
+	 * poll() to set POLLIN (data present).
+	 */
+	DRM_XE_EU_STALL_PROP_EVENT_REPORT_COUNT,
+
+	/**
+	 * @DRM_XE_EU_STALL_PROP_GT_ID: GT ID of the GT on which
+	 * EU stall data will be captured.
+	 */
+	DRM_XE_EU_STALL_PROP_GT_ID,
+
+	/**
+	 * @DRM_XE_EU_STALL_PROP_OPEN_DISABLED: A value of 1 will open
+	 * the EU stall data stream without enabling EU stall sampling.
+	 */
+	DRM_XE_EU_STALL_PROP_OPEN_DISABLED,
+
+	DRM_XE_EU_STALL_PROP_MAX
+};
+
+/**
+ * struct drm_xe_eu_stall_stream_info - EU stall stream info returned from
+ * @DRM_XE_OBSERVATION_IOCTL_INFO observation stream fd ioctl
+ */
+struct drm_xe_eu_stall_stream_info {
+	/** @extensions: Pointer to the first extension struct, if any */
+	__u64 extensions;
+
+	/** @record_size: size of each EU stall data record */
+	__u64 record_size;
+
+	/** @reserved: reserved for future use */
+	__u64 reserved[3];
+};
+
+/**
+ * struct drm_xe_eu_stall_data_pvc - EU stall data format for PVC
+ *
+ * Bits		Field
+ * 0  to 28	IP (addr)
+ * 29 to 36	active count
+ * 37 to 44	other count
+ * 45 to 52	control count
+ * 53 to 60	pipestall count
+ * 61 to 68	send count
+ * 69 to 76	dist_acc count
+ * 77 to 84	sbid count
+ * 85 to 92	sync count
+ * 93 to 100	inst_fetch count
+ */
+struct drm_xe_eu_stall_data_pvc {
+	__u64 ip_addr:29;
+	__u64 active_count:8;
+	__u64 other_count:8;
+	__u64 control_count:8;
+	__u64 pipestall_count:8;
+	__u64 send_count:8;
+	__u64 dist_acc_count:8;
+	__u64 sbid_count:8;
+	__u64 sync_count:8;
+	__u64 inst_fetch_count:8;
+	__u64 unused_bits:27;
+	__u64 unused[6];
+} __attribute__((packed));
+
+/**
+ * struct drm_xe_eu_stall_data_xe2 - EU stall data format for LNL, BMG
+ *
+ * Bits		Field
+ * 0  to 28	IP (addr)
+ * 29 to 36	Tdr count
+ * 37 to 44	other count
+ * 45 to 52	control count
+ * 53 to 60	pipestall count
+ * 61 to 68	send count
+ * 69 to 76	dist_acc count
+ * 77 to 84	sbid count
+ * 85 to 92	sync count
+ * 93 to 100	inst_fetch count
+ * 101 to 108	Active count
+ * 109 to 111	Exid
+ * 112		EndFlag (is always 1)
+ */
+struct drm_xe_eu_stall_data_xe2 {
+	__u64 ip_addr:29;
+	__u64 tdr_count:8;
+	__u64 other_count:8;
+	__u64 control_count:8;
+	__u64 pipestall_count:8;
+	__u64 send_count:8;
+	__u64 dist_acc_count:8;
+	__u64 sbid_count:8;
+	__u64 sync_count:8;
+	__u64 inst_fetch_count:8;
+	__u64 active_count:8;
+	__u64 ex_id:3;
+	__u64 end_flag:1;
+	__u64 unused_bits:15;
+	__u64 unused[6];
+} __attribute__((packed));
 
 #if defined(__cplusplus)
 }

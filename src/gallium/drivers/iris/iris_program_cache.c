@@ -36,6 +36,7 @@
 #include "pipe/p_screen.h"
 #include "util/u_atomic.h"
 #include "util/u_upload_mgr.h"
+#include "compiler/brw_disasm.h"
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
 #include "intel/compiler/brw_compiler.h"
@@ -210,6 +211,19 @@ iris_upload_shader(struct iris_screen *screen,
    if (!ish) {
       struct keybox *keybox = make_keybox(shader, cache_id, key, key_size);
       _mesa_hash_table_insert(driver_shaders, keybox, shader);
+   }
+
+   if (INTEL_DEBUG(DEBUG_SHADERS_LINENO) && screen->brw) {
+      int offset = 0;
+      /* dump each simd variant of shader */
+      while (offset < shader->brw_prog_data->program_size) {
+         brw_disassemble_with_lineno(&screen->brw->isa, shader->stage, -1,
+                                    ish ? ish->source_hash : 0, assembly, offset,
+                                    res->bo->address + shader->assembly.offset,
+                                    stderr);
+         offset += align64(brw_disassemble_find_end(&screen->brw->isa,
+                                                    assembly, offset), 64);
+      }
    }
 }
 

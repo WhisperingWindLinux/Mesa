@@ -518,7 +518,7 @@ main(int argc, char *argv[])
             brw_init_isa_info(isa, &devinfo);
             brw_disassemble_with_errors(isa,
                                         map + (bo->file_offset - aligned_offset) + (*addr - bo->offset),
-                                        0, stderr);
+                                        0, NULL, stderr);
          } else {
             struct elk_isa_info _isa, *isa = &_isa;
             elk_init_isa_info(isa, &devinfo);

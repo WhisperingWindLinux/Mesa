@@ -3,6 +3,7 @@
 
 inc_intel = include_directories('.')
 
+subdir('mda')
 subdir('genxml')
 subdir('dev')
 if with_intel_hasvk or with_intel_vk or with_gallium_crocus or with_gallium_iris

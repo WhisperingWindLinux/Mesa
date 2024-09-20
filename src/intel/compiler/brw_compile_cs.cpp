@@ -125,6 +125,8 @@ brw_compile_cs(const struct brw_compiler *compiler,
       .required_width = brw_required_dispatch_width(&nir->info),
    };
 
+   brw_debug_archive_nir(&params->base);
+
    std::unique_ptr<fs_visitor> v[3];
 
    for (unsigned simd = 0; simd < 3; simd++) {

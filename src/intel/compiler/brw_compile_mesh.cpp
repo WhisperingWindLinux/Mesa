@@ -331,6 +331,8 @@ brw_compile_task(const struct brw_compiler *compiler,
    struct brw_task_prog_data *prog_data = params->prog_data;
    const bool debug_enabled = brw_should_print_shader(nir, DEBUG_TASK);
 
+   brw_debug_archive_nir(&params->base);
+
    brw_nir_lower_tue_outputs(nir, &prog_data->map);
 
    NIR_PASS(_, nir, brw_nir_align_launch_mesh_workgroups);
@@ -1601,6 +1603,8 @@ brw_compile_mesh(const struct brw_compiler *compiler,
    const struct brw_mesh_prog_key *key = params->key;
    struct brw_mesh_prog_data *prog_data = params->prog_data;
    const bool debug_enabled = brw_should_print_shader(nir, DEBUG_MESH);
+
+   brw_debug_archive_nir(&params->base);
 
    prog_data->base.base.stage = MESA_SHADER_MESH;
    prog_data->base.base.total_shared = nir->info.shared_size;

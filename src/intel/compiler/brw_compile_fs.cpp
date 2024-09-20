@@ -1513,6 +1513,8 @@ brw_compile_fs(const struct brw_compiler *compiler,
    const struct intel_device_info *devinfo = compiler->devinfo;
    const unsigned max_subgroup_size = 32;
 
+   brw_debug_archive_nir(&params->base);
+
    brw_nir_apply_key(nir, compiler, &key->base, max_subgroup_size);
    brw_nir_lower_fs_inputs(nir, devinfo, key);
    brw_nir_lower_fs_outputs(nir);

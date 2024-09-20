@@ -442,6 +442,8 @@ public:
 
    struct shader_stats shader_stats;
 
+   debug_archiver *archiver;
+
    void debug_optimizer(const nir_shader *nir,
                         const char *pass_name,
                         int iteration, int pass_num) const;

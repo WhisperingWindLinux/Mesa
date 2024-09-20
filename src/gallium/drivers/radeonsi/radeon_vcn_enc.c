@@ -906,10 +906,10 @@ static void radeon_vcn_enc_av1_get_param(struct radeon_encoder *enc,
    /* 1, 2 layer needs 1 reference, and 3, 4 layer needs 2 references */
    enc->base.max_references = (enc_pic->num_temporal_layers + 1) / 2
                               + RENCODE_VCN4_AV1_MAX_NUM_LTR;
-   for (int i = 0; i < RENCDOE_AV1_REFS_PER_FRAME; i++)
+   for (int i = 0; i < RENCODE_AV1_REFS_PER_FRAME; i++)
       enc_pic->av1_ref_frame_idx[i] = pic->ref_frame_idx[i];
 
-   for (int i = 0; i < RENCDOE_AV1_NUM_REF_FRAMES; i++)
+   for (int i = 0; i < RENCODE_AV1_NUM_REF_FRAMES; i++)
       enc_pic->av1_ref_list[i] = pic->ref_list[i];
 
    enc_pic->av1_recon_frame = pic->recon_frame;
@@ -1758,6 +1758,8 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    }
 
    enc->enc_pic.use_rc_per_pic_ex = false;
+
+   ac_vcn_enc_init_cmds(&enc->cmd, sscreen->info.vcn_ip_version);
 
    if (sscreen->info.vcn_ip_version >= VCN_5_0_0) {
       radeon_enc_5_0_init(enc);

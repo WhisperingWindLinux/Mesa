@@ -28,6 +28,8 @@
 #ifndef AC_VCN_ENC_H
 #define AC_VCN_ENC_H
 
+#include "amd_family.h"
+
 #define RENCODE_IB_OP_INITIALIZE                                                    0x01000001
 #define RENCODE_IB_OP_CLOSE_SESSION                                                 0x01000002
 #define RENCODE_IB_OP_ENCODE                                                        0x01000003
@@ -104,6 +106,22 @@
 #define RENCODE_AV1_BITSTREAM_INSTRUCTION_OBU_START                                 0x00000002
 #define RENCODE_AV1_BITSTREAM_INSTRUCTION_OBU_SIZE                                  0x00000003
 #define RENCODE_AV1_BITSTREAM_INSTRUCTION_OBU_END                                   0x00000004
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_END                                       RENCODE_HEADER_INSTRUCTION_END
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_COPY                                      RENCODE_HEADER_INSTRUCTION_COPY
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_ALLOW_HIGH_PRECISION_MV                   0x00000005
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_DELTA_LF_PARAMS                           0x00000006
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_READ_INTERPOLATION_FILTER                 0x00000007
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_LOOP_FILTER_PARAMS                        0x00000008
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_DELTA_Q_PARAMS                            0x0000000b
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_CDEF_PARAMS                               0x0000000c
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_READ_TX_MODE                              0x0000000d
+#define RENCODE_AV1_BITSTREAM_INSTRUCTION_TILE_GROUP_OBU                            0x0000000e
+
+#define RENCODE_V4_AV1_BITSTREAM_INSTRUCTION_TILE_INFO                              0x00000009
+#define RENCODE_V4_AV1_BITSTREAM_INSTRUCTION_QUANTIZATION_PARAMS                    0x0000000a
+
+#define RENCODE_V5_AV1_BITSTREAM_INSTRUCTION_CONTEXT_UPDATE_TILE_ID                 0x00000009
+#define RENCODE_V5_AV1_BITSTREAM_INSTRUCTION_BASE_Q_IDX                             0x0000000a
 
 #define RENCODE_OBU_START_TYPE_FRAME                                                1
 #define RENCODE_OBU_START_TYPE_FRAME_HEADER                                         2
@@ -135,8 +153,8 @@
 #define RENCODE_AV1_DELTA_FRAME_ID_LENGTH                                           15
 #define RENCODE_AV1_ADDITIONAL_FRAME_ID_LENGTH                                      1
 
-#define RENCDOE_AV1_NUM_REF_FRAMES                                                  8
-#define RENCDOE_AV1_REFS_PER_FRAME                                                  7
+#define RENCODE_AV1_NUM_REF_FRAMES                                                  8
+#define RENCODE_AV1_REFS_PER_FRAME                                                  7
 #define RENCODE_AV1_SDB_FRAME_CONTEXT_SIZE                                          947200
 #define RENCODE_AV1_FRAME_CONTEXT_CDF_TABLE_SIZE                                    22528
 #define RENCODE_AV1_CDEF_ALGORITHM_FRAME_CONTEXT_SIZE                               (64 * 8 * 3)
@@ -181,6 +199,7 @@
 #define RENCODE_REC_SWIZZLE_MODE_256B_S                                             1
 #define RENCODE_REC_SWIZZLE_MODE_256B_D                                             2
 #define RENCODE_REC_SWIZZLE_MODE_8x8_1D_THIN_12_24BPP                               0x10000001
+#define RENCODE_REC_SWIZZLE_MODE_256B_D_VCN5                                        1
 
 #define RENCODE_VIDEO_BITSTREAM_BUFFER_MODE_LINEAR                                  0
 #define RENCODE_VIDEO_BITSTREAM_BUFFER_MODE_CIRCULAR                                1
@@ -475,7 +494,7 @@ typedef struct rvcn_enc_hevc_encode_params_s {
 } rvcn_enc_hevc_encode_params_t;
 
 typedef struct rvcn_enc_av1_encode_params_s {
-   uint32_t ref_frames[RENCDOE_AV1_REFS_PER_FRAME];
+   uint32_t ref_frames[RENCODE_AV1_REFS_PER_FRAME];
    uint32_t lsm_reference_frame_index[2];
 } rvcn_enc_av1_encode_params_t;
 
@@ -660,6 +679,7 @@ typedef struct rvcn_enc_cmd_s {
    uint32_t rc_session_init;
    uint32_t rc_layer_init;
    uint32_t rc_per_pic;
+   uint32_t rc_per_pic_ex;
    uint32_t quality_params;
    uint32_t slice_header;
    uint32_t enc_params;
@@ -796,5 +816,7 @@ typedef struct rvcn_enc_latency_s
 {
    uint32_t encode_latency;
 } rvcn_enc_latency_t;
+
+void ac_vcn_enc_init_cmds(rvcn_enc_cmd_t *cmd, enum vcn_version version);
 
 #endif

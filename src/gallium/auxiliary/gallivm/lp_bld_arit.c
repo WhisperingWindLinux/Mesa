@@ -166,7 +166,7 @@ lp_build_min_simple(struct lp_build_context *bld,
       }
    }
 
-   if (intrinsic) {
+   if (intrinsic && !type.signed_zero_preserve) {
       /* We need to handle nan's for floating point numbers. If one of the
        * inputs is nan the other should be returned (required by both D3D10+
        * and OpenCL).
@@ -189,29 +189,49 @@ lp_build_min_simple(struct lp_build_context *bld,
    }
 
    if (type.floating) {
+      LLVMValueRef result = NULL;
       switch (nan_behavior) {
       case GALLIVM_NAN_RETURN_OTHER: {
          LLVMValueRef isnan = lp_build_isnan(bld, a);
          cond = lp_build_cmp(bld, PIPE_FUNC_LESS, a, b);
          cond = LLVMBuildXor(bld->gallivm->builder, cond, isnan, "");
-         return lp_build_select(bld, cond, a, b);
-      }
+         result = lp_build_select(bld, cond, a, b);
          break;
+      }
       case GALLIVM_NAN_RETURN_OTHER_SECOND_NONNAN:
          cond = lp_build_cmp_ordered(bld, PIPE_FUNC_LESS, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
+         break;
       case GALLIVM_NAN_RETURN_NAN_FIRST_NONNAN:
          cond = lp_build_cmp(bld, PIPE_FUNC_LESS, b, a);
-         return lp_build_select(bld, cond, b, a);
+         result = lp_build_select(bld, cond, b, a);
+         break;
       case GALLIVM_NAN_BEHAVIOR_UNDEFINED:
          cond = lp_build_cmp(bld, PIPE_FUNC_LESS, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
          break;
       default:
          assert(0);
          cond = lp_build_cmp(bld, PIPE_FUNC_LESS, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
+         break;
       }
+
+      if (type.signed_zero_preserve) {
+         LLVMBuilderRef builder = bld->gallivm->builder;
+
+         LLVMValueRef sign_mask =
+            lp_build_const_int_vec(bld->gallivm, type, 1llu << (type.width - 1));
+         LLVMValueRef sign = LLVMBuildBitCast(builder, a, bld->int_vec_type, "");
+         sign = LLVMBuildOr(builder, sign, LLVMBuildBitCast(builder, b, bld->int_vec_type, ""), "");
+         sign = LLVMBuildAnd(builder, sign, sign_mask, "");
+
+         result = LLVMBuildBitCast(builder, result, bld->int_vec_type, "");
+         result = LLVMBuildOr(builder, result, sign, "");
+         result = LLVMBuildBitCast(builder, result, bld->vec_type, "");
+      }
+
+      return result;
    } else {
       cond = lp_build_cmp(bld, PIPE_FUNC_LESS, a, b);
       return lp_build_select(bld, cond, a, b);
@@ -320,7 +340,7 @@ lp_build_max_simple(struct lp_build_context *bld,
      }
    }
 
-   if (intrinsic) {
+   if (intrinsic && !type.signed_zero_preserve) {
       if (util_get_cpu_caps()->has_sse && type.floating &&
           nan_behavior == GALLIVM_NAN_RETURN_OTHER) {
          LLVMValueRef isnan, max;
@@ -337,29 +357,52 @@ lp_build_max_simple(struct lp_build_context *bld,
    }
 
    if (type.floating) {
+      LLVMValueRef result = NULL;
       switch (nan_behavior) {
       case GALLIVM_NAN_RETURN_OTHER: {
          LLVMValueRef isnan = lp_build_isnan(bld, a);
          cond = lp_build_cmp(bld, PIPE_FUNC_GREATER, a, b);
          cond = LLVMBuildXor(bld->gallivm->builder, cond, isnan, "");
-         return lp_build_select(bld, cond, a, b);
-      }
+         result = lp_build_select(bld, cond, a, b);
          break;
+      }
       case GALLIVM_NAN_RETURN_OTHER_SECOND_NONNAN:
          cond = lp_build_cmp_ordered(bld, PIPE_FUNC_GREATER, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
+         break;
       case GALLIVM_NAN_RETURN_NAN_FIRST_NONNAN:
          cond = lp_build_cmp(bld, PIPE_FUNC_GREATER, b, a);
-         return lp_build_select(bld, cond, b, a);
+         result = lp_build_select(bld, cond, b, a);
+         break;
       case GALLIVM_NAN_BEHAVIOR_UNDEFINED:
          cond = lp_build_cmp(bld, PIPE_FUNC_GREATER, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
          break;
       default:
          assert(0);
          cond = lp_build_cmp(bld, PIPE_FUNC_GREATER, a, b);
-         return lp_build_select(bld, cond, a, b);
+         result = lp_build_select(bld, cond, a, b);
+         break;
       }
+
+      if (type.signed_zero_preserve) {
+         LLVMBuilderRef builder = bld->gallivm->builder;
+
+         LLVMValueRef sign_mask =
+            lp_build_const_int_vec(bld->gallivm, type, 1llu << (type.width - 1));
+         LLVMValueRef inv_sign_mask =
+            lp_build_const_int_vec(bld->gallivm, type, ~(1llu << (type.width - 1)));
+         LLVMValueRef sign = LLVMBuildBitCast(builder, a, bld->int_vec_type, "");
+         sign = LLVMBuildAnd(builder, sign, LLVMBuildBitCast(builder, b, bld->int_vec_type, ""), "");
+         sign = LLVMBuildAnd(builder, sign, sign_mask, "");
+         sign = LLVMBuildOr(builder, sign, inv_sign_mask, "");
+
+         result = LLVMBuildBitCast(builder, result, bld->int_vec_type, "");
+         result = LLVMBuildAnd(builder, result, sign, "");
+         result = LLVMBuildBitCast(builder, result, bld->vec_type, "");
+      }
+
+      return result;
    } else {
       cond = lp_build_cmp(bld, PIPE_FUNC_GREATER, a, b);
       return lp_build_select(bld, cond, a, b);
@@ -946,12 +989,15 @@ lp_build_mul(struct lp_build_context *bld,
    assert(lp_check_value(type, a));
    assert(lp_check_value(type, b));
 
-   if (a == bld->zero)
-      return bld->zero;
+   if (!type.floating || !type.nan_preserve) {
+      if (a == bld->zero)
+         return bld->zero;
+      if (b == bld->zero)
+         return bld->zero;
+   }
+
    if (a == bld->one)
       return b;
-   if (b == bld->zero)
-      return bld->zero;
    if (b == bld->one)
       return a;
    if (a == bld->undef || b == bld->undef)
@@ -2055,6 +2101,17 @@ lp_build_trunc(struct lp_build_context *bld,
       trunc = LLVMBuildFPToSI(builder, a, int_vec_type, "");
       res = LLVMBuildSIToFP(builder, trunc, vec_type, "floor.trunc");
 
+      if (type.signed_zero_preserve) {
+         LLVMValueRef sign_mask =
+            lp_build_const_int_vec(bld->gallivm, type, 1llu << (type.width - 1));
+         LLVMValueRef a_sign = LLVMBuildBitCast(builder, a, int_vec_type, "");
+         a_sign = LLVMBuildAnd(builder, a_sign, sign_mask, "");
+
+         res = LLVMBuildBitCast(builder, res, int_vec_type, "");
+         res = LLVMBuildOr(builder, res, a_sign, "");
+         res = LLVMBuildBitCast(builder, res, vec_type, "");
+      }
+
       /* mask out sign bit */
       anosign = lp_build_abs(bld, a);
       /*
@@ -2112,6 +2169,17 @@ lp_build_round(struct lp_build_context *bld,
 
       res = lp_build_iround(bld, a);
       res = LLVMBuildSIToFP(builder, res, vec_type, "");
+
+      if (type.signed_zero_preserve) {
+         LLVMValueRef sign_mask =
+            lp_build_const_int_vec(bld->gallivm, type, 1llu << (type.width - 1));
+         LLVMValueRef a_sign = LLVMBuildBitCast(builder, a, int_vec_type, "");
+         a_sign = LLVMBuildAnd(builder, a_sign, sign_mask, "");
+
+         res = LLVMBuildBitCast(builder, res, int_vec_type, "");
+         res = LLVMBuildOr(builder, res, a_sign, "");
+         res = LLVMBuildBitCast(builder, res, vec_type, "");
+      }
 
       /* mask out sign bit */
       anosign = lp_build_abs(bld, a);
@@ -3076,7 +3144,11 @@ lp_build_pow(struct lp_build_context *bld,
                    __func__);
    }
 
-   LLVMValueRef cmp = lp_build_cmp(bld, PIPE_FUNC_EQUAL, x, lp_build_const_vec(bld->gallivm, bld->type, 0.0f));
+   LLVMValueRef cmp;
+   if (bld->type.nan_preserve)
+      cmp = lp_build_cmp_ordered(bld, PIPE_FUNC_EQUAL, x, lp_build_const_vec(bld->gallivm, bld->type, 0.0f));
+   else
+      cmp = lp_build_cmp(bld, PIPE_FUNC_EQUAL, x, lp_build_const_vec(bld->gallivm, bld->type, 0.0f));
    LLVMValueRef res = lp_build_exp2(bld, lp_build_mul(bld, lp_build_log2_safe(bld, x), y));
 
    res = lp_build_select(bld, cmp, lp_build_const_vec(bld->gallivm, bld->type, 0.0f), res);

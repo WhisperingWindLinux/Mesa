@@ -269,10 +269,14 @@ impl BlockPointer {
 
     #[inline]
     fn at(&self, offset: Offset4D<units::Bytes>) -> usize {
-        debug_assert!(offset.x % self.bl_extent.width == 0);
-        debug_assert!(offset.y % self.bl_extent.height == 0);
-        debug_assert!(offset.z % self.bl_extent.depth == 0);
-        debug_assert!(offset.a == 0);
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(offset.x % self.bl_extent.width == 0);
+            debug_assert!(offset.y % self.bl_extent.height == 0);
+            debug_assert!(offset.z % self.bl_extent.depth == 0);
+            debug_assert!(offset.a == 0);
+        }
+
         self.pointer
             + (offset.z as usize) * self.z_mul
             + (offset.y as usize) * self.y_mul

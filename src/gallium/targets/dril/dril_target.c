@@ -45,6 +45,7 @@
    CONFIG_ZS(color, PIPE_FORMAT_Z24_UNORM_S8_UINT), \
    CONFIG_ZS(color, PIPE_FORMAT_Z24X8_UNORM), \
    CONFIG_ZS(color, PIPE_FORMAT_Z16_UNORM), \
+   CONFIG_ZS(color, PIPE_FORMAT_Z32_FLOAT), \
    CONFIG_ZS(color, PIPE_FORMAT_NONE) \
 
 static const struct gl_config drilConfigs[] = {
@@ -436,17 +437,36 @@ drilCreateNewScreen(int scrn, int fd,
 {
    const __DRIconfig **configs = init_dri2_configs(fd);
    if (!configs && fd == -1) {
-      // otherwise set configs to point to our config list
-      configs = calloc(ARRAY_SIZE(drilConfigs) * 2 + 1, sizeof(void *));
+      /* number of configs:
+         base config list
+         *=2 for double-buffered
+         *=2 for multisample
+         *=2 for srgb
+       */
+      configs = calloc(ARRAY_SIZE(drilConfigs) * 2 * 2 * 2 + 1, sizeof(void *));
       int c = 0;
       for (int i = 0; i < ARRAY_SIZE(drilConfigs); i++) {
+         int last_start = c;
+         struct gl_config *cfg;
          /* create normal config */
          configs[c++] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
 
          /* create double-buffered config */
          configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
-         struct gl_config *cfg = (void*)configs[c++];
+         cfg = (void*)configs[c++];
          cfg->doubleBufferMode = 1;
+
+         /* create 4x MSAA configs: this is what swrast supports */
+         configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+         cfg = (void*)configs[c++];
+         cfg->samples = 4;
+         configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+         cfg = (void*)configs[c++];
+         cfg->samples = 4;
+         cfg->doubleBufferMode = 1;
+
+         /* swrast supports all available srgb fbconfig formats */
+         c = add_srgb_config((void*)configs, c, drilConfigs[i].color_format, last_start);
       }
    }
 

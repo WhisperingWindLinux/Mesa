@@ -344,6 +344,15 @@ kill(wait_imm& imm, Instruction* instr, wait_ctx& ctx, memory_sync_info sync_inf
       force_waitcnt(ctx, imm);
    }
 
+   /* sendmsg(dealloc_vgprs) releases scratch, so this isn't safe if there is a in-progress
+    * scratch store.
+    */
+   if (ctx.gfx_level >= GFX11 && instr->opcode == aco_opcode::s_sendmsg &&
+       instr->salu().imm == sendmsg_dealloc_vgprs) {
+      imm.combine(ctx.barrier_imm[ffs(storage_scratch) - 1]);
+      imm.combine(ctx.barrier_imm[ffs(storage_vgpr_spill) - 1]);
+   }
+
    /* Make sure POPS coherent memory accesses have reached the L2 cache before letting the
     * overlapping waves proceed into the ordered section.
     */
@@ -448,7 +457,11 @@ update_barrier_imm(wait_ctx& ctx, uint8_t counters, wait_event event, memory_syn
    for (unsigned i = 0; i < storage_count; i++) {
       wait_imm& bar = ctx.barrier_imm[i];
       uint16_t& bar_ev = ctx.barrier_events[i];
-      if (sync.storage & (1 << i) && !(sync.semantics & semantic_private)) {
+
+      /* We re-use barrier_imm/barrier_events to wait for all scratch stores to finish. */
+      bool ignore_private = i == (ffs(storage_scratch) - 1) || i == (ffs(storage_vgpr_spill) - 1);
+
+      if (sync.storage & (1 << i) && (!(sync.semantics & semantic_private) || ignore_private)) {
          bar_ev |= event;
          u_foreach_bit (j, counters)
             bar[j] = 0;
@@ -666,43 +679,7 @@ void
 emit_waitcnt(wait_ctx& ctx, std::vector<aco_ptr<Instruction>>& instructions, wait_imm& imm)
 {
    Builder bld(ctx.program, &instructions);
-
-   if (ctx.gfx_level >= GFX12) {
-      if (imm.vm != wait_imm::unset_counter && imm.lgkm != wait_imm::unset_counter) {
-         bld.sopp(aco_opcode::s_wait_loadcnt_dscnt, (imm.vm << 8) | imm.lgkm);
-         imm.vm = wait_imm::unset_counter;
-         imm.lgkm = wait_imm::unset_counter;
-      }
-
-      if (imm.vs != wait_imm::unset_counter && imm.lgkm != wait_imm::unset_counter) {
-         bld.sopp(aco_opcode::s_wait_storecnt_dscnt, (imm.vs << 8) | imm.lgkm);
-         imm.vs = wait_imm::unset_counter;
-         imm.lgkm = wait_imm::unset_counter;
-      }
-
-      aco_opcode op[wait_type_num];
-      op[wait_type_exp] = aco_opcode::s_wait_expcnt;
-      op[wait_type_lgkm] = aco_opcode::s_wait_dscnt;
-      op[wait_type_vm] = aco_opcode::s_wait_loadcnt;
-      op[wait_type_vs] = aco_opcode::s_wait_storecnt;
-      op[wait_type_sample] = aco_opcode::s_wait_samplecnt;
-      op[wait_type_bvh] = aco_opcode::s_wait_bvhcnt;
-      op[wait_type_km] = aco_opcode::s_wait_kmcnt;
-
-      for (unsigned i = 0; i < wait_type_num; i++) {
-         if (imm[i] != wait_imm::unset_counter)
-            bld.sopp(op[i], imm[i]);
-      }
-   } else {
-      if (imm.vs != wait_imm::unset_counter) {
-         assert(ctx.gfx_level >= GFX10);
-         bld.sopk(aco_opcode::s_waitcnt_vscnt, Operand(sgpr_null, s1), imm.vs);
-         imm.vs = wait_imm::unset_counter;
-      }
-      if (!imm.empty())
-         bld.sopp(aco_opcode::s_waitcnt, imm.pack(ctx.gfx_level));
-   }
-   imm = wait_imm();
+   imm.build_waitcnt(bld);
 }
 
 bool

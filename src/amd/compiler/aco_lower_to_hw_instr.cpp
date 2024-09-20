@@ -2330,7 +2330,7 @@ lower_to_hw_instr(Program* program)
             }
             case aco_opcode::p_exit_early_if: {
                /* don't bother with an early exit near the end of the program */
-               if ((block->instructions.size() - 1 - instr_idx) <= 4 &&
+               if ((block->instructions.size() - 1 - instr_idx) <= 5 &&
                    block->instructions.back()->opcode == aco_opcode::s_endpgm) {
                   unsigned null_exp_dest =
                      program->gfx_level >= GFX11 ? V_008DFC_SQ_EXP_MRT : V_008DFC_SQ_EXP_NULL;
@@ -2348,6 +2348,9 @@ lower_to_hw_instr(Program* program)
                      else if (instr2->opcode == aco_opcode::p_parallelcopy &&
                               instr2->definitions[0].isFixed() &&
                               instr2->definitions[0].physReg() == exec)
+                        continue;
+                     else if (instr2->opcode == aco_opcode::s_sendmsg &&
+                              instr2->salu().imm == sendmsg_dealloc_vgprs)
                         continue;
 
                      ignore_early_exit = false;
@@ -2372,6 +2375,12 @@ lower_to_hw_instr(Program* program)
                   }
                   block = &program->blocks[block_idx];
 
+                  /* sendmsg(dealloc_vgprs) releases scratch, so it isn't safe if there is an
+                   * in-progress scratch store. */
+                  wait_imm wait;
+                  if (should_dealloc_vgprs && uses_scratch(program))
+                     wait.vs = 0;
+
                   bld.reset(discard_block);
                   if (program->has_pops_overlapped_waves_wait &&
                       (program->gfx_level >= GFX11 || discard_sends_pops_done)) {
@@ -2380,15 +2389,15 @@ lower_to_hw_instr(Program* program)
                       * waitcnt insertion doesn't work in a discard early exit block.
                       */
                      if (program->gfx_level >= GFX10)
-                        bld.sopk(aco_opcode::s_waitcnt_vscnt, Operand(sgpr_null, s1), 0);
-                     wait_imm pops_exit_wait_imm;
-                     pops_exit_wait_imm.vm = 0;
+                        wait.vs = 0;
+                     wait.vm = 0;
                      if (program->has_smem_buffer_or_global_loads)
-                        pops_exit_wait_imm.lgkm = 0;
-                     bld.sopp(aco_opcode::s_waitcnt, pops_exit_wait_imm.pack(program->gfx_level));
+                        wait.lgkm = 0;
+                     wait.build_waitcnt(bld);
                   }
                   if (discard_sends_pops_done)
                      bld.sopp(aco_opcode::s_sendmsg, sendmsg_ordered_ps_done);
+
                   unsigned target = V_008DFC_SQ_EXP_NULL;
                   if (program->gfx_level >= GFX11)
                      target =
@@ -2396,10 +2405,11 @@ lower_to_hw_instr(Program* program)
                   if (program->stage == fragment_fs)
                      bld.exp(aco_opcode::exp, Operand(v1), Operand(v1), Operand(v1), Operand(v1), 0,
                              target, false, true, true);
-                  if (should_dealloc_vgprs) {
-                     bld.sopp(aco_opcode::s_nop, 0);
+
+                  wait.build_waitcnt(bld);
+                  if (should_dealloc_vgprs)
                      bld.sopp(aco_opcode::s_sendmsg, sendmsg_dealloc_vgprs);
-                  }
+
                   bld.sopp(aco_opcode::s_endpgm);
 
                   bld.reset(&ctx.instructions);

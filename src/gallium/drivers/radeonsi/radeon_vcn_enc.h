@@ -57,6 +57,31 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
                                                struct radeon_winsys *ws,
                                                radeon_enc_get_buffer get_buffer);
 
+#define RADEON_ENC_BUF_FCB         0 /* frame context buffer*/
+#define RADEON_ENC_BUF_PRE_DDPB    1 /* preencoding buffer for each of the dynamic dpb */
+#define RADEON_ENC_BUF_PRE_FCB     2 /* frame context buffer for pre-encoding */
+#define RADEON_ENC_BUF_DDPB        3 /* dynamic dpb recon buffer */
+#define RADEON_ENC_TIER2_MAX_BUF   4 /* total number of buffers */
+
+#define RADEON_ENC_DDPB_FLAG_NON   0 /* not used yet */
+#define RADEON_ENC_DDPB_FLAG_READY 1 /* allocated_ready_for_use */
+#define RADEON_ENC_DDPB_FLAG_INUSE 2 /* in_use */
+#define RADEON_ENC_DDPB_FLAG_EXT   4 /* using external dpb recon */
+#define RADEON_ENC_DDPB_MAX_NUM    17
+
+struct radeon_enc_dpb_tier2_entry {
+   union {
+      struct {
+         uint32_t is_ready: 1;
+         uint32_t is_inuse: 1;
+      };
+      uint32_t flags;
+   };
+   uint32_t index;
+   struct rvid_buffer *b[RADEON_ENC_TIER2_MAX_BUF];
+   struct pipe_video_buffer *vbuf;  /*preserved for utilizing external recon buffer directly */
+};
+
 struct radeon_enc_pic {
    union {
       enum pipe_h2645_enc_picture_type picture_type;
@@ -88,12 +113,28 @@ struct radeon_enc_pic {
    unsigned temporal_id;
    unsigned num_temporal_layers;
    unsigned temporal_layer_pattern_index;
+   unsigned dpb_luma_size;
+   unsigned dpb_chroma_size;
+   unsigned total_coloc_bytes;
    rvcn_enc_quality_modes_t quality_modes;
 
    bool not_referenced;
    bool need_sequence_header;
    bool use_rc_per_pic_ex;
    bool av1_tile_splitting_legacy_flag;
+   struct {
+      union {
+         struct
+         {
+            uint32_t av1_cdf_frame_context_offset;
+            uint32_t av1_cdef_algorithm_context_offset;
+         } av1;
+         struct
+         {
+            uint32_t colloc_buffer_offset;
+         } h264;
+      };
+   } fcb_offset;
 
    struct {
       struct {
@@ -112,6 +153,10 @@ struct radeon_enc_pic {
             uint32_t stream_obu_frame:1;  /* all frames have the same number of tiles */
             uint32_t need_av1_seq:1;
             uint32_t av1_mark_long_term_reference:1;
+            uint32_t allow_compound:1;
+            uint32_t show_frame:1;
+            uint32_t showable_frame:1;
+            uint32_t use_input_slot:1;
          };
          uint32_t render_width;
          uint32_t render_height;
@@ -125,7 +170,10 @@ struct radeon_enc_pic {
          uint32_t refresh_frame_flags;
          uint32_t reference_delta_frame_id;
          uint32_t reference_frame_index;
+         uint32_t primary_ref_frame;
          uint32_t reference_order_hint[RENCDOE_AV1_NUM_REF_FRAMES];
+         uint32_t delta_frame_id_length;
+         uint32_t additional_frame_id_length;
          uint32_t *copy_start;
       };
       rvcn_enc_av1_spec_misc_t av1_spec_misc;
@@ -137,10 +185,16 @@ struct radeon_enc_pic {
       rvcn_enc_av1_recon_slot_t recon_slots[RENCDOE_AV1_NUM_REF_FRAMES + 1];
       uint8_t av1_ref_frame_idx[RENCDOE_AV1_REFS_PER_FRAME];
       void *av1_ref_list[RENCDOE_AV1_NUM_REF_FRAMES];
+      void *av1_ref_update_list[RENCDOE_AV1_NUM_REF_FRAMES];
       void *av1_recon_frame;
-      uint32_t av1_ref_frame_ctrl_l0;
-      uint32_t av1_ref_frame_ctrl_l1;
+      rvcn_enc_av1_ref_frame_ctrl av1_ref_frame_ctrl_l0;
+      rvcn_enc_av1_ref_frame_ctrl av1_ref_frame_ctrl_l1;
       uint32_t av1_ltr_seq;
+      uint32_t second_l0_reference_picture_index;
+      uint32_t l1_reference_picture_index;
+      uint32_t l0_ref_frame_id;
+      uint32_t l1_ref_frame_id;
+      uint32_t second_l0_ref_frame_id;
    };
 
    rvcn_enc_session_info_t session_info;
@@ -248,6 +302,7 @@ struct radeon_encoder {
    struct rvid_buffer *meta;
    struct radeon_enc_pic enc_pic;
    struct pb_buffer_lean *stats;
+   struct radeon_enc_dpb_tier2_entry *ddpb; /*dynamic dpb array */
    rvcn_enc_cmd_t cmd;
 
    unsigned alignment;
@@ -271,6 +326,11 @@ struct radeon_encoder {
    unsigned dpb_slots;
    unsigned roi_size;
    unsigned metadata_size;
+
+   enum {
+      DPB_LEGACY = 0,
+      DPB_TIER_2
+   } dpb_type;
 
    struct pipe_context *ectx;
 };

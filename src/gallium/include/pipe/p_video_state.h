@@ -63,6 +63,7 @@ extern "C" {
 #define PIPE_H265_MAX_NUM_LIST_REF 15
 #define PIPE_H265_MAX_ST_REF_PIC_SETS 64
 #define PIPE_H265_MAX_SUB_LAYERS 7
+#define PIPE_AV1_PRIMARY_REF_NONE 7
 
 /*
  * see table 6-12 in the spec
@@ -1330,6 +1331,8 @@ struct pipe_av1_enc_picture_desc
       uint32_t skip_mode_present:1;
       uint32_t long_term_reference:1;
       uint32_t uniform_tile_spacing:1;
+      uint32_t show_frame:1;
+      uint32_t showable_frame:1;
    };
    struct pipe_enc_quality_modes quality_modes;
    struct pipe_enc_intra_refresh intra_refresh;
@@ -1346,6 +1349,11 @@ struct pipe_av1_enc_picture_desc
    uint32_t number_of_skips;
    uint32_t temporal_id;
    uint32_t spatial_id;
+   uint32_t frame_presentation_time;
+   uint32_t current_frame_id;
+   uint32_t id_len;
+   uint32_t ref_order_hint[8];
+   uint32_t delta_frame_id_minus_1;
    uint16_t frame_width;
    uint16_t frame_height;
    uint16_t frame_width_sb;
@@ -1362,8 +1370,9 @@ struct pipe_av1_enc_picture_desc
    uint8_t refresh_frame_flags;
    uint8_t ref_frame_idx[7];
    uint32_t ref_frame_ctrl_l0;            /* forward prediction only */
-   void *ref_list[8];                     /* for tracking ref frames */
-   void *recon_frame;
+   uint32_t ref_frame_ctrl_l1;            /* backward prediction only */
+   struct pipe_video_buffer *ref_list[8];                     /* for tracking ref frames */
+   struct pipe_video_buffer *recon_frame;
 
    struct {
       uint8_t cdef_damping_minus_3;

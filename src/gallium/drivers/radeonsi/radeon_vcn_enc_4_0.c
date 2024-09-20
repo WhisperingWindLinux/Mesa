@@ -311,9 +311,8 @@ static bool radeon_enc_av1_search_requested_reference(
       indicates which slot it needs to find in ref_frame_idx[], and
       from ref_frame_idx to find the requested reference frame
       in ref_list[] */
-   #define RENCODE_AV1_REF_CTRL_L0_THIRD_ITEM (0x1c0) /* 111 000 000 */
-   uint32_t marked_ref_frame_idx = (RENCODE_AV1_REF_CTRL_L0_THIRD_ITEM &
-                                    enc->enc_pic.av1_ref_frame_ctrl_l0) >> 6;
+   uint32_t marked_ref_frame_idx =
+         enc->enc_pic.av1_ref_frame_ctrl_l0.fields.search_idx2;
    /* valid marked_ref_frame_idx > 0 */
    if (marked_ref_frame_idx) {
       uint32_t requested_frame_idx =
@@ -650,9 +649,9 @@ void radeon_enc_av1_sequence_header(struct radeon_encoder *enc, bool separate_de
    radeon_enc_code_fixed_bits(enc, enc->enc_pic.frame_id_numbers_present, 1);
    if (enc->enc_pic.frame_id_numbers_present) {
       /*  delta_frame_id_length_minus_2  */
-      radeon_enc_code_fixed_bits(enc, RENCODE_AV1_DELTA_FRAME_ID_LENGTH - 2, 4);
+      radeon_enc_code_fixed_bits(enc, enc->enc_pic.delta_frame_id_length - 2, 4);
       /*  additional_frame_id_length_minus_1  */
-      radeon_enc_code_fixed_bits(enc, RENCODE_AV1_ADDITIONAL_FRAME_ID_LENGTH - 1, 3);
+      radeon_enc_code_fixed_bits(enc, enc->enc_pic.additional_frame_id_length - 1, 3);
    }
 
    /*  use_128x128_superblock  */
@@ -768,8 +767,8 @@ static void radeon_enc_av1_frame_header(struct radeon_encoder *enc, bool frame_h
       /*  display_frame_id  */
       if (enc->enc_pic.frame_id_numbers_present)
          radeon_enc_code_fixed_bits(enc, enc->enc_pic.display_frame_id,
-                                                 RENCODE_AV1_DELTA_FRAME_ID_LENGTH +
-                                                 RENCODE_AV1_ADDITIONAL_FRAME_ID_LENGTH);
+                                                 enc->enc_pic.delta_frame_id_length +
+                                                 enc->enc_pic.additional_frame_id_length);
    } else {
       /*  frame_type  */
       radeon_enc_code_fixed_bits(enc, enc->enc_pic.frame_type, 2);
@@ -802,8 +801,8 @@ static void radeon_enc_av1_frame_header(struct radeon_encoder *enc, bool frame_h
       if (enc->enc_pic.frame_id_numbers_present)
          /*  current_frame_id  */
          radeon_enc_code_fixed_bits(enc, enc->enc_pic.frame_id,
-               RENCODE_AV1_DELTA_FRAME_ID_LENGTH +
-               RENCODE_AV1_ADDITIONAL_FRAME_ID_LENGTH);
+                                         enc->enc_pic.delta_frame_id_length +
+                                         enc->enc_pic.additional_frame_id_length);
 
       bool frame_size_override = false;
       if (enc->enc_pic.frame_type == PIPE_AV1_ENC_FRAME_TYPE_SWITCH)
@@ -855,7 +854,7 @@ static void radeon_enc_av1_frame_header(struct radeon_encoder *enc, bool frame_h
             if (enc->enc_pic.frame_id_numbers_present)
                radeon_enc_code_fixed_bits(enc,
                                           enc->enc_pic.reference_delta_frame_id - 1,
-                                          RENCODE_AV1_DELTA_FRAME_ID_LENGTH);
+                                          enc->enc_pic.delta_frame_id_length);
          }
 
          if (frame_size_override && !error_resilient_mode)
@@ -1209,9 +1208,11 @@ static void radeon_enc_header_av1(struct radeon_encoder *enc)
    enc->encode_params_codec_spec(enc);
    enc->cdf_default_table(enc);
 
-   enc->enc_pic.frame_id++;
-   if (enc->enc_pic.frame_id > (1 << (RENCODE_AV1_DELTA_FRAME_ID_LENGTH - 2)))
-      enc->enc_pic.frame_id = 0;
+   if (enc->dpb_type == DPB_LEGACY) {
+      enc->enc_pic.frame_id++;
+      if (enc->enc_pic.frame_id > (1 << (enc->enc_pic.delta_frame_id_length - 2)))
+         enc->enc_pic.frame_id = 0;
+   }
 }
 
 void radeon_enc_4_0_init(struct radeon_encoder *enc)

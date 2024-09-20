@@ -733,11 +733,56 @@ typedef struct rvcn_enc_av1_color_description_s
    uint32_t chroma_sample_position;
 }rvcn_enc_av1_color_description_t;
 
-#define AV1_ENC_FRAME_TYPE_KEY 0x00
-#define AV1_ENC_FRAME_TYPE_INTER 0x01
-#define AV1_ENC_FRAME_TYPE_INTRA_ONLY 0x02
-#define AV1_ENC_FRAME_TYPE_SWITCH 0x03
-#define AV1_ENC_FRAME_TYPE_SHOW_EXISTING 0x04
+typedef union {
+    struct {
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx0 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx1 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx2 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx3 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx4 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx5 : 3;
+        /**
+         * \brief Value used as index into ref_frame_idx[] to indicate that frame
+         * will be included in the reference list.
+         * valid value range: [1..7], invalid when value is 0.
+         */
+        uint32_t search_idx6 : 3;
+
+        /** \brief Reserved bytes for future use, must be zero. */
+        uint32_t Reserved    : 11;
+    } fields;
+    uint32_t value;
+} rvcn_enc_av1_ref_frame_ctrl;
 
 typedef struct rvcn_enc_av1_ref_frame_s
 {

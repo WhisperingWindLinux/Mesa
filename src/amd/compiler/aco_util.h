@@ -1200,6 +1200,12 @@ public:
       *std::next(begin(), length++) = T(args...);
    }
 
+   constexpr void resize_uninitialized(size_type n) noexcept
+   {
+      reserve(n);
+      length = n;
+   }
+
    constexpr void clear() noexcept
    {
       if (capacity > Size)

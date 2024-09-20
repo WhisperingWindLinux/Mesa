@@ -102,6 +102,8 @@ aco_postprocess_shader(const struct aco_compiler_options* options,
 
    if (!info->is_trap_handler_shader) {
       dominator_tree(program.get());
+      if (program->should_repair_ssa)
+         repair_ssa(program.get());
       lower_phis(program.get());
 
       if (program->gfx_level <= GFX7)

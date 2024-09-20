@@ -59,6 +59,7 @@ libaco_files = files(
   'aco_print_asm.cpp',
   'aco_print_ir.cpp',
   'aco_reindex_ssa.cpp',
+  'aco_repair_ssa.cpp',
   'aco_scheduler.cpp',
   'aco_scheduler_ilp.cpp',
   'aco_spill.cpp',

@@ -50,22 +50,6 @@ _isel_err(isel_context* ctx, const char* file, unsigned line, const nir_instr* i
    free(out);
 }
 
-struct if_context {
-   Temp cond;
-
-   bool divergent_old;
-   bool had_divergent_discard_old;
-   bool had_divergent_discard_then;
-   bool has_divergent_continue_old;
-   bool has_divergent_continue_then;
-   struct exec_info exec_old;
-
-   unsigned BB_if_idx;
-   unsigned invert_idx;
-   Block BB_invert;
-   Block BB_endif;
-};
-
 struct loop_context {
    Block loop_exit;
 
@@ -8272,6 +8256,10 @@ visit_cmat_muladd(isel_context* ctx, nir_intrinsic_instr* instr)
    emit_split_vector(ctx, dst, instr->def.num_components);
 }
 
+static void begin_empty_exec_skip(isel_context* ctx, nir_instr* instr, nir_block* block);
+
+static void end_empty_exec_skip(isel_context* ctx);
+
 void
 visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
 {
@@ -9123,11 +9111,13 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       }
 
       bld.pseudo(aco_opcode::p_demote_to_helper, cond);
-
-      if (ctx->block->loop_nest_depth || ctx->cf_info.parent_if.is_divergent)
-         ctx->cf_info.exec.potentially_empty_discard = true;
-
       ctx->block->kind |= block_kind_uses_discard;
+
+      if (ctx->block->loop_nest_depth || ctx->cf_info.parent_if.is_divergent) {
+         ctx->cf_info.exec.potentially_empty_discard = true;
+         begin_empty_exec_skip(ctx, &instr->instr, instr->instr.block);
+      }
+
       ctx->program->needs_exact = true;
 
       /* Enable WQM in order to prevent helper lanes from getting terminated. */
@@ -9149,11 +9139,13 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       }
 
       bld.pseudo(aco_opcode::p_discard_if, cond);
-
-      if (ctx->block->loop_nest_depth || ctx->cf_info.parent_if.is_divergent)
-         ctx->cf_info.exec.potentially_empty_discard = true;
-      ctx->cf_info.had_divergent_discard |= in_exec_divergent_or_in_loop(ctx);
       ctx->block->kind |= block_kind_uses_discard;
+
+      if (ctx->block->loop_nest_depth || ctx->cf_info.parent_if.is_divergent) {
+         ctx->cf_info.exec.potentially_empty_discard = true;
+         begin_empty_exec_skip(ctx, &instr->instr, instr->instr.block);
+      }
+      ctx->cf_info.had_divergent_discard |= in_exec_divergent_or_in_loop(ctx);
       ctx->program->needs_exact = true;
       break;
    }
@@ -10277,7 +10269,6 @@ visit_undef(isel_context* ctx, nir_undef_instr* instr)
 void
 begin_loop(isel_context* ctx, loop_context* lc)
 {
-   // TODO: we might want to wrap the loop around a branch if exec.potentially_empty=true
    append_logical_end(ctx->block);
    ctx->block->kind |= block_kind_loop_preheader | block_kind_uniform;
    Builder bld(ctx->program, ctx->block);
@@ -10371,6 +10362,9 @@ end_loop(isel_context* ctx, loop_context* lc)
          if (!ctx->cf_info.parent_loop.has_divergent_branch)
             add_logical_edge(block_idx, &ctx->program->blocks[loop_header_idx]);
          ctx->block = &ctx->program->blocks[block_idx];
+
+         /* SGPR temporaries might need loop exit phis to be created. */
+         ctx->program->should_repair_ssa = true;
       } else {
          ctx->block->kind |= (block_kind_continue | block_kind_uniform);
          if (!ctx->cf_info.parent_loop.has_divergent_branch)
@@ -10406,6 +10400,14 @@ emit_loop_jump(isel_context* ctx, bool is_break)
    append_logical_end(ctx->block);
    unsigned idx = ctx->block->index;
 
+   /* If exec is empty inside uniform control flow in a loop, we can assume that all invocations
+    * of the loop are inactive. Breaking from the loop is the right thing to do in that case.
+    * We shouldn't perform a uniform continue, or else we might never reach a break.
+    */
+   bool empty_exec =
+      ctx->cf_info.exec.potentially_empty_discard || ctx->cf_info.exec.potentially_empty_break ||
+      ctx->cf_info.exec.potentially_empty_continue;
+
    if (is_break) {
       logical_target = ctx->cf_info.parent_loop.exit;
       add_logical_edge(idx, logical_target);
@@ -10431,7 +10433,7 @@ emit_loop_jump(isel_context* ctx, bool is_break)
       add_logical_edge(idx, logical_target);
       ctx->block->kind |= block_kind_continue;
 
-      if (!ctx->cf_info.parent_if.is_divergent) {
+      if (!ctx->cf_info.parent_if.is_divergent && !empty_exec) {
          /* uniform continue - directly jump to the loop header */
          ctx->block->kind |= block_kind_uniform;
          ctx->cf_info.has_branch = true;
@@ -10440,14 +10442,17 @@ emit_loop_jump(isel_context* ctx, bool is_break)
          return;
       }
 
-      /* for potential uniform breaks after this continue,
-         we must ensure that they are handled correctly */
-      ctx->cf_info.parent_loop.has_divergent_continue = true;
       ctx->cf_info.parent_loop.has_divergent_branch = true;
 
-      if (!ctx->cf_info.exec.potentially_empty_continue) {
-         ctx->cf_info.exec.potentially_empty_continue = true;
-         ctx->cf_info.exec.potentially_empty_continue_depth = ctx->block->loop_nest_depth;
+      if (ctx->cf_info.parent_if.is_divergent) {
+         /* for potential uniform breaks after this continue,
+            we must ensure that they are handled correctly */
+         ctx->cf_info.parent_loop.has_divergent_continue = true;
+
+         if (!ctx->cf_info.exec.potentially_empty_continue) {
+            ctx->cf_info.exec.potentially_empty_continue = true;
+            ctx->cf_info.exec.potentially_empty_continue_depth = ctx->block->loop_nest_depth;
+         }
       }
    }
 
@@ -10484,6 +10489,8 @@ emit_loop_continue(isel_context* ctx)
 void
 visit_jump(isel_context* ctx, nir_jump_instr* instr)
 {
+   end_empty_exec_skip(ctx);
+
    switch (instr->type) {
    case nir_jump_break: emit_loop_break(ctx); break;
    case nir_jump_continue: emit_loop_continue(ctx); break;
@@ -10502,6 +10509,11 @@ visit_block(isel_context* ctx, nir_block* block)
       ctx->unended_linear_vgprs.clear();
    }
 
+   nir_foreach_phi (instr, block)
+      visit_phi(ctx, instr);
+
+   begin_empty_exec_skip(ctx, &nir_block_last_phi_instr(block)->instr, block);
+
    ctx->block->instructions.reserve(ctx->block->instructions.size() +
                                     exec_list_length(&block->instr_list) * 2);
    nir_foreach_instr (instr, block) {
@@ -10510,99 +10522,11 @@ visit_block(isel_context* ctx, nir_block* block)
       case nir_instr_type_load_const: visit_load_const(ctx, nir_instr_as_load_const(instr)); break;
       case nir_instr_type_intrinsic: visit_intrinsic(ctx, nir_instr_as_intrinsic(instr)); break;
       case nir_instr_type_tex: visit_tex(ctx, nir_instr_as_tex(instr)); break;
-      case nir_instr_type_phi: visit_phi(ctx, nir_instr_as_phi(instr)); break;
+      case nir_instr_type_phi: break;
       case nir_instr_type_undef: visit_undef(ctx, nir_instr_as_undef(instr)); break;
       case nir_instr_type_deref: break;
       case nir_instr_type_jump: visit_jump(ctx, nir_instr_as_jump(instr)); break;
       default: isel_err(instr, "Unknown NIR instr type");
-      }
-   }
-}
-
-static bool
-all_uses_inside_loop(nir_def* def, nir_block* block_before_loop, nir_block* block_after_loop)
-{
-   nir_foreach_use_including_if (use, def) {
-      if (nir_src_is_if(use)) {
-         nir_block* branch_block =
-            nir_cf_node_as_block(nir_cf_node_prev(&nir_src_parent_if(use)->cf_node));
-         if (branch_block->index <= block_before_loop->index || branch_block->index >= block_after_loop->index)
-            return false;
-      } else {
-         nir_instr* instr = nir_src_parent_instr(use);
-         if ((instr->block->index <= block_before_loop->index || instr->block->index >= block_after_loop->index) &&
-             !(instr->type == nir_instr_type_phi && instr->block == block_after_loop)) {
-            return false;
-         }
-      }
-   }
-
-   return true;
-}
-
-Temp
-rename_temp(const std::map<unsigned, unsigned>& renames, Temp tmp)
-{
-   auto it = renames.find(tmp.id());
-   if (it != renames.end())
-      return Temp(it->second, tmp.regClass());
-   return tmp;
-}
-
-static void
-lcssa_workaround(isel_context* ctx, nir_loop* loop)
-{
-   nir_block* block_before_loop = nir_cf_node_as_block(nir_cf_node_prev(&loop->cf_node));
-   nir_block* block_after_loop = nir_cf_node_as_block(nir_cf_node_next(&loop->cf_node));
-
-   std::map<unsigned, unsigned> renames;
-   nir_foreach_block_in_cf_node (block, &loop->cf_node) {
-      /* These values are reachable from the loop exit even when continue_or_break is used. We
-       * shouldn't create phis with undef operands in case the contents are important even if exec
-       * is zero (for example, memory access addresses). */
-      if (nir_block_dominates(block, nir_loop_last_block(loop)))
-         continue;
-
-      /* Definitions in this block are not reachable from the loop exit, and so all uses are inside
-       * the loop. */
-      if (!nir_block_dominates(block, block_after_loop))
-         continue;
-
-      nir_foreach_instr (instr, block) {
-         nir_def* def = nir_instr_def(instr);
-         if (!def)
-            continue;
-
-         Temp tmp = get_ssa_temp(ctx, def);
-         if (!tmp.is_linear() || all_uses_inside_loop(def, block_before_loop, block_after_loop))
-            continue;
-
-         Temp new_tmp = ctx->program->allocateTmp(tmp.regClass());
-         aco_ptr<Instruction> phi(create_instruction(aco_opcode::p_phi, Format::PSEUDO,
-                                                     ctx->block->logical_preds.size(), 1));
-         for (unsigned i = 0; i < ctx->block->logical_preds.size(); i++)
-            phi->operands[i] = Operand(new_tmp);
-         phi->definitions[0] = Definition(tmp);
-         ctx->block->instructions.emplace(ctx->block->instructions.begin(), std::move(phi));
-
-         renames.emplace(tmp.id(), new_tmp.id());
-      }
-   }
-
-   if (renames.empty())
-      return;
-
-   for (unsigned i = ctx->block->index - 1;
-        ctx->program->blocks[i].loop_nest_depth > ctx->block->loop_nest_depth; i--) {
-      for (aco_ptr<Instruction>& instr : ctx->program->blocks[i].instructions) {
-         for (Definition& def : instr->definitions) {
-            if (def.isTemp())
-               def.setTemp(rename_temp(renames, def.getTemp()));
-         }
-         for (Operand& op : instr->operands) {
-            if (op.isTemp())
-               op.setTemp(rename_temp(renames, op.getTemp()));
-         }
       }
    }
 }
@@ -10621,18 +10545,12 @@ visit_loop(isel_context* ctx, nir_loop* loop)
    visit_cf_list(ctx, &loop->body);
 
    end_loop(ctx, &lc);
-
-   /* Create extra LCSSA phis for continue_or_break */
-   if (ctx->block->linear_preds.size() > ctx->block->logical_preds.size())
-      lcssa_workaround(ctx, loop);
 }
 
 static void
 begin_divergent_if_then(isel_context* ctx, if_context* ic, Temp cond,
                         nir_selection_control sel_ctrl = nir_selection_control_none)
 {
-   ic->cond = cond;
-
    append_logical_end(ctx->block);
    ctx->block->kind |= block_kind_branch;
 
@@ -10781,7 +10699,7 @@ end_divergent_if(isel_context* ctx, if_context* ic)
 static void
 begin_uniform_if_then(isel_context* ctx, if_context* ic, Temp cond)
 {
-   assert(cond.regClass() == s1);
+   assert(!cond.id() || cond.regClass() == s1);
 
    append_logical_end(ctx->block);
    ctx->block->kind |= block_kind_uniform;
@@ -10790,8 +10708,13 @@ begin_uniform_if_then(isel_context* ctx, if_context* ic, Temp cond)
    aco_opcode branch_opcode = aco_opcode::p_cbranch_z;
    branch.reset(create_instruction(branch_opcode, Format::PSEUDO_BRANCH, 1, 1));
    branch->definitions[0] = Definition(ctx->program->allocateTmp(s2));
-   branch->operands[0] = Operand(cond);
-   branch->operands[0].setFixed(scc);
+   if (cond.id()) {
+      branch->operands[0] = Operand(cond);
+      branch->operands[0].setFixed(scc);
+   } else {
+      branch->operands[0] = Operand(exec, ctx->program->lane_mask);
+      branch->branch().rarely_taken = true;
+   }
    ctx->block->instructions.emplace_back(std::move(branch));
 
    ic->BB_if_idx = ctx->block->index;
@@ -10879,6 +10802,58 @@ end_uniform_if(isel_context* ctx, if_context* ic)
 }
 
 static void
+end_empty_exec_skip(isel_context* ctx)
+{
+   if (ctx->cf_info.skipping_empty_exec) {
+      begin_uniform_if_else(ctx, &ctx->cf_info.empty_exec_skip);
+      end_uniform_if(ctx, &ctx->cf_info.empty_exec_skip);
+      ctx->block->kind |= block_kind_allow_repair_phis;
+      ctx->cf_info.skipping_empty_exec = false;
+
+      ctx->cf_info.exec.combine(ctx->cf_info.empty_exec_skip.exec_old);
+   }
+}
+
+static void
+begin_empty_exec_skip(isel_context* ctx, nir_instr* after_instr, nir_block* block)
+{
+   if (!ctx->cf_info.exec.potentially_empty_discard && !ctx->cf_info.exec.potentially_empty_break &&
+       !ctx->cf_info.exec.potentially_empty_continue)
+      return;
+
+   assert(!(ctx->block->kind & block_kind_top_level));
+
+   nir_cf_node* next_cf_node = nir_cf_node_next(&block->cf_node);
+   bool further_cf_not_divergent_if =
+      next_cf_node && (next_cf_node->type != nir_cf_node_if ||
+                       !nir_src_is_divergent(nir_cf_node_as_if(next_cf_node)->condition));
+
+   bool rest_of_block_empty = false;
+   if (after_instr) {
+      rest_of_block_empty =
+         nir_instr_is_last(after_instr) || nir_instr_next(after_instr)->type == nir_instr_type_jump;
+   } else {
+      rest_of_block_empty = exec_list_is_empty(&block->instr_list) ||
+                            nir_block_first_instr(block)->type == nir_instr_type_jump;
+   }
+
+   assert(!(ctx->block->kind & block_kind_export_end) || rest_of_block_empty);
+
+   if (rest_of_block_empty && !further_cf_not_divergent_if)
+      return;
+
+   end_empty_exec_skip(ctx);
+
+   begin_uniform_if_then(ctx, &ctx->cf_info.empty_exec_skip, Temp());
+   ctx->cf_info.skipping_empty_exec = true;
+
+   ctx->cf_info.empty_exec_skip.exec_old = ctx->cf_info.exec;
+   ctx->cf_info.exec = exec_info();
+
+   ctx->program->should_repair_ssa = true;
+}
+
+static void
 visit_if(isel_context* ctx, nir_if* if_stmt)
 {
    Temp cond = get_ssa_temp(ctx, if_stmt->condition.ssa);
@@ -10952,6 +10927,13 @@ visit_if(isel_context* ctx, nir_if* if_stmt)
 static void
 visit_cf_list(isel_context* ctx, struct exec_list* list)
 {
+   if (nir_cf_list_is_empty_block(list))
+      return;
+
+   bool skipping_empty_exec_old = ctx->cf_info.skipping_empty_exec;
+   if_context empty_exec_skip_old = std::move(ctx->cf_info.empty_exec_skip);
+   ctx->cf_info.skipping_empty_exec = false;
+
    foreach_list_typed (nir_cf_node, node, node, list) {
       switch (node->type) {
       case nir_cf_node_block: visit_block(ctx, nir_cf_node_as_block(node)); break;
@@ -10960,6 +10942,10 @@ visit_cf_list(isel_context* ctx, struct exec_list* list)
       default: unreachable("unimplemented cf list type");
       }
    }
+
+   end_empty_exec_skip(ctx);
+   ctx->cf_info.skipping_empty_exec = skipping_empty_exec_old;
+   ctx->cf_info.empty_exec_skip = std::move(empty_exec_skip_old);
 }
 
 static void

@@ -3327,36 +3327,10 @@ radv_emit_culling(struct radv_cmd_buffer *cmd_buffer)
 }
 
 static void
-radv_emit_provoking_vertex_mode(struct radv_cmd_buffer *cmd_buffer)
-{
-   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
-   const unsigned stage = last_vgt_shader->info.stage;
-   const struct radv_dynamic_state *d = &cmd_buffer->state.dynamic;
-   const uint32_t ngg_provoking_vtx_offset = radv_get_user_sgpr_loc(last_vgt_shader, AC_UD_NGG_PROVOKING_VTX);
-   unsigned provoking_vtx = 0;
-
-   if (!ngg_provoking_vtx_offset)
-      return;
-
-   if (d->vk.rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT) {
-      if (stage == MESA_SHADER_VERTEX) {
-         provoking_vtx = radv_conv_prim_to_gs_out(d->vk.ia.primitive_topology, last_vgt_shader->info.is_ngg);
-      } else {
-         assert(stage == MESA_SHADER_GEOMETRY);
-         provoking_vtx = last_vgt_shader->info.gs.vertices_in - 1;
-      }
-   }
-
-   radeon_set_sh_reg(cmd_buffer->cs, ngg_provoking_vtx_offset, provoking_vtx);
-}
-
-static void
 radv_emit_primitive_topology(struct radv_cmd_buffer *cmd_buffer)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
-   const uint32_t verts_per_prim_offset = radv_get_user_sgpr_loc(last_vgt_shader, AC_UD_NUM_VERTS_PER_PRIM);
    const uint32_t vgt_gs_out_prim_type = radv_get_rasterization_prim(cmd_buffer);
    const struct radv_dynamic_state *d = &cmd_buffer->state.dynamic;
 
@@ -3374,12 +3348,6 @@ radv_emit_primitive_topology(struct radv_cmd_buffer *cmd_buffer)
    }
 
    radv_emit_vgt_gs_out(cmd_buffer, vgt_gs_out_prim_type);
-
-   if (!verts_per_prim_offset)
-      return;
-
-   radeon_set_sh_reg(cmd_buffer->cs, verts_per_prim_offset,
-                     radv_conv_prim_to_gs_out(d->vk.ia.primitive_topology, last_vgt_shader->info.is_ngg) + 1);
 }
 
 static void
@@ -5745,9 +5713,6 @@ radv_cmd_buffer_flush_dynamic_state(struct radv_cmd_buffer *cmd_buffer, const ui
                  RADV_DYNAMIC_LINE_RASTERIZATION_MODE))
       radv_emit_culling(cmd_buffer);
 
-   if (states & (RADV_DYNAMIC_PROVOKING_VERTEX_MODE | RADV_DYNAMIC_PRIMITIVE_TOPOLOGY))
-      radv_emit_provoking_vertex_mode(cmd_buffer);
-
    if ((states & RADV_DYNAMIC_PRIMITIVE_TOPOLOGY) ||
        (pdev->info.gfx_level >= GFX12 && states & RADV_DYNAMIC_PATCH_CONTROL_POINTS))
       radv_emit_primitive_topology(cmd_buffer);
@@ -6365,74 +6330,6 @@ radv_flush_streamout_descriptors(struct radv_cmd_buffer *cmd_buffer)
    }
 
    cmd_buffer->state.dirty &= ~RADV_CMD_DIRTY_STREAMOUT_BUFFER;
-}
-
-static void
-radv_flush_shader_query_state_gfx(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
-   const uint32_t shader_query_state_offset = radv_get_user_sgpr_loc(last_vgt_shader, AC_UD_SHADER_QUERY_STATE);
-   enum radv_shader_query_state shader_query_state = radv_shader_query_none;
-
-   if (!shader_query_state_offset)
-      return;
-
-   assert(last_vgt_shader->info.is_ngg);
-
-   /* By default shader queries are disabled but they are enabled if the command buffer has active GDS
-    * queries or if it's a secondary command buffer that inherits the number of generated
-    * primitives.
-    */
-   if (cmd_buffer->state.active_pipeline_gds_queries ||
-       (cmd_buffer->state.inherited_pipeline_statistics & VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT) ||
-       (pdev->emulate_mesh_shader_queries && (cmd_buffer->state.inherited_pipeline_statistics &
-                                              VK_QUERY_PIPELINE_STATISTIC_MESH_SHADER_INVOCATIONS_BIT_EXT)))
-      shader_query_state |= radv_shader_query_pipeline_stat;
-
-   if (cmd_buffer->state.active_prims_gen_gds_queries)
-      shader_query_state |= radv_shader_query_prim_gen;
-
-   if (cmd_buffer->state.active_prims_xfb_gds_queries && radv_is_streamout_enabled(cmd_buffer)) {
-      shader_query_state |= radv_shader_query_prim_xfb | radv_shader_query_prim_gen;
-   }
-
-   radeon_set_sh_reg(cmd_buffer->cs, shader_query_state_offset, shader_query_state);
-}
-
-static void
-radv_flush_shader_query_state_ace(struct radv_cmd_buffer *cmd_buffer, struct radv_shader *task_shader)
-{
-   const uint32_t shader_query_state_offset = radv_get_user_sgpr_loc(task_shader, AC_UD_SHADER_QUERY_STATE);
-   enum radv_shader_query_state shader_query_state = radv_shader_query_none;
-
-   if (!shader_query_state_offset)
-      return;
-
-   /* By default shader queries are disabled but they are enabled if the command buffer has active ACE
-    * queries or if it's a secondary command buffer that inherits the number of task shader
-    * invocations query.
-    */
-   if (cmd_buffer->state.active_pipeline_ace_queries ||
-       (cmd_buffer->state.inherited_pipeline_statistics & VK_QUERY_PIPELINE_STATISTIC_TASK_SHADER_INVOCATIONS_BIT_EXT))
-      shader_query_state |= radv_shader_query_pipeline_stat;
-
-   radeon_set_sh_reg(cmd_buffer->gang.cs, shader_query_state_offset, shader_query_state);
-}
-
-static void
-radv_flush_shader_query_state(struct radv_cmd_buffer *cmd_buffer)
-{
-   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-
-   radv_flush_shader_query_state_gfx(cmd_buffer);
-
-   if (radv_cmdbuf_has_stage(cmd_buffer, MESA_SHADER_TASK) && pdev->emulate_mesh_shader_queries)
-      radv_flush_shader_query_state_ace(cmd_buffer, cmd_buffer->state.shaders[MESA_SHADER_TASK]);
-
-   cmd_buffer->state.dirty &= ~RADV_CMD_DIRTY_SHADER_QUERY;
 }
 
 static void
@@ -7806,10 +7703,8 @@ radv_bind_pre_rast_shader(struct radv_cmd_buffer *cmd_buffer, const struct radv_
           shader->info.stage == MESA_SHADER_TESS_EVAL || shader->info.stage == MESA_SHADER_GEOMETRY ||
           shader->info.stage == MESA_SHADER_MESH);
 
-   if (radv_get_user_sgpr_info(shader, AC_UD_NGG_PROVOKING_VTX)->sgpr_idx != -1) {
-      /* Re-emit the provoking vertex mode state because the SGPR idx can be different. */
-      cmd_buffer->state.dirty_dynamic |= RADV_DYNAMIC_PROVOKING_VERTEX_MODE;
-   }
+   if (radv_get_user_sgpr_info(shader, AC_UD_NGG_STATE)->sgpr_idx != -1)
+      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_NGG_STATE;
 
    if (radv_get_user_sgpr_info(shader, AC_UD_STREAMOUT_BUFFERS)->sgpr_idx != -1) {
       /* Re-emit the streamout buffers because the SGPR idx can be different and with NGG streamout
@@ -7821,16 +7716,6 @@ radv_bind_pre_rast_shader(struct radv_cmd_buffer *cmd_buffer, const struct radv_
          /* GFX11 needs GDS OA for streamout. */
          cmd_buffer->gds_oa_needed = true;
       }
-   }
-
-   if (radv_get_user_sgpr_info(shader, AC_UD_NUM_VERTS_PER_PRIM)->sgpr_idx != -1) {
-      /* Re-emit the primitive topology because the SGPR idx can be different. */
-      cmd_buffer->state.dirty_dynamic |= RADV_DYNAMIC_PRIMITIVE_TOPOLOGY;
-   }
-
-   if (radv_get_user_sgpr_info(shader, AC_UD_SHADER_QUERY_STATE)->sgpr_idx != -1) {
-      /* Re-emit shader query state when SGPR exists but location potentially changed. */
-      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_SHADER_QUERY;
    }
 
    const bool needs_vtx_sgpr =
@@ -7961,10 +7846,8 @@ radv_bind_fragment_shader(struct radv_cmd_buffer *cmd_buffer, const struct radv_
       cmd_buffer->sample_positions_needed = true;
    }
 
-   /* Re-emit the FS state because the SGPR idx can be different. */
-   if (radv_get_user_sgpr_info(ps, AC_UD_PS_STATE)->sgpr_idx != -1) {
-      cmd_buffer->state.dirty_dynamic |= RADV_DYNAMIC_RASTERIZATION_SAMPLES | RADV_DYNAMIC_LINE_RASTERIZATION_MODE;
-   }
+   if (radv_get_user_sgpr_info(ps, AC_UD_PS_STATE)->sgpr_idx != -1)
+      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_FS_STATE;
 
    /* Re-emit the conservative rasterization mode because inner coverage is different. */
    if (!previous_ps || previous_ps->info.ps.reads_fully_covered != ps->info.ps.reads_fully_covered)
@@ -8006,6 +7889,9 @@ radv_bind_task_shader(struct radv_cmd_buffer *cmd_buffer, const struct radv_shad
 {
    if (!radv_gang_init(cmd_buffer))
       return;
+
+   if (radv_get_user_sgpr_info(ts, AC_UD_TASK_STATE)->sgpr_idx != -1)
+      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_TASK_STATE;
 
    cmd_buffer->task_rings_needed = true;
 }
@@ -10636,6 +10522,124 @@ radv_emit_fs_state(struct radv_cmd_buffer *cmd_buffer)
    radeon_set_sh_reg(cmd_buffer->cs, ps_state_offset, ps_state);
 }
 
+static uint32_t
+radv_get_ngg_state_num_verts_per_prim(struct radv_cmd_buffer *cmd_buffer)
+{
+   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
+   const struct radv_dynamic_state *d = &cmd_buffer->state.dynamic;
+
+   return radv_conv_prim_to_gs_out(d->vk.ia.primitive_topology, last_vgt_shader->info.is_ngg) + 1;
+}
+
+static uint32_t
+radv_get_ngg_state_provoking_vtx(struct radv_cmd_buffer *cmd_buffer)
+{
+   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
+   const struct radv_dynamic_state *d = &cmd_buffer->state.dynamic;
+   const unsigned stage = last_vgt_shader->info.stage;
+   unsigned provoking_vtx = 0;
+
+   if (d->vk.rs.provoking_vertex == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT) {
+      if (stage == MESA_SHADER_VERTEX) {
+         provoking_vtx = radv_conv_prim_to_gs_out(d->vk.ia.primitive_topology, last_vgt_shader->info.is_ngg);
+      } else {
+         assert(stage == MESA_SHADER_GEOMETRY);
+         provoking_vtx = last_vgt_shader->info.gs.vertices_in - 1;
+      }
+   }
+
+   return provoking_vtx;
+}
+
+static uint32_t
+radv_get_ngg_state_query(struct radv_cmd_buffer *cmd_buffer)
+{
+   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   enum radv_shader_query_state shader_query_state = radv_shader_query_none;
+
+   /* By default shader queries are disabled but they are enabled if the command buffer has active GDS
+    * queries or if it's a secondary command buffer that inherits the number of generated
+    * primitives.
+    */
+   if (cmd_buffer->state.active_pipeline_gds_queries ||
+       (cmd_buffer->state.inherited_pipeline_statistics & VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT) ||
+       (pdev->emulate_mesh_shader_queries && (cmd_buffer->state.inherited_pipeline_statistics &
+                                              VK_QUERY_PIPELINE_STATISTIC_MESH_SHADER_INVOCATIONS_BIT_EXT)))
+      shader_query_state |= radv_shader_query_pipeline_stat;
+
+   if (cmd_buffer->state.active_prims_gen_gds_queries)
+      shader_query_state |= radv_shader_query_prim_gen;
+
+   if (cmd_buffer->state.active_prims_xfb_gds_queries && radv_is_streamout_enabled(cmd_buffer))
+      shader_query_state |= radv_shader_query_prim_xfb | radv_shader_query_prim_gen;
+
+   return shader_query_state;
+}
+
+static void
+radv_emit_ngg_state(struct radv_cmd_buffer *cmd_buffer)
+{
+   const struct radv_shader *last_vgt_shader = cmd_buffer->state.last_vgt_shader;
+
+   const uint32_t ngg_state_offset = radv_get_user_sgpr_loc(last_vgt_shader, AC_UD_NGG_STATE);
+   if (!ngg_state_offset)
+      return;
+
+   const uint32_t ngg_state =
+      SET_SGPR_FIELD(NGG_STATE_NUM_VERTS_PER_PRIM, radv_get_ngg_state_num_verts_per_prim(cmd_buffer)) |
+      SET_SGPR_FIELD(NGG_STATE_PROVOKING_VTX, radv_get_ngg_state_provoking_vtx(cmd_buffer)) |
+      SET_SGPR_FIELD(NGG_STATE_QUERY, radv_get_ngg_state_query(cmd_buffer));
+
+   radeon_set_sh_reg(cmd_buffer->cs, ngg_state_offset, ngg_state);
+}
+
+static void
+radv_emit_task_state(struct radv_cmd_buffer *cmd_buffer)
+{
+   struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   const struct radv_shader *task_shader = cmd_buffer->state.shaders[MESA_SHADER_TASK];
+
+   if (!task_shader || !pdev->emulate_mesh_shader_queries)
+      return;
+
+   const uint32_t task_state_offset = radv_get_user_sgpr_loc(task_shader, AC_UD_TASK_STATE);
+   enum radv_shader_query_state shader_query_state = radv_shader_query_none;
+
+   if (!task_state_offset)
+      return;
+
+   /* By default shader queries are disabled but they are enabled if the command buffer has active ACE
+    * queries or if it's a secondary command buffer that inherits the number of task shader
+    * invocations query.
+    */
+   if (cmd_buffer->state.active_pipeline_ace_queries ||
+       (cmd_buffer->state.inherited_pipeline_statistics & VK_QUERY_PIPELINE_STATISTIC_TASK_SHADER_INVOCATIONS_BIT_EXT))
+      shader_query_state |= radv_shader_query_pipeline_stat;
+
+   radeon_set_sh_reg(cmd_buffer->gang.cs, task_state_offset, shader_query_state);
+}
+
+static void
+radv_emit_shaders_state(struct radv_cmd_buffer *cmd_buffer)
+{
+   if (cmd_buffer->state.dirty & RADV_CMD_DIRTY_FS_STATE) {
+      radv_emit_fs_state(cmd_buffer);
+      cmd_buffer->state.dirty &= ~RADV_CMD_DIRTY_FS_STATE;
+   }
+
+   if (cmd_buffer->state.dirty & RADV_CMD_DIRTY_NGG_STATE) {
+      radv_emit_ngg_state(cmd_buffer);
+      cmd_buffer->state.dirty &= ~RADV_CMD_DIRTY_NGG_STATE;
+   }
+
+   if (cmd_buffer->state.dirty & RADV_CMD_DIRTY_TASK_STATE) {
+      radv_emit_task_state(cmd_buffer);
+      cmd_buffer->state.dirty &= ~RADV_CMD_DIRTY_TASK_STATE;
+   }
+}
+
 static void
 radv_emit_db_shader_control(struct radv_cmd_buffer *cmd_buffer)
 {
@@ -10766,6 +10770,17 @@ radv_emit_color_output_state(struct radv_cmd_buffer *cmd_buffer)
 }
 
 static void
+radv_handle_dirty_shaders_state(struct radv_cmd_buffer *cmd_buffer, uint64_t dynamic_states)
+{
+   if (dynamic_states & (RADV_DYNAMIC_RASTERIZATION_SAMPLES | RADV_DYNAMIC_LINE_RASTERIZATION_MODE |
+                         RADV_DYNAMIC_PRIMITIVE_TOPOLOGY | RADV_DYNAMIC_POLYGON_MODE))
+      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_FS_STATE;
+
+   if (dynamic_states & (RADV_DYNAMIC_PRIMITIVE_TOPOLOGY | RADV_DYNAMIC_PROVOKING_VERTEX_MODE))
+      cmd_buffer->state.dirty |= RADV_CMD_DIRTY_NGG_STATE;
+}
+
+static void
 radv_emit_all_graphics_states(struct radv_cmd_buffer *cmd_buffer, const struct radv_draw_info *info)
 {
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
@@ -10818,9 +10833,6 @@ radv_emit_all_graphics_states(struct radv_cmd_buffer *cmd_buffer, const struct r
 
    if (cmd_buffer->state.dirty & RADV_CMD_DIRTY_RBPLUS)
       radv_emit_rbplus_state(cmd_buffer);
-
-   if (cmd_buffer->state.dirty & RADV_CMD_DIRTY_SHADER_QUERY)
-      radv_flush_shader_query_state(cmd_buffer);
 
    if ((cmd_buffer->state.dirty & RADV_CMD_DIRTY_OCCLUSION_QUERY) ||
        (cmd_buffer->state.dirty_dynamic & (RADV_DYNAMIC_RASTERIZATION_SAMPLES | RADV_DYNAMIC_PRIMITIVE_TOPOLOGY)))
@@ -10876,10 +10888,10 @@ radv_emit_all_graphics_states(struct radv_cmd_buffer *cmd_buffer, const struct r
    if (dynamic_states) {
       radv_cmd_buffer_flush_dynamic_state(cmd_buffer, dynamic_states);
 
-      if (dynamic_states & (RADV_DYNAMIC_RASTERIZATION_SAMPLES | RADV_DYNAMIC_LINE_RASTERIZATION_MODE |
-                            RADV_DYNAMIC_PRIMITIVE_TOPOLOGY | RADV_DYNAMIC_POLYGON_MODE))
-         radv_emit_fs_state(cmd_buffer);
+      radv_handle_dirty_shaders_state(cmd_buffer, dynamic_states);
    }
+
+   radv_emit_shaders_state(cmd_buffer);
 
    radv_emit_draw_registers(cmd_buffer, info);
 

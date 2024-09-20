@@ -232,7 +232,8 @@ pipe_loader_drm_zink_probe(struct pipe_loader_device **devs, int ndev);
  * device fd.
  */
 int
-pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd);
+pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd,
+                                                    int *dev_idx);
 
 /**
  * Initialize a DRM device in an already opened fd.

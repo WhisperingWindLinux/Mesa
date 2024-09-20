@@ -172,7 +172,7 @@ nouveau_zink_predicate(int fd, const char *driver)
  */
 int
 loader_open_render_node_platform_device(const char * const drivers[],
-                                        unsigned int n_drivers)
+                                        unsigned int n_drivers, int *dev_idx)
 {
    drmDevicePtr devices[MAX_DRM_DEVICES], device;
    int num_devices, fd = -1;
@@ -183,7 +183,7 @@ loader_open_render_node_platform_device(const char * const drivers[],
    if (num_devices <= 0)
       return -ENOENT;
 
-   for (i = 0; i < num_devices; i++) {
+   for (i = *dev_idx; i < num_devices; i++) {
       device = devices[i];
 
       if ((device->available_nodes & (1 << DRM_NODE_RENDER)) &&
@@ -217,6 +217,8 @@ loader_open_render_node_platform_device(const char * const drivers[],
       }
    }
    drmFreeDevices(devices, num_devices);
+
+   *dev_idx = i;
 
    if (i == num_devices)
       return -ENOENT;

@@ -2043,7 +2043,8 @@ int
 dri_query_compatible_render_only_device_fd(int kms_only_fd)
 {
 #ifdef HAVE_LIBDRM
-   return pipe_loader_get_compatible_render_capable_device_fd(kms_only_fd);
+   int start_idx = 0;
+   return pipe_loader_get_compatible_render_capable_device_fd(kms_only_fd, &start_idx);
 #else
    return -1;
 #endif

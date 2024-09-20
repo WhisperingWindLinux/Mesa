@@ -48,7 +48,7 @@ loader_get_kernel_driver_name(int fd);
 
 int
 loader_open_render_node_platform_device(const char * const drivers[],
-                                        unsigned int n_drivers);
+                                        unsigned int n_drivers, int *dev_idx);
 
 bool
 loader_is_device_render_capable(int fd);

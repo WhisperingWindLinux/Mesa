@@ -308,7 +308,7 @@ pipe_loader_drm_release(struct pipe_loader_device **dev)
 }
 
 int
-pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd)
+pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd, int *start_idx)
 {
    bool is_platform_device;
    struct pipe_loader_device *dev;
@@ -350,7 +350,7 @@ pipe_loader_get_compatible_render_capable_device_fd(int kms_only_fd)
    if (ARRAY_SIZE(drivers) == 0)
       return -1;
 
-   return loader_open_render_node_platform_device(drivers, ARRAY_SIZE(drivers));
+   return loader_open_render_node_platform_device(drivers, ARRAY_SIZE(drivers), start_idx);
 }
 
 static const struct driOptionDescription *

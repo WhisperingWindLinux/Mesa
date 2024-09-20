@@ -575,6 +575,7 @@ tegra_screen_create(int fd)
 {
    struct tegra_screen *screen;
    const char * const drivers[] = {"nouveau"};
+   int start_idx = 0;
 
    screen = calloc(1, sizeof(*screen));
    if (!screen)
@@ -583,7 +584,7 @@ tegra_screen_create(int fd)
    screen->fd = fd;
 
    screen->gpu_fd =
-      loader_open_render_node_platform_device(drivers, ARRAY_SIZE(drivers));
+      loader_open_render_node_platform_device(drivers, ARRAY_SIZE(drivers), &start_idx);
    if (screen->gpu_fd < 0) {
       if (errno != ENOENT)
          fprintf(stderr, "failed to open GPU device: %s\n", strerror(errno));

@@ -929,10 +929,9 @@ dri2_wl_release_buffers(struct dri2_egl_surface *dri2_surf)
  * to get the set of modifiers used for fixed-rate compression. */
 static uint64_t *
 get_surface_specific_modifiers(struct dri2_egl_surface *dri2_surf,
+                               __DRIscreen *dri_screen_gpu,
                                int *modifiers_count)
 {
-   struct dri2_egl_display *dri2_dpy =
-      dri2_egl_display(dri2_surf->base.Resource.Display);
    int rate = dri2_surf->base.CompressionRate;
    uint64_t *modifiers;
 
@@ -941,7 +940,7 @@ get_surface_specific_modifiers(struct dri2_egl_surface *dri2_surf,
       return NULL;
 
    if (!dri2_query_compression_modifiers(
-          dri2_dpy->dri_screen_render_gpu, dri2_surf->format, rate,
+          dri_screen_gpu, dri2_surf->format, rate,
           0, NULL, modifiers_count))
       return NULL;
 
@@ -950,7 +949,7 @@ get_surface_specific_modifiers(struct dri2_egl_surface *dri2_surf,
       return NULL;
 
    if (!dri2_query_compression_modifiers(
-          dri2_dpy->dri_screen_render_gpu, dri2_surf->format, rate,
+          dri_screen_gpu, dri2_surf->format, rate,
           *modifiers_count, modifiers, modifiers_count)) {
       free(modifiers);
       return NULL;
@@ -1004,6 +1003,7 @@ create_dri_image(struct dri2_egl_surface *dri2_surf,
       dri2_egl_display(dri2_surf->base.Resource.Display);
    int visual_idx = dri2_wl_visual_idx_from_fourcc(dri2_surf->format);
    struct u_vector modifiers_subset;
+   struct u_vector modifiers_subset_tmp;
    struct u_vector modifiers_subset_opaque;
    uint64_t *modifiers;
    unsigned int num_modifiers;
@@ -1047,6 +1047,36 @@ create_dri_image(struct dri2_egl_surface *dri2_surf,
       num_modifiers = u_vector_length(modifiers_present);
    }
 
+   /* Intersect modifiers from both GPUs. */
+   if (dri2_dpy->fd_render_gpu != dri2_dpy->fd_display_gpu) {
+      int display_gpu_modifiers_count = 0;
+      uint64_t *display_gpu_modifiers =
+         get_surface_specific_modifiers(dri2_surf,
+                                        dri2_dpy->dri_screen_display_gpu,
+                                        &display_gpu_modifiers_count);
+
+      modifiers = malloc(display_gpu_modifiers_count * sizeof(uint64_t));
+      num_modifiers = 0;
+
+      for (int i = 0; i < display_gpu_modifiers_count; i++) {
+         for (int j = 0; j < surf_modifiers_count; j++) {
+            if (display_gpu_modifiers[i] == surf_modifiers[j]) {
+               modifiers[num_modifiers++] = display_gpu_modifiers[i];
+               break;
+            }
+         }
+      }
+
+      if (u_vector_length(modifiers_present) > 0) {
+         intersect_modifiers(&modifiers_subset_tmp, modifiers_present,
+                             modifiers, num_modifiers);
+         free(modifiers);
+
+         modifiers = u_vector_tail(&modifiers_subset_tmp);
+         num_modifiers = u_vector_length(&modifiers_subset_tmp);
+      }
+   }
+
    /* For the purposes of this function, an INVALID modifier on
     * its own means the modifiers aren't supported. */
    if (num_modifiers == 0 ||
@@ -1054,7 +1084,7 @@ create_dri_image(struct dri2_egl_surface *dri2_surf,
       num_modifiers = 0;
       modifiers = NULL;
    }
-
+   
    dri2_surf->back->dri_image = dri_create_image_with_modifiers(
       dri2_dpy->dri_screen_render_gpu, dri2_surf->base.Width,
       dri2_surf->base.Height, pipe_format,
@@ -1065,6 +1095,9 @@ create_dri_image(struct dri2_egl_surface *dri2_surf,
       u_vector_finish(&modifiers_subset);
       update_surface(dri2_surf, dri2_surf->back->dri_image);
    }
+
+   if (u_vector_length(&modifiers_subset_tmp) > 0)
+      u_vector_finish(&modifiers_subset_tmp);
 
 cleanup_present:
    if (modifiers_present == &modifiers_subset_opaque)
@@ -1295,7 +1328,9 @@ get_back_bo(struct dri2_egl_surface *dri2_surf)
    if (dri2_surf->back->dri_image == NULL) {
       int modifiers_count = 0;
       uint64_t *modifiers =
-         get_surface_specific_modifiers(dri2_surf, &modifiers_count);
+         get_surface_specific_modifiers(dri2_surf,
+                                        dri2_dpy->dri_screen_render_gpu,
+                                        &modifiers_count);
 
       if (dri2_surf->wl_dmabuf_feedback)
          create_dri_image_from_dmabuf_feedback(

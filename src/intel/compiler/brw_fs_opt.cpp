@@ -19,6 +19,13 @@ brw_fs_optimize(fs_visitor &s)
    /* Start by validating the shader we currently have. */
    brw_fs_validate(s);
 
+   /* Track how much non-SSA at this point. */
+   {
+      const brw::def_analysis &defs = s.def_analysis.require();
+      s.shader_stats.non_ssa_registers_after_nir =
+         defs.count() - defs.ssa_count();
+   }
+
    bool progress = false;
    int iteration = 0;
    int pass_num = 0;
@@ -73,6 +80,8 @@ brw_fs_optimize(fs_visitor &s)
       OPT(brw_fs_opt_compact_virtual_grfs);
    } while (progress);
 
+   brw_shader_phase_update(s, BRW_SHADER_PHASE_AFTER_OPT_LOOP);
+
    progress = false;
    pass_num = 0;
 
@@ -81,10 +90,13 @@ brw_fs_optimize(fs_visitor &s)
       OPT(brw_fs_opt_dead_code_eliminate);
    }
 
+   OPT(brw_fs_lower_subgroup_ops);
    OPT(brw_fs_lower_csel);
    OPT(brw_fs_lower_simd_width);
    OPT(brw_fs_lower_barycentrics);
    OPT(brw_fs_lower_logical_sends);
+
+   brw_shader_phase_update(s, BRW_SHADER_PHASE_AFTER_EARLY_LOWERING);
 
    /* After logical SEND lowering. */
 
@@ -124,6 +136,8 @@ brw_fs_optimize(fs_visitor &s)
       OPT(brw_fs_opt_dead_code_eliminate);
    }
 
+   brw_shader_phase_update(s, BRW_SHADER_PHASE_AFTER_MIDDLE_LOWERING);
+
    OPT(brw_fs_lower_alu_restrictions);
 
    OPT(brw_fs_opt_combine_constants);
@@ -162,6 +176,8 @@ brw_fs_optimize(fs_visitor &s)
    OPT(brw_fs_lower_find_live_channel);
 
    OPT(brw_fs_lower_load_subgroup_invocation);
+
+   brw_shader_phase_update(s, BRW_SHADER_PHASE_AFTER_LATE_LOWERING);
 }
 
 static unsigned

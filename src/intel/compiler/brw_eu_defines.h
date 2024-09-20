@@ -403,6 +403,24 @@ enum opcode {
     */
    SHADER_OPCODE_SHUFFLE,
 
+   /* Combine all values in each subset (cluster) of channels using an operation,
+    * and broadcast the result to all channels in the subset.
+    *
+    * Source 0: Value.
+    * Source 1: Immediate with brw_reduce_op.
+    * Source 2: Immediate with cluster size.
+    */
+   SHADER_OPCODE_REDUCE,
+
+   /* Combine values of previous channels using an operation.  Inclusive scan
+    * will include the value of the channel itself in the channel result.
+    *
+    * Source 0: Value.
+    * Source 1: Immediate with brw_reduce_op.
+    */
+   SHADER_OPCODE_INCLUSIVE_SCAN,
+   SHADER_OPCODE_EXCLUSIVE_SCAN,
+
    /* Select between src0 and src1 based on channel enables.
     *
     * This instruction copies src0 into the enabled channels of the
@@ -669,6 +687,16 @@ enum interpolator_logical_srcs {
    INTERP_SRC_DYNAMIC_MODE,
 
    INTERP_NUM_SRCS
+};
+
+enum brw_reduce_op {
+   BRW_REDUCE_OP_ADD,
+   BRW_REDUCE_OP_MUL,
+   BRW_REDUCE_OP_MIN,
+   BRW_REDUCE_OP_MAX,
+   BRW_REDUCE_OP_AND,
+   BRW_REDUCE_OP_OR,
+   BRW_REDUCE_OP_XOR,
 };
 
 enum ENUM_PACKED brw_predicate {

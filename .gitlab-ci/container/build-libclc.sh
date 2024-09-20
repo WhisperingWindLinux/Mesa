@@ -22,10 +22,5 @@ ninja
 ninja install
 popd
 
-# workaroud cmake vs debian packaging.
-mkdir -p /usr/lib/clc
-ln -s /usr/share/clc/spirv64-mesa3d-.spv /usr/lib/clc/
-ln -s /usr/share/clc/spirv-mesa3d-.spv /usr/lib/clc/
-
 du -sh ./*
 rm -rf /libclc /llvm-project

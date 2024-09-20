@@ -498,7 +498,7 @@ void rvce_add_buffer(struct rvce_encoder *enc, struct pb_buffer_lean *buf,
 					   domain);
 	if (enc->use_vm) {
 		uint64_t addr;
-		addr = enc->ws->buffer_get_virtual_address(buf);
+		addr = enc->ws->buffer_get_virtual_address(enc->ws, buf);
 		addr = addr + offset;
 		RVCE_CS(addr >> 32);
 		RVCE_CS(addr);

@@ -218,6 +218,7 @@ struct radeon_info {
    uint32_t drm_patchlevel;
    uint32_t max_submitted_ibs[AMD_NUM_IP_TYPES];
    bool is_amdgpu;
+   bool is_virtio;
    bool has_userptr;
    bool has_syncobj;
    bool has_timeline_syncobj;
@@ -313,7 +314,9 @@ struct radeon_info {
    bool has_fw_based_shadowing;
 };
 
-bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
+struct libdrm_amdgpu;
+bool ac_query_gpu_info(struct libdrm_amdgpu *libdrm_amdgpu,
+                       int fd, void *dev_p, struct radeon_info *info,
                        bool require_pci_bus_info);
 
 void ac_compute_driver_uuid(char *uuid, size_t size);

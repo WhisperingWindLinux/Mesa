@@ -784,7 +784,7 @@ void
 si_emit_spm_setup(struct si_context *sctx, struct radeon_cmdbuf *cs)
 {
    struct ac_spm *spm = &sctx->spm;
-   uint64_t va = sctx->screen->ws->buffer_get_virtual_address(spm->bo);
+   uint64_t va = sctx->screen->ws->buffer_get_virtual_address(sctx->screen->ws, spm->bo);
    uint64_t ring_size = spm->buffer_size;
 
    /* It's required that the ring VA and the size are correctly aligned. */

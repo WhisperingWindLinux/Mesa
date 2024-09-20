@@ -97,7 +97,7 @@ static void send_cmd(struct ruvd_decoder *dec, unsigned cmd,
 					   domain);
 	if (!dec->use_legacy) {
 		uint64_t addr;
-		addr = dec->ws->buffer_get_virtual_address(buf);
+		addr = dec->ws->buffer_get_virtual_address(dec->ws, buf);
 		addr = addr + off;
 		set_reg(dec, dec->reg.data0, addr);
 		set_reg(dec, dec->reg.data1, addr >> 32);

@@ -16,6 +16,7 @@
 #include "util/os_time.h"
 #include "util/u_memory.h"
 #include "ac_debug.h"
+#include "libdrm_amdgpu_loader.h"
 #include "radv_amdgpu_bo.h"
 #include "radv_amdgpu_cs.h"
 #include "radv_amdgpu_winsys.h"
@@ -1198,6 +1199,7 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
 {
    unsigned hw_ip = ip_type;
    unsigned queue_syncobj = radv_amdgpu_ctx_queue_syncobj(ctx, hw_ip, queue_idx);
+   struct libdrm_amdgpu *libdrm_amdgpu = ctx->ws->libdrm_amdgpu;
    int ret;
 
    if (!queue_syncobj)
@@ -1205,13 +1207,13 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
 
    if (sem_info->wait.syncobj_count || sem_info->wait.timeline_syncobj_count) {
       int fd;
-      ret = amdgpu_cs_syncobj_export_sync_file(ctx->ws->dev, queue_syncobj, &fd);
+      ret = libdrm_amdgpu->cs_syncobj_export_sync_file(ctx->ws->dev, queue_syncobj, &fd);
       if (ret < 0)
          return VK_ERROR_DEVICE_LOST;
 
       for (unsigned i = 0; i < sem_info->wait.syncobj_count; ++i) {
          int fd2;
-         ret = amdgpu_cs_syncobj_export_sync_file(ctx->ws->dev, sem_info->wait.syncobj[i], &fd2);
+         ret = libdrm_amdgpu->cs_syncobj_export_sync_file(ctx->ws->dev, sem_info->wait.syncobj[i], &fd2);
          if (ret < 0) {
             close(fd);
             return VK_ERROR_DEVICE_LOST;
@@ -1222,7 +1224,7 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
       }
       for (unsigned i = 0; i < sem_info->wait.timeline_syncobj_count; ++i) {
          int fd2;
-         ret = amdgpu_cs_syncobj_export_sync_file2(
+         ret = libdrm_amdgpu->cs_syncobj_export_sync_file2(
             ctx->ws->dev, sem_info->wait.syncobj[i + sem_info->wait.syncobj_count], sem_info->wait.points[i], 0, &fd2);
          if (ret < 0) {
             /* This works around a kernel bug where the fence isn't copied if it is already
@@ -1230,8 +1232,8 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
              *
              * kernel patch: https://patchwork.freedesktop.org/patch/465583/ */
             uint64_t point;
-            ret = amdgpu_cs_syncobj_query2(ctx->ws->dev, &sem_info->wait.syncobj[i + sem_info->wait.syncobj_count],
-                                           &point, 1, 0);
+            ret = libdrm_amdgpu->cs_syncobj_query2(
+               ctx->ws->dev, &sem_info->wait.syncobj[i + sem_info->wait.syncobj_count], &point, 1, 0);
             if (!ret && point >= sem_info->wait.points[i])
                continue;
 
@@ -1242,7 +1244,7 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
          sync_accumulate("radv", &fd, fd2);
          close(fd2);
       }
-      ret = amdgpu_cs_syncobj_import_sync_file(ctx->ws->dev, queue_syncobj, fd);
+      ret = libdrm_amdgpu->cs_syncobj_import_sync_file(ctx->ws->dev, queue_syncobj, fd);
       close(fd);
       if (ret < 0)
          return VK_ERROR_DEVICE_LOST;
@@ -1255,24 +1257,25 @@ radv_amdgpu_cs_submit_zero(struct radv_amdgpu_ctx *ctx, enum amd_ip_type ip_type
       uint32_t src_handle = queue_syncobj;
 
       if (ctx->ws->info.has_timeline_syncobj) {
-         ret = amdgpu_cs_syncobj_transfer(ctx->ws->dev, dst_handle, 0, src_handle, 0, 0);
+         ret = libdrm_amdgpu->cs_syncobj_transfer(ctx->ws->dev, dst_handle, 0, src_handle, 0, 0);
          if (ret < 0)
             return VK_ERROR_DEVICE_LOST;
       } else {
          int fd;
-         ret = amdgpu_cs_syncobj_export_sync_file(ctx->ws->dev, src_handle, &fd);
+         ret = libdrm_amdgpu->cs_syncobj_export_sync_file(ctx->ws->dev, src_handle, &fd);
          if (ret < 0)
             return VK_ERROR_DEVICE_LOST;
 
-         ret = amdgpu_cs_syncobj_import_sync_file(ctx->ws->dev, dst_handle, fd);
+         ret = libdrm_amdgpu->cs_syncobj_import_sync_file(ctx->ws->dev, dst_handle, fd);
          close(fd);
          if (ret < 0)
             return VK_ERROR_DEVICE_LOST;
       }
    }
    for (unsigned i = 0; i < sem_info->signal.timeline_syncobj_count; ++i) {
-      ret = amdgpu_cs_syncobj_transfer(ctx->ws->dev, sem_info->signal.syncobj[i + sem_info->signal.syncobj_count],
-                                       sem_info->signal.points[i], queue_syncobj, 0, 0);
+      ret =
+         libdrm_amdgpu->cs_syncobj_transfer(ctx->ws->dev, sem_info->signal.syncobj[i + sem_info->signal.syncobj_count],
+                                            sem_info->signal.points[i], queue_syncobj, 0, 0);
       if (ret < 0)
          return VK_ERROR_DEVICE_LOST;
    }
@@ -1559,7 +1562,7 @@ radv_amdgpu_ctx_create(struct radeon_winsys *_ws, enum radeon_ctx_priority prior
    if (!ctx)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   r = amdgpu_cs_ctx_create2(ws->dev, amdgpu_priority, &ctx->ctx);
+   r = ws->libdrm_amdgpu->cs_ctx_create2(ws->dev, amdgpu_priority, &ctx->ctx);
    if (r && r == -EACCES) {
       result = VK_ERROR_NOT_PERMITTED_KHR;
       goto fail_create;
@@ -1582,7 +1585,8 @@ radv_amdgpu_ctx_create(struct radeon_winsys *_ws, enum radeon_ctx_priority prior
    return VK_SUCCESS;
 
 fail_alloc:
-   amdgpu_cs_ctx_free(ctx->ctx);
+   ws->libdrm_amdgpu->cs_ctx_free(ctx->ctx);
+
 fail_create:
    FREE(ctx);
    return result;
@@ -1596,12 +1600,12 @@ radv_amdgpu_ctx_destroy(struct radeon_winsys_ctx *rwctx)
    for (unsigned ip = 0; ip <= AMDGPU_HW_IP_NUM; ++ip) {
       for (unsigned ring = 0; ring < MAX_RINGS_PER_TYPE; ++ring) {
          if (ctx->queue_syncobj[ip][ring])
-            amdgpu_cs_destroy_syncobj(ctx->ws->dev, ctx->queue_syncobj[ip][ring]);
+            ctx->ws->libdrm_amdgpu->cs_destroy_syncobj(ctx->ws->dev, ctx->queue_syncobj[ip][ring]);
       }
    }
 
    ctx->ws->base.buffer_destroy(&ctx->ws->base, ctx->fence_bo);
-   amdgpu_cs_ctx_free(ctx->ctx);
+   ctx->ws->libdrm_amdgpu->cs_ctx_free(ctx->ctx);
    FREE(ctx);
 }
 
@@ -1610,7 +1614,7 @@ radv_amdgpu_ctx_queue_syncobj(struct radv_amdgpu_ctx *ctx, unsigned ip, unsigned
 {
    uint32_t *syncobj = &ctx->queue_syncobj[ip][ring];
    if (!*syncobj) {
-      amdgpu_cs_create_syncobj2(ctx->ws->dev, DRM_SYNCOBJ_CREATE_SIGNALED, syncobj);
+      ctx->ws->libdrm_amdgpu->cs_create_syncobj2(ctx->ws->dev, DRM_SYNCOBJ_CREATE_SIGNALED, syncobj);
    }
    return *syncobj;
 }
@@ -1622,8 +1626,8 @@ radv_amdgpu_ctx_wait_idle(struct radeon_winsys_ctx *rwctx, enum amd_ip_type ip_t
 
    if (ctx->last_submission[ip_type][ring_index].fence.fence) {
       uint32_t expired;
-      int ret =
-         amdgpu_cs_query_fence_status(&ctx->last_submission[ip_type][ring_index].fence, 1000000000ull, 0, &expired);
+      int ret = ctx->ws->libdrm_amdgpu->cs_query_fence_status(&ctx->last_submission[ip_type][ring_index].fence,
+                                                              1000000000ull, 0, &expired);
 
       if (ret || !expired)
          return false;
@@ -1659,7 +1663,7 @@ radv_amdgpu_ctx_set_pstate(struct radeon_winsys_ctx *rwctx, enum radeon_ctx_psta
    uint32_t current_pstate = 0;
    int r;
 
-   r = amdgpu_cs_ctx_stable_pstate(ctx->ctx, AMDGPU_CTX_OP_GET_STABLE_PSTATE, 0, &current_pstate);
+   r = ctx->ws->libdrm_amdgpu->cs_ctx_stable_pstate(ctx->ctx, AMDGPU_CTX_OP_GET_STABLE_PSTATE, 0, &current_pstate);
    if (r) {
       fprintf(stderr, "radv/amdgpu: failed to get current pstate\n");
       return r;
@@ -1671,7 +1675,7 @@ radv_amdgpu_ctx_set_pstate(struct radeon_winsys_ctx *rwctx, enum radeon_ctx_psta
    if (current_pstate == new_pstate)
       return 0;
 
-   r = amdgpu_cs_ctx_stable_pstate(ctx->ctx, AMDGPU_CTX_OP_SET_STABLE_PSTATE, new_pstate, NULL);
+   r = ctx->ws->libdrm_amdgpu->cs_ctx_stable_pstate(ctx->ctx, AMDGPU_CTX_OP_SET_STABLE_PSTATE, new_pstate, NULL);
    if (r) {
       fprintf(stderr, "radv/amdgpu: failed to set new pstate\n");
       return r;
@@ -1817,7 +1821,7 @@ radv_amdgpu_cs_submit(struct radv_amdgpu_ctx *ctx, struct radv_amdgpu_cs_request
        *   QWORD[3]: preempted then reset
        */
       fence_info.offset = (request->ip_type * MAX_RINGS_PER_TYPE + request->ring) * 4;
-      amdgpu_cs_chunk_fence_info_to_data(&fence_info, &chunk_data[i]);
+      ctx->ws->libdrm_amdgpu->cs_chunk_fence_info_to_data(&fence_info, &chunk_data[i]);
    }
 
    if (sem_info->cs_emit_wait &&
@@ -1878,7 +1882,7 @@ radv_amdgpu_cs_submit(struct radv_amdgpu_ctx *ctx, struct radv_amdgpu_cs_request
       if (r == -ENOMEM)
          os_time_sleep(1000);
 
-      r = amdgpu_cs_submit_raw2(ctx->ws->dev, ctx->ctx, 0, num_chunks, chunks, &request->seq_no);
+      r = ctx->ws->libdrm_amdgpu->cs_submit_raw2(ctx->ws->dev, ctx->ctx, 0, num_chunks, chunks, &request->seq_no);
    } while (r == -ENOMEM && os_time_get_nano() < abs_timeout_ns);
 
    if (r) {

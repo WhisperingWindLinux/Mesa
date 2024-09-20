@@ -16,6 +16,7 @@
 #include "frontend/drm_driver.h"
 #include "drm-uapi/amdgpu_drm.h"
 #include "drm-uapi/dma-buf.h"
+#include "sid.h"
 #include <xf86drm.h>
 #include <stdio.h>
 #include <inttypes.h>
@@ -102,7 +103,7 @@ static bool amdgpu_bo_wait(struct radeon_winsys *rws,
       bool buffer_busy = true;
       int r;
 
-      r = amdgpu_bo_wait_for_idle(get_real_bo(bo)->bo_handle, timeout, &buffer_busy);
+      r = aws->libdrm_amdgpu->bo_wait_for_idle(get_real_bo(bo)->bo_handle, timeout, &buffer_busy);
       if (r)
          fprintf(stderr, "%s: amdgpu_bo_wait_for_idle failed %i\n", __func__, r);
 
@@ -180,9 +181,10 @@ void amdgpu_bo_destroy(struct amdgpu_winsys *aws, struct pb_buffer_lean *_buf)
    _mesa_hash_table_remove_key(aws->bo_export_table, bo->bo_handle);
 
    if (bo->b.base.placement & RADEON_DOMAIN_VRAM_GTT) {
-      amdgpu_bo_va_op(bo->bo_handle, 0, bo->b.base.size,
-                      amdgpu_va_get_start_addr(bo->va_handle), 0, AMDGPU_VA_OP_UNMAP);
-      amdgpu_va_range_free(bo->va_handle);
+      aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, bo->bo_handle, 0, bo->b.base.size,
+                                       aws->libdrm_amdgpu->va_get_start_addr(bo->va_handle),
+                                       0, AMDGPU_VA_OP_UNMAP);
+      aws->libdrm_amdgpu->va_range_free(bo->va_handle);
    }
 
    simple_mtx_unlock(&aws->bo_export_table_lock);
@@ -193,7 +195,7 @@ void amdgpu_bo_destroy(struct amdgpu_winsys *aws, struct pb_buffer_lean *_buf)
    }
    assert(bo->is_user_ptr || bo->map_count == 0);
 
-   amdgpu_bo_free(bo->bo_handle);
+   aws->libdrm_amdgpu->bo_free(bo->bo_handle);
 
 #if MESA_DEBUG
    if (aws->debug_all_bos) {
@@ -258,11 +260,14 @@ static bool amdgpu_bo_do_map(struct radeon_winsys *rws, struct amdgpu_bo_real *b
 
    assert(!bo->is_user_ptr);
 
-   int r = amdgpu_bo_cpu_map(bo->bo_handle, cpu);
+   *cpu = NULL;
+   int r = aws->libdrm_amdgpu->bo_cpu_map(bo->bo_handle, cpu);
+
    if (r) {
       /* Clean up buffer managers and try again. */
       amdgpu_clean_up_buffer_managers(aws);
-      r = amdgpu_bo_cpu_map(bo->bo_handle, cpu);
+      *cpu = NULL;
+      r = aws->libdrm_amdgpu->bo_cpu_map(bo->bo_handle, cpu);
       if (r)
          return false;
    }
@@ -435,7 +440,7 @@ void amdgpu_bo_unmap(struct radeon_winsys *rws, struct pb_buffer_lean *buf)
       aws->num_mapped_buffers--;
    }
 
-   amdgpu_bo_cpu_unmap(real->bo_handle);
+   aws->libdrm_amdgpu->bo_cpu_unmap(real->bo_handle);
 }
 
 static void amdgpu_add_buffer_to_global_list(struct amdgpu_winsys *aws, struct amdgpu_bo_real *bo)
@@ -562,7 +567,12 @@ static struct amdgpu_winsys_bo *amdgpu_create_bo(struct amdgpu_winsys *aws,
    if (flags & RADEON_FLAG_GFX12_ALLOW_DCC)
       request.flags |= AMDGPU_GEM_CREATE_GFX12_DCC;
 
-   r = amdgpu_bo_alloc(aws->dev, &request, &buf_handle);
+   /* Set AMDGPU_GEM_CREATE_VIRTIO_SHARED if the driver didn't disable buffer sharing. */
+   if (aws->info.is_virtio && (initial_domain & RADEON_DOMAIN_VRAM_GTT) &&
+       (flags & (RADEON_FLAG_DRIVER_INTERNAL | RADEON_FLAG_NO_INTERPROCESS_SHARING)) == 0)
+      request.flags |= AMDGPU_GEM_CREATE_VIRTIO_SHARED;
+
+   r = aws->libdrm_amdgpu->bo_alloc(aws->dev, &request, &buf_handle);
    if (r) {
       fprintf(stderr, "amdgpu: Failed to allocate a buffer:\n");
       fprintf(stderr, "amdgpu:    size      : %"PRIu64" bytes\n", size);
@@ -575,11 +585,11 @@ static struct amdgpu_winsys_bo *amdgpu_create_bo(struct amdgpu_winsys *aws,
    if (initial_domain & RADEON_DOMAIN_VRAM_GTT) {
       unsigned va_gap_size = aws->check_vm ? MAX2(4 * alignment, 64 * 1024) : 0;
 
-      r = amdgpu_va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
-                                size + va_gap_size, alignment,
-                                0, &va, &va_handle,
-                                (flags & RADEON_FLAG_32BIT ? AMDGPU_VA_RANGE_32_BIT : 0) |
-                                AMDGPU_VA_RANGE_HIGH);
+      r = aws->libdrm_amdgpu->va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
+                                             size + va_gap_size, alignment,
+                                             0, &va, &va_handle,
+                                             (flags & RADEON_FLAG_32BIT ? AMDGPU_VA_RANGE_32_BIT : 0) |
+                                             AMDGPU_VA_RANGE_HIGH);
       if (r)
          goto error_va_alloc;
 
@@ -590,7 +600,7 @@ static struct amdgpu_winsys_bo *amdgpu_create_bo(struct amdgpu_winsys *aws,
       if (flags & RADEON_FLAG_GL2_BYPASS)
          vm_flags |= AMDGPU_VM_MTYPE_UC;
 
-      r = amdgpu_bo_va_op_raw(aws->dev, buf_handle, 0, size, va, vm_flags, AMDGPU_VA_OP_MAP);
+      r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, buf_handle, 0, size, va, vm_flags, AMDGPU_VA_OP_MAP);
       if (r)
          goto error_va_map;
    }
@@ -610,16 +620,16 @@ static struct amdgpu_winsys_bo *amdgpu_create_bo(struct amdgpu_winsys *aws,
    else if (initial_domain & RADEON_DOMAIN_GTT)
       aws->allocated_gtt += align64(size, aws->info.gart_page_size);
 
-   amdgpu_bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
+   aws->libdrm_amdgpu->bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
    amdgpu_add_buffer_to_global_list(aws, bo);
 
    return &bo->b;
 
 error_va_map:
-   amdgpu_va_range_free(va_handle);
+   aws->libdrm_amdgpu->va_range_free(va_handle);
 
 error_va_alloc:
-   amdgpu_bo_free(buf_handle);
+   aws->libdrm_amdgpu->bo_free(buf_handle);
 
 error_bo_alloc:
    FREE(bo);
@@ -1029,9 +1039,9 @@ static void amdgpu_bo_sparse_destroy(struct radeon_winsys *rws, struct pb_buffer
    struct amdgpu_bo_sparse *bo = get_sparse_bo(amdgpu_winsys_bo(_buf));
    int r;
 
-   r = amdgpu_bo_va_op_raw(aws->dev, NULL, 0,
-                           (uint64_t)bo->num_va_pages * RADEON_SPARSE_PAGE_SIZE,
-                           amdgpu_va_get_start_addr(bo->va_handle), 0, AMDGPU_VA_OP_CLEAR);
+   r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, NULL, 0,
+                                        (uint64_t)bo->num_va_pages * RADEON_SPARSE_PAGE_SIZE,
+                                        aws->libdrm_amdgpu->va_get_start_addr(bo->va_handle), 0, AMDGPU_VA_OP_CLEAR);
    if (r) {
       fprintf(stderr, "amdgpu: clearing PRT VA region on destroy failed (%d)\n", r);
    }
@@ -1042,7 +1052,7 @@ static void amdgpu_bo_sparse_destroy(struct radeon_winsys *rws, struct pb_buffer
                                               struct amdgpu_sparse_backing, list));
    }
 
-   amdgpu_va_range_free(bo->va_handle);
+   aws->libdrm_amdgpu->va_range_free(bo->va_handle);
    FREE(bo->commitments);
    simple_mtx_destroy(&bo->commit_lock);
    FREE(bo);
@@ -1090,21 +1100,21 @@ amdgpu_bo_sparse_create(struct amdgpu_winsys *aws, uint64_t size,
    va_gap_size = aws->check_vm ? 4 * RADEON_SPARSE_PAGE_SIZE : 0;
 
    uint64_t gpu_address;
-   r = amdgpu_va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
-                             map_size + va_gap_size, RADEON_SPARSE_PAGE_SIZE,
-                             0, &gpu_address, &bo->va_handle, AMDGPU_VA_RANGE_HIGH);
+   r = aws->libdrm_amdgpu->va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
+                                          map_size + va_gap_size, RADEON_SPARSE_PAGE_SIZE,
+                                          0, &gpu_address, &bo->va_handle, AMDGPU_VA_RANGE_HIGH);
    if (r)
       goto error_va_alloc;
 
-   r = amdgpu_bo_va_op_raw(aws->dev, NULL, 0, map_size, gpu_address,
-                           AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_MAP);
+   r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, NULL, 0, map_size, gpu_address,
+                                        AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_MAP);
    if (r)
       goto error_va_map;
 
    return &bo->b.base;
 
 error_va_map:
-   amdgpu_va_range_free(bo->va_handle);
+   aws->libdrm_amdgpu->va_range_free(bo->va_handle);
 error_va_alloc:
    FREE(bo->commitments);
 error_alloc_commitments:
@@ -1166,15 +1176,15 @@ amdgpu_bo_sparse_commit(struct radeon_winsys *rws, struct pb_buffer_lean *buf,
                goto out;
             }
 
-            r = amdgpu_bo_va_op_raw(aws->dev, backing->bo->bo_handle,
-                                    (uint64_t)backing_start * RADEON_SPARSE_PAGE_SIZE,
-                                    (uint64_t)backing_size * RADEON_SPARSE_PAGE_SIZE,
-                                    amdgpu_va_get_start_addr(bo->va_handle) +
-                                    (uint64_t)span_va_page * RADEON_SPARSE_PAGE_SIZE,
-                                    AMDGPU_VM_PAGE_READABLE |
-                                    AMDGPU_VM_PAGE_WRITEABLE |
-                                    AMDGPU_VM_PAGE_EXECUTABLE,
-                                    AMDGPU_VA_OP_REPLACE);
+            r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, backing->bo->bo_handle,
+                                                 (uint64_t)backing_start * RADEON_SPARSE_PAGE_SIZE,
+                                                 (uint64_t)backing_size * RADEON_SPARSE_PAGE_SIZE,
+                                                 aws->libdrm_amdgpu->va_get_start_addr(bo->va_handle) +
+                                                 (uint64_t)span_va_page * RADEON_SPARSE_PAGE_SIZE,
+                                                 AMDGPU_VM_PAGE_READABLE |
+                                                 AMDGPU_VM_PAGE_WRITEABLE |
+                                                 AMDGPU_VM_PAGE_EXECUTABLE,
+                                                 AMDGPU_VA_OP_REPLACE);
             if (r) {
                ok = sparse_backing_free(aws, bo, backing, backing_start, backing_size);
                assert(ok && "sufficient memory should already be allocated");
@@ -1193,11 +1203,11 @@ amdgpu_bo_sparse_commit(struct radeon_winsys *rws, struct pb_buffer_lean *buf,
          }
       }
    } else {
-      r = amdgpu_bo_va_op_raw(aws->dev, NULL, 0,
-                              (uint64_t)(end_va_page - va_page) * RADEON_SPARSE_PAGE_SIZE,
-                              amdgpu_va_get_start_addr(bo->va_handle) +
-                              (uint64_t)va_page * RADEON_SPARSE_PAGE_SIZE,
-                              AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_REPLACE);
+      r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, NULL, 0,
+                                           (uint64_t)(end_va_page - va_page) * RADEON_SPARSE_PAGE_SIZE,
+                                           aws->libdrm_amdgpu->va_get_start_addr(bo->va_handle) +
+                                             (uint64_t)va_page * RADEON_SPARSE_PAGE_SIZE,
+                                           AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_REPLACE);
       if (r) {
          ok = false;
          goto out;
@@ -1307,7 +1317,7 @@ static void amdgpu_buffer_get_metadata(struct radeon_winsys *rws,
    struct amdgpu_bo_info info = {0};
    int r;
 
-   r = amdgpu_bo_query_info(bo->bo_handle, &info);
+   r = aws->libdrm_amdgpu->bo_query_info(bo->bo_handle, &info);
    if (r)
       return;
 
@@ -1333,7 +1343,7 @@ static void amdgpu_buffer_set_metadata(struct radeon_winsys *rws,
    metadata.size_metadata = md->size_metadata;
    memcpy(metadata.umd_metadata, md->metadata, sizeof(md->metadata));
 
-   amdgpu_bo_set_metadata(real->bo_handle, &metadata);
+   aws->libdrm_amdgpu->bo_set_metadata(real->bo_handle, &metadata);
 }
 
 struct pb_buffer_lean *
@@ -1494,6 +1504,7 @@ static struct pb_buffer_lean *amdgpu_bo_from_handle(struct radeon_winsys *rws,
 
    switch (whandle->type) {
    case WINSYS_HANDLE_TYPE_SHARED:
+      assert(!aws->info.is_virtio); /* Legacy-path, not handled */
       type = amdgpu_bo_handle_type_gem_flink_name;
       break;
    case WINSYS_HANDLE_TYPE_FD:
@@ -1503,7 +1514,7 @@ static struct pb_buffer_lean *amdgpu_bo_from_handle(struct radeon_winsys *rws,
       return NULL;
    }
 
-   r = amdgpu_bo_import(aws->dev, type, whandle->handle, &result);
+   r = aws->libdrm_amdgpu->bo_import(aws->dev, type, whandle->handle, &result);
    if (r)
       return NULL;
 
@@ -1521,20 +1532,20 @@ static struct pb_buffer_lean *amdgpu_bo_from_handle(struct radeon_winsys *rws,
        * This function is returning an existing buffer, which has its own
        * handle.
        */
-      amdgpu_bo_free(result.buf_handle);
+      aws->libdrm_amdgpu->bo_free(result.buf_handle);
       return &bo->b.base;
    }
 
    /* Get initial domains. */
-   r = amdgpu_bo_query_info(result.buf_handle, &info);
+   r = aws->libdrm_amdgpu->bo_query_info(result.buf_handle, &info);
    if (r)
       goto error;
 
-   r = amdgpu_va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
-                             result.alloc_size,
-                             amdgpu_get_optimal_alignment(aws, result.alloc_size,
-                                                          vm_alignment),
-                             0, &va, &va_handle, AMDGPU_VA_RANGE_HIGH);
+   r = aws->libdrm_amdgpu->va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
+                                          result.alloc_size,
+                                          amdgpu_get_optimal_alignment(aws, result.alloc_size,
+                                                                       vm_alignment),
+                                          0, &va, &va_handle, AMDGPU_VA_RANGE_HIGH);
    if (r)
       goto error;
 
@@ -1542,11 +1553,11 @@ static struct pb_buffer_lean *amdgpu_bo_from_handle(struct radeon_winsys *rws,
    if (!bo)
       goto error;
 
-   r = amdgpu_bo_va_op_raw(aws->dev, result.buf_handle, 0, result.alloc_size, va,
-                           AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE |
-                           AMDGPU_VM_PAGE_EXECUTABLE |
-                           (is_prime_linear_buffer ? AMDGPU_VM_MTYPE_UC : 0),
-                           AMDGPU_VA_OP_MAP);
+   r = aws->libdrm_amdgpu->bo_va_op_raw(aws->dev, result.buf_handle, 0, result.alloc_size, va,
+                                        AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE |
+                                        AMDGPU_VM_PAGE_EXECUTABLE |
+                                        (is_prime_linear_buffer ? AMDGPU_VM_MTYPE_UC : 0),
+                                        AMDGPU_VA_OP_MAP);
    if (r)
       goto error;
 
@@ -1588,7 +1599,7 @@ static struct pb_buffer_lean *amdgpu_bo_from_handle(struct radeon_winsys *rws,
    else if (bo->b.base.placement & RADEON_DOMAIN_GTT)
       aws->allocated_gtt += align64(bo->b.base.size, aws->info.gart_page_size);
 
-   amdgpu_bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
+   aws->libdrm_amdgpu->bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
 
    amdgpu_add_buffer_to_global_list(aws, bo);
 
@@ -1602,8 +1613,8 @@ error:
    if (bo)
       FREE(bo);
    if (va_handle)
-      amdgpu_va_range_free(va_handle);
-   amdgpu_bo_free(result.buf_handle);
+      aws->libdrm_amdgpu->va_range_free(va_handle);
+   aws->libdrm_amdgpu->bo_free(result.buf_handle);
    return NULL;
 }
 
@@ -1628,11 +1639,22 @@ static bool amdgpu_bo_get_handle(struct radeon_winsys *rws,
 
    switch (whandle->type) {
    case WINSYS_HANDLE_TYPE_SHARED:
+      /* This is a legacy code-path, not supported by virtio. */
+      assert(!aws->info.is_virtio);
       type = amdgpu_bo_handle_type_gem_flink_name;
       break;
    case WINSYS_HANDLE_TYPE_KMS:
       if (sws->fd == aws->fd) {
-         whandle->handle = bo->kms_handle;
+         /* For virtio we can't return kms_handle, because it's not a GEM handle,
+          * but a resource ID. Instead, repurpose the deprecated type
+          * amdgpu_bo_handle_type_kms_noimport to request a GEM handle.
+          */
+         if (aws->info.is_virtio)
+            aws->libdrm_amdgpu->bo_export(bo->bo_handle,
+                                          amdgpu_bo_handle_type_kms_noimport,
+                                          &whandle->handle);
+         else
+            whandle->handle = bo->kms_handle;
 
          if (bo->is_shared)
             return true;
@@ -1655,7 +1677,7 @@ static bool amdgpu_bo_get_handle(struct radeon_winsys *rws,
       return false;
    }
 
-   r = amdgpu_bo_export(bo->bo_handle, type, &whandle->handle);
+   r = aws->libdrm_amdgpu->bo_export(bo->bo_handle, type, &whandle->handle);
    if (r)
       return false;
 
@@ -1709,18 +1731,18 @@ static struct pb_buffer_lean *amdgpu_bo_from_ptr(struct radeon_winsys *rws,
     if (!bo)
         return NULL;
 
-    if (amdgpu_create_bo_from_user_mem(aws->dev, pointer,
-                                       aligned_size, &buf_handle))
+    if (aws->libdrm_amdgpu->create_bo_from_user_mem(aws->dev, pointer,
+                                                    aligned_size, &buf_handle))
         goto error;
 
-    if (amdgpu_va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
-                              aligned_size,
-                              amdgpu_get_optimal_alignment(aws, aligned_size,
-                                                           aws->info.gart_page_size),
-                              0, &va, &va_handle, AMDGPU_VA_RANGE_HIGH))
+    if (aws->libdrm_amdgpu->va_range_alloc(aws->dev, amdgpu_gpu_va_range_general,
+                                           aligned_size,
+                                           amdgpu_get_optimal_alignment(aws, aligned_size,
+                                                                        aws->info.gart_page_size),
+                                           0, &va, &va_handle, AMDGPU_VA_RANGE_HIGH))
         goto error_va_alloc;
 
-    if (amdgpu_bo_va_op(buf_handle, 0, aligned_size, va, 0, AMDGPU_VA_OP_MAP))
+    if (aws->libdrm_amdgpu->bo_va_op(buf_handle, 0, aligned_size, va, 0, AMDGPU_VA_OP_MAP))
         goto error_va_map;
 
     /* Initialize it. */
@@ -1740,15 +1762,15 @@ static struct pb_buffer_lean *amdgpu_bo_from_ptr(struct radeon_winsys *rws,
 
     amdgpu_add_buffer_to_global_list(aws, bo);
 
-    amdgpu_bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
+    aws->libdrm_amdgpu->bo_export(bo->bo_handle, amdgpu_bo_handle_type_kms, &bo->kms_handle);
 
     return (struct pb_buffer_lean*)bo;
 
 error_va_map:
-    amdgpu_va_range_free(va_handle);
+    aws->libdrm_amdgpu->va_range_free(va_handle);
 
 error_va_alloc:
-    amdgpu_bo_free(buf_handle);
+    aws->libdrm_amdgpu->bo_free(buf_handle);
 
 error:
     FREE(bo);
@@ -1769,19 +1791,20 @@ static bool amdgpu_bo_is_suballocated(struct pb_buffer_lean *buf)
    return bo->type == AMDGPU_BO_SLAB_ENTRY;
 }
 
-uint64_t amdgpu_bo_get_va(struct pb_buffer_lean *buf)
+uint64_t amdgpu_bo_get_va(struct radeon_winsys *rws, struct pb_buffer_lean *buf)
 {
+   struct amdgpu_winsys *ws = amdgpu_winsys(rws);
    struct amdgpu_winsys_bo *bo = amdgpu_winsys_bo(buf);
 
    if (bo->type == AMDGPU_BO_SLAB_ENTRY) {
       struct amdgpu_bo_real_reusable_slab *slab_bo =
          (struct amdgpu_bo_real_reusable_slab *)get_slab_entry_real_bo(bo);
 
-      return amdgpu_va_get_start_addr(slab_bo->b.b.va_handle) + get_slab_entry_offset(bo);
+      return ws->libdrm_amdgpu->va_get_start_addr(slab_bo->b.b.va_handle) + get_slab_entry_offset(bo);
    } else if (bo->type == AMDGPU_BO_SPARSE) {
-      return amdgpu_va_get_start_addr(get_sparse_bo(bo)->va_handle);
+      return ws->libdrm_amdgpu->va_get_start_addr(get_sparse_bo(bo)->va_handle);
    } else {
-      return amdgpu_va_get_start_addr(get_real_bo(bo)->va_handle);
+      return ws->libdrm_amdgpu->va_get_start_addr(get_real_bo(bo)->va_handle);
    }
 }
 

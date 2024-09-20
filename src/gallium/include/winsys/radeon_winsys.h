@@ -473,7 +473,7 @@ struct radeon_winsys {
     * \param buf       A winsys buffer object
     * \return          virtual address
     */
-   uint64_t (*buffer_get_virtual_address)(struct pb_buffer_lean *buf);
+   uint64_t (*buffer_get_virtual_address)(struct radeon_winsys *ws, struct pb_buffer_lean *buf);
 
    /**
     * Return the offset of this buffer relative to the relocation base.
@@ -952,7 +952,7 @@ typedef struct pipe_screen *(*radeon_screen_create_t)(struct radeon_winsys *,
 /* These functions create the radeon_winsys instance for the corresponding kernel driver. */
 struct radeon_winsys *
 amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
-		     radeon_screen_create_t screen_create);
+		     radeon_screen_create_t screen_create, bool is_virtio);
 struct radeon_winsys *
 radeon_drm_winsys_create(int fd, const struct pipe_screen_config *config,
 			 radeon_screen_create_t screen_create);

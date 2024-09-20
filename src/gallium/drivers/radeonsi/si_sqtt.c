@@ -43,7 +43,7 @@ static bool si_sqtt_init_bo(struct si_context *sctx)
    if (!sctx->sqtt->bo)
       return false;
 
-   sctx->sqtt->buffer_va = sctx->ws->buffer_get_virtual_address(sctx->sqtt->bo);
+   sctx->sqtt->buffer_va = sctx->ws->buffer_get_virtual_address(sctx->ws, sctx->sqtt->bo);
 
    return true;
 }

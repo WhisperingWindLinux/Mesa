@@ -14,6 +14,7 @@
 #include <string.h>
 #include "drm-uapi/amdgpu_drm.h"
 #include "ac_surface.h"
+#include "libdrm_amdgpu_loader.h"
 #include "radv_amdgpu_bo.h"
 #include "radv_amdgpu_cs.h"
 #include "radv_amdgpu_surface.h"
@@ -25,7 +26,7 @@
 static bool
 do_winsys_init(struct radv_amdgpu_winsys *ws, int fd)
 {
-   if (!ac_query_gpu_info(fd, ws->dev, &ws->info, true))
+   if (!ac_query_gpu_info(ws->libdrm_amdgpu, fd, ws->dev, &ws->info, true))
       return false;
 
    /*
@@ -74,34 +75,34 @@ radv_amdgpu_winsys_query_value(struct radeon_winsys *rws, enum radeon_value_id v
    case RADEON_ALLOCATED_GTT:
       return ws->allocated_gtt;
    case RADEON_TIMESTAMP:
-      amdgpu_query_info(ws->dev, AMDGPU_INFO_TIMESTAMP, 8, &retval);
+      ws->libdrm_amdgpu->query_info(ws->dev, AMDGPU_INFO_TIMESTAMP, 8, &retval);
       return retval;
    case RADEON_NUM_BYTES_MOVED:
-      amdgpu_query_info(ws->dev, AMDGPU_INFO_NUM_BYTES_MOVED, 8, &retval);
+      ws->libdrm_amdgpu->query_info(ws->dev, AMDGPU_INFO_NUM_BYTES_MOVED, 8, &retval);
       return retval;
    case RADEON_NUM_EVICTIONS:
-      amdgpu_query_info(ws->dev, AMDGPU_INFO_NUM_EVICTIONS, 8, &retval);
+      ws->libdrm_amdgpu->query_info(ws->dev, AMDGPU_INFO_NUM_EVICTIONS, 8, &retval);
       return retval;
    case RADEON_NUM_VRAM_CPU_PAGE_FAULTS:
-      amdgpu_query_info(ws->dev, AMDGPU_INFO_NUM_VRAM_CPU_PAGE_FAULTS, 8, &retval);
+      ws->libdrm_amdgpu->query_info(ws->dev, AMDGPU_INFO_NUM_VRAM_CPU_PAGE_FAULTS, 8, &retval);
       return retval;
    case RADEON_VRAM_USAGE:
-      amdgpu_query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_VRAM, 0, &heap);
+      ws->libdrm_amdgpu->query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_VRAM, 0, &heap);
       return heap.heap_usage;
    case RADEON_VRAM_VIS_USAGE:
-      amdgpu_query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_VRAM, AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED, &heap);
+      ws->libdrm_amdgpu->query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_VRAM, AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED, &heap);
       return heap.heap_usage;
    case RADEON_GTT_USAGE:
-      amdgpu_query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_GTT, 0, &heap);
+      ws->libdrm_amdgpu->query_heap_info(ws->dev, AMDGPU_GEM_DOMAIN_GTT, 0, &heap);
       return heap.heap_usage;
    case RADEON_GPU_TEMPERATURE:
-      amdgpu_query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GPU_TEMP, 4, &retval);
+      ws->libdrm_amdgpu->query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GPU_TEMP, 4, &retval);
       return retval;
    case RADEON_CURRENT_SCLK:
-      amdgpu_query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GFX_SCLK, 4, &retval);
+      ws->libdrm_amdgpu->query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GFX_SCLK, 4, &retval);
       return retval;
    case RADEON_CURRENT_MCLK:
-      amdgpu_query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GFX_MCLK, 4, &retval);
+      ws->libdrm_amdgpu->query_sensor_info(ws->dev, AMDGPU_INFO_SENSOR_GFX_MCLK, 4, &retval);
       return retval;
    default:
       unreachable("invalid query value");
@@ -115,15 +116,16 @@ radv_amdgpu_winsys_read_registers(struct radeon_winsys *rws, unsigned reg_offset
 {
    struct radv_amdgpu_winsys *ws = (struct radv_amdgpu_winsys *)rws;
 
-   return amdgpu_read_mm_registers(ws->dev, reg_offset / 4, num_registers, 0xffffffff, 0, out) == 0;
+   return ws->libdrm_amdgpu->read_mm_registers(ws->dev, reg_offset / 4, num_registers, 0xffffffff, 0, out) == 0;
 }
 
 static const char *
 radv_amdgpu_winsys_get_chip_name(struct radeon_winsys *rws)
 {
+   struct radv_amdgpu_winsys *ws = (struct radv_amdgpu_winsys *)rws;
    amdgpu_device_handle dev = ((struct radv_amdgpu_winsys *)rws)->dev;
 
-   return amdgpu_get_marketing_name(dev);
+   return ws->libdrm_amdgpu->get_marketing_name(dev);
 }
 
 static bool
@@ -133,7 +135,7 @@ radv_amdgpu_winsys_query_gpuvm_fault(struct radeon_winsys *rws, struct radv_wins
    struct drm_amdgpu_info_gpuvm_fault gpuvm_fault = {0};
    int r;
 
-   r = amdgpu_query_info(ws->dev, AMDGPU_INFO_GPUVM_FAULT, sizeof(gpuvm_fault), &gpuvm_fault);
+   r = ws->libdrm_amdgpu->query_info(ws->dev, AMDGPU_INFO_GPUVM_FAULT, sizeof(gpuvm_fault), &gpuvm_fault);
    if (r < 0) {
       fprintf(stderr, "radv/amdgpu: Failed to query the last GPUVM fault (%d).\n", r);
       return false;
@@ -180,11 +182,14 @@ radv_amdgpu_winsys_destroy(struct radeon_winsys *rws)
    free(ws->global_bo_list.bos);
 
    if (ws->reserve_vmid)
-      amdgpu_vm_unreserve_vmid(ws->dev, 0);
+      ws->libdrm_amdgpu->vm_unreserve_vmid(ws->dev, 0);
 
    u_rwlock_destroy(&ws->log_bo_list_lock);
    ac_addrlib_destroy(ws->addrlib);
-   amdgpu_device_deinitialize(ws->dev);
+   ws->libdrm_amdgpu->device_deinitialize(ws->dev);
+
+   ac_deinit_libdrm_amdgpu(ws->libdrm_amdgpu);
+
    FREE(rws);
 }
 
@@ -192,7 +197,7 @@ static int
 radv_amdgpu_winsys_get_fd(struct radeon_winsys *rws)
 {
    struct radv_amdgpu_winsys *ws = (struct radv_amdgpu_winsys *)rws;
-   return amdgpu_device_get_fd(ws->dev);
+   return ws->libdrm_amdgpu->device_get_fd(ws->dev);
 }
 
 static const struct vk_sync_type *const *
@@ -203,13 +208,26 @@ radv_amdgpu_winsys_get_sync_types(struct radeon_winsys *rws)
 }
 
 struct radeon_winsys *
-radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool reserve_vmid)
+radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool reserve_vmid, bool is_virtio)
 {
    uint32_t drm_major, drm_minor, r;
    amdgpu_device_handle dev;
    struct radv_amdgpu_winsys *ws = NULL;
+   struct libdrm_amdgpu *libdrm_amdgpu;
 
-   r = amdgpu_device_initialize(fd, &drm_major, &drm_minor, &dev);
+#if HAVE_AMDGPU_VIRTIO
+   if (is_virtio)
+      libdrm_amdgpu = ac_init_libdrm_amdgpu_for_virtio();
+   else
+#endif
+      libdrm_amdgpu = ac_init_libdrm_amdgpu();
+
+   if (libdrm_amdgpu == NULL) {
+      fprintf(stderr, "amdgpu: libdrm_amdgpu init failed");
+      return NULL;
+   }
+
+   r = libdrm_amdgpu->device_initialize(fd, &drm_major, &drm_minor, &dev);
    if (r) {
       fprintf(stderr, "radv/amdgpu: failed to initialize device.\n");
       return NULL;
@@ -232,7 +250,7 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
 
    if (ws) {
       simple_mtx_unlock(&winsys_creation_mutex);
-      amdgpu_device_deinitialize(dev);
+      libdrm_amdgpu->device_deinitialize(dev);
 
       /* Check that options don't differ from the existing winsys. */
       if (((debug_flags & RADV_DEBUG_ALL_BOS) && !ws->debug_all_bos) ||
@@ -246,6 +264,8 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
       if (debug_flags & RADV_DEBUG_ZERO_VRAM)
          ws->zero_all_vram_allocs = true;
 
+      ac_deinit_libdrm_amdgpu(libdrm_amdgpu);
+
       return &ws->base;
    }
 
@@ -255,8 +275,10 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
 
    ws->refcount = 1;
    ws->dev = dev;
+   ws->libdrm_amdgpu = libdrm_amdgpu;
    ws->info.drm_major = drm_major;
    ws->info.drm_minor = drm_minor;
+   ws->info.is_virtio = is_virtio;
    if (!do_winsys_init(ws, fd))
       goto winsys_fail;
 
@@ -267,7 +289,7 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
 
    ws->reserve_vmid = reserve_vmid;
    if (ws->reserve_vmid) {
-      r = amdgpu_vm_reserve_vmid(dev, 0);
+      r = libdrm_amdgpu->vm_reserve_vmid(dev, 0);
       if (r) {
          fprintf(stderr, "radv/amdgpu: failed to reserve vmid.\n");
          goto vmid_fail;
@@ -275,10 +297,17 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    }
    int num_sync_types = 0;
 
-   ws->syncobj_sync_type = vk_drm_syncobj_get_type(amdgpu_device_get_fd(ws->dev));
+   ws->syncobj_sync_type = vk_drm_syncobj_get_type(libdrm_amdgpu->device_get_fd(ws->dev));
    if (ws->syncobj_sync_type.features) {
       /* multi wait is always supported */
       ws->syncobj_sync_type.features |= VK_SYNC_FEATURE_GPU_MULTI_WAIT;
+
+      if (!ws->info.has_timeline_syncobj && ws->syncobj_sync_type.features & VK_SYNC_FEATURE_TIMELINE) {
+         /* Disable timeline feature if it was disabled in the driver. */
+         assert(is_virtio);
+         ws->syncobj_sync_type.get_value = NULL;
+         ws->syncobj_sync_type.features &= ~VK_SYNC_FEATURE_TIMELINE;
+      }
 
       ws->sync_types[num_sync_types++] = &ws->syncobj_sync_type;
       if (!(ws->syncobj_sync_type.features & VK_SYNC_FEATURE_TIMELINE)) {
@@ -322,6 +351,6 @@ fail:
       winsyses = NULL;
    }
    simple_mtx_unlock(&winsys_creation_mutex);
-   amdgpu_device_deinitialize(dev);
+   libdrm_amdgpu->device_deinitialize(dev);
    return NULL;
 }

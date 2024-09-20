@@ -274,7 +274,7 @@ bool amdgpu_bo_can_reclaim_slab(void *priv, struct pb_slab_entry *entry);
 struct pb_slab *amdgpu_bo_slab_alloc(void *priv, unsigned heap, unsigned entry_size,
                                      unsigned group_index);
 void amdgpu_bo_slab_free(struct amdgpu_winsys *aws, struct pb_slab *slab);
-uint64_t amdgpu_bo_get_va(struct pb_buffer_lean *buf);
+uint64_t amdgpu_bo_get_va(struct radeon_winsys *rws, struct pb_buffer_lean *buf);
 
 static inline struct amdgpu_winsys_bo *
 amdgpu_winsys_bo(struct pb_buffer_lean *bo)

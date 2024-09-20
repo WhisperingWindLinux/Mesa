@@ -1271,6 +1271,121 @@ void anv_CmdFillBuffer(
    anv_add_buffer_write_pending_bits(cmd_buffer, "after fill buffer");
 }
 
+static void
+exec_ccs_op(struct anv_cmd_buffer *cmd_buffer,
+            struct blorp_batch *batch,
+            const struct anv_image *image,
+            enum isl_format format, struct isl_swizzle swizzle,
+            VkImageAspectFlagBits aspect, uint32_t level,
+            uint32_t base_layer, uint32_t layer_count,
+            enum isl_aux_op ccs_op, union isl_color_value *clear_value)
+{
+   assert(image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
+   assert(image->vk.samples == 1);
+   assert(level < anv_image_aux_levels(image, aspect));
+   /* Multi-LOD YcBcR is not allowed */
+   assert(image->n_planes == 1 || level == 0);
+   assert(base_layer + layer_count <=
+          anv_image_aux_layers(image, aspect, level));
+
+   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
+
+   struct blorp_surf surf;
+   get_blorp_surf_for_anv_image(cmd_buffer, image, aspect,
+                                0, ANV_IMAGE_LAYOUT_EXPLICIT_AUX,
+                                image->planes[plane].aux_usage,
+                                &surf);
+
+   uint32_t level_width = u_minify(surf.surf->logical_level0_px.w, level);
+   uint32_t level_height = u_minify(surf.surf->logical_level0_px.h, level);
+
+   /* Blorp will store the clear color for us if we provide the clear color
+    * address and we are doing a fast clear. So we save the clear value into
+    * the blorp surface.
+    */
+   if (clear_value)
+      surf.clear_color = *clear_value;
+
+   switch (ccs_op) {
+   case ISL_AUX_OP_FAST_CLEAR:
+      blorp_fast_clear(batch, &surf, format, swizzle,
+                       level, base_layer, layer_count,
+                       0, 0, level_width, level_height);
+      break;
+   case ISL_AUX_OP_FULL_RESOLVE:
+   case ISL_AUX_OP_PARTIAL_RESOLVE: {
+      /* Wa_1508744258: Enable RHWO optimization for resolves */
+      const bool enable_rhwo_opt =
+         intel_needs_workaround(cmd_buffer->device->info, 1508744258);
+
+      if (enable_rhwo_opt)
+         cmd_buffer->state.pending_rhwo_optimization_enabled = true;
+
+      blorp_ccs_resolve(batch, &surf, level, base_layer, layer_count,
+                        format, ccs_op);
+
+      if (enable_rhwo_opt)
+         cmd_buffer->state.pending_rhwo_optimization_enabled = false;
+      break;
+   }
+   case ISL_AUX_OP_AMBIGUATE:
+      for (uint32_t a = 0; a < layer_count; a++) {
+         const uint32_t layer = base_layer + a;
+         blorp_ccs_ambiguate(batch, &surf, level, layer);
+      }
+      break;
+   default:
+      unreachable("Unsupported CCS operation");
+   }
+}
+
+static void
+exec_mcs_op(struct anv_cmd_buffer *cmd_buffer,
+            struct blorp_batch *batch,
+            const struct anv_image *image,
+            enum isl_format format, struct isl_swizzle swizzle,
+            VkImageAspectFlagBits aspect,
+            uint32_t base_layer, uint32_t layer_count,
+            enum isl_aux_op mcs_op, union isl_color_value *clear_value)
+{
+   assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+   assert(image->vk.samples > 1);
+   assert(base_layer + layer_count <= anv_image_aux_layers(image, aspect, 0));
+
+   /* Multisampling with multi-planar formats is not supported */
+   assert(image->n_planes == 1);
+
+   struct blorp_surf surf;
+   get_blorp_surf_for_anv_image(cmd_buffer, image, aspect,
+                                0, ANV_IMAGE_LAYOUT_EXPLICIT_AUX,
+                                ISL_AUX_USAGE_MCS, &surf);
+
+   /* Blorp will store the clear color for us if we provide the clear color
+    * address and we are doing a fast clear. So we save the clear value into
+    * the blorp surface.
+    */
+   if (clear_value)
+      surf.clear_color = *clear_value;
+
+   switch (mcs_op) {
+   case ISL_AUX_OP_FAST_CLEAR:
+      blorp_fast_clear(batch, &surf, format, swizzle,
+                       0, base_layer, layer_count,
+                       0, 0, image->vk.extent.width, image->vk.extent.height);
+      break;
+   case ISL_AUX_OP_PARTIAL_RESOLVE:
+      blorp_mcs_partial_resolve(batch, &surf, format,
+                                base_layer, layer_count);
+      break;
+   case ISL_AUX_OP_AMBIGUATE:
+      blorp_mcs_ambiguate(batch, &surf, base_layer, layer_count);
+      break;
+   case ISL_AUX_OP_FULL_RESOLVE:
+   default:
+      unreachable("Unsupported MCS operation");
+   }
+}
+
 void anv_CmdClearColorImage(
     VkCommandBuffer                             commandBuffer,
     VkImage                                     _image,
@@ -1308,33 +1423,69 @@ void anv_CmdClearColorImage(
       struct anv_format_plane src_format =
          anv_get_format_aspect(cmd_buffer->device->info, image->vk.format,
                                VK_IMAGE_ASPECT_COLOR_BIT, image->vk.tiling);
+      union isl_color_value clear_color = vk_to_isl_color(*pColor);
 
-      unsigned base_layer = pRanges[r].baseArrayLayer;
-      uint32_t layer_count =
-         vk_image_subresource_layer_count(&image->vk, &pRanges[r]);
       uint32_t level_count =
          vk_image_subresource_level_count(&image->vk, &pRanges[r]);
 
       for (uint32_t i = 0; i < level_count; i++) {
          const unsigned level = pRanges[r].baseMipLevel + i;
-         const unsigned level_width = u_minify(image->vk.extent.width, level);
-         const unsigned level_height = u_minify(image->vk.extent.height, level);
+         const VkExtent3D level_extent =
+            vk_image_mip_level_extent(&image->vk, level);
 
+         VkClearRect clear_rect = {};
+         clear_rect.rect.extent.width = level_extent.width;
+         clear_rect.rect.extent.height = level_extent.height;
          if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
-            base_layer = 0;
-            layer_count = u_minify(image->vk.extent.depth, level);
+            clear_rect.baseArrayLayer = 0;
+            clear_rect.layerCount = level_extent.depth;
+         } else {
+            clear_rect.baseArrayLayer = pRanges[r].baseArrayLayer;
+            clear_rect.layerCount =
+               vk_image_subresource_layer_count(&image->vk, &pRanges[r]);
+         }
+
+         if (anv_can_fast_clear_color(cmd_buffer, image, level, &clear_rect,
+                                      imageLayout, src_format.isl_format,
+                                      src_format.swizzle, clear_color)) {
+            assert(level == 0);
+            assert(clear_rect.baseArrayLayer == 0);
+            if (image->vk.samples == 1) {
+               exec_ccs_op(cmd_buffer, &batch, image, src_format.isl_format,
+                           src_format.swizzle, VK_IMAGE_ASPECT_COLOR_BIT,
+                           0, 0, 1, ISL_AUX_OP_FAST_CLEAR, &clear_color);
+            } else {
+               exec_mcs_op(cmd_buffer, &batch, image, src_format.isl_format,
+                           src_format.swizzle, VK_IMAGE_ASPECT_COLOR_BIT,
+                           0, 1, ISL_AUX_OP_FAST_CLEAR, &clear_color);
+            }
+
+            if (cmd_buffer->device->info->ver < 20) {
+               anv_cmd_buffer_mark_image_fast_cleared(cmd_buffer, image,
+                                                      src_format.isl_format,
+                                                      clear_color);
+            }
+
+            clear_rect.baseArrayLayer++;
+            if (--clear_rect.layerCount == 0)
+               continue;
          }
 
          anv_cmd_buffer_mark_image_written(cmd_buffer, image,
                                            pRanges[r].aspectMask,
                                            surf.aux_usage, level,
-                                           base_layer, layer_count);
+                                           clear_rect.baseArrayLayer,
+                                           clear_rect.layerCount);
 
          blorp_clear(&batch, &surf,
-                     src_format.isl_format, src_format.swizzle,
-                     level, base_layer, layer_count,
-                     0, 0, level_width, level_height,
-                     vk_to_isl_color(*pColor), 0 /* color_write_disable */);
+                     src_format.isl_format, src_format.swizzle, level,
+                     clear_rect.baseArrayLayer,
+                     clear_rect.layerCount,
+                     clear_rect.rect.offset.x,
+                     clear_rect.rect.offset.y,
+                     clear_rect.rect.extent.width,
+                     clear_rect.rect.extent.height,
+                     clear_color, 0 /* color_write_disable */);
       }
    }
 
@@ -1485,136 +1636,20 @@ can_fast_clear_color_att(struct anv_cmd_buffer *cmd_buffer,
       return false;
    }
 
-   /* We only support fast-clears on the first layer */
-   if (pRects[0].layerCount > 1 || pRects[0].baseArrayLayer > 0)
+   /* We only support fast-clearing a single layer */
+   if (pRects[0].layerCount > 1)
       return false;
 
    bool is_multiview = cmd_buffer->state.gfx.view_mask != 0;
    if (is_multiview && (cmd_buffer->state.gfx.view_mask != 1))
       return false;
 
-   return anv_can_fast_clear_color_view(cmd_buffer->device,
-                                        (struct anv_image_view *)att->iview,
-                                        att->layout,
-                                        clear_color,
-                                        pRects->layerCount,
-                                        pRects->rect,
-                                        cmd_buffer->queue_family->queueFlags);
-}
-
-static void
-exec_ccs_op(struct anv_cmd_buffer *cmd_buffer,
-            struct blorp_batch *batch,
-            const struct anv_image *image,
-            enum isl_format format, struct isl_swizzle swizzle,
-            VkImageAspectFlagBits aspect, uint32_t level,
-            uint32_t base_layer, uint32_t layer_count,
-            enum isl_aux_op ccs_op, union isl_color_value *clear_value)
-{
-   assert(image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
-   assert(image->vk.samples == 1);
-   assert(level < anv_image_aux_levels(image, aspect));
-   /* Multi-LOD YcBcR is not allowed */
-   assert(image->n_planes == 1 || level == 0);
-   assert(base_layer + layer_count <=
-          anv_image_aux_layers(image, aspect, level));
-
-   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
-
-   struct blorp_surf surf;
-   get_blorp_surf_for_anv_image(cmd_buffer, image, aspect,
-                                0, ANV_IMAGE_LAYOUT_EXPLICIT_AUX,
-                                image->planes[plane].aux_usage,
-                                &surf);
-
-   uint32_t level_width = u_minify(surf.surf->logical_level0_px.w, level);
-   uint32_t level_height = u_minify(surf.surf->logical_level0_px.h, level);
-
-   /* Blorp will store the clear color for us if we provide the clear color
-    * address and we are doing a fast clear. So we save the clear value into
-    * the blorp surface.
-    */
-   if (clear_value)
-      surf.clear_color = *clear_value;
-
-   switch (ccs_op) {
-   case ISL_AUX_OP_FAST_CLEAR:
-      blorp_fast_clear(batch, &surf, format, swizzle,
-                       level, base_layer, layer_count,
-                       0, 0, level_width, level_height);
-      break;
-   case ISL_AUX_OP_FULL_RESOLVE:
-   case ISL_AUX_OP_PARTIAL_RESOLVE: {
-      /* Wa_1508744258: Enable RHWO optimization for resolves */
-      const bool enable_rhwo_opt =
-         intel_needs_workaround(cmd_buffer->device->info, 1508744258);
-
-      if (enable_rhwo_opt)
-         cmd_buffer->state.pending_rhwo_optimization_enabled = true;
-
-      blorp_ccs_resolve(batch, &surf, level, base_layer, layer_count,
-                        format, ccs_op);
-
-      if (enable_rhwo_opt)
-         cmd_buffer->state.pending_rhwo_optimization_enabled = false;
-      break;
-   }
-   case ISL_AUX_OP_AMBIGUATE:
-      for (uint32_t a = 0; a < layer_count; a++) {
-         const uint32_t layer = base_layer + a;
-         blorp_ccs_ambiguate(batch, &surf, level, layer);
-      }
-      break;
-   default:
-      unreachable("Unsupported CCS operation");
-   }
-}
-
-static void
-exec_mcs_op(struct anv_cmd_buffer *cmd_buffer,
-            struct blorp_batch *batch,
-            const struct anv_image *image,
-            enum isl_format format, struct isl_swizzle swizzle,
-            VkImageAspectFlagBits aspect,
-            uint32_t base_layer, uint32_t layer_count,
-            enum isl_aux_op mcs_op, union isl_color_value *clear_value)
-{
-   assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
-   assert(image->vk.samples > 1);
-   assert(base_layer + layer_count <= anv_image_aux_layers(image, aspect, 0));
-
-   /* Multisampling with multi-planar formats is not supported */
-   assert(image->n_planes == 1);
-
-   struct blorp_surf surf;
-   get_blorp_surf_for_anv_image(cmd_buffer, image, aspect,
-                                0, ANV_IMAGE_LAYOUT_EXPLICIT_AUX,
-                                ISL_AUX_USAGE_MCS, &surf);
-
-   /* Blorp will store the clear color for us if we provide the clear color
-    * address and we are doing a fast clear. So we save the clear value into
-    * the blorp surface.
-    */
-   if (clear_value)
-      surf.clear_color = *clear_value;
-
-   switch (mcs_op) {
-   case ISL_AUX_OP_FAST_CLEAR:
-      blorp_fast_clear(batch, &surf, format, swizzle,
-                       0, base_layer, layer_count,
-                       0, 0, image->vk.extent.width, image->vk.extent.height);
-      break;
-   case ISL_AUX_OP_PARTIAL_RESOLVE:
-      blorp_mcs_partial_resolve(batch, &surf, format,
-                                base_layer, layer_count);
-      break;
-   case ISL_AUX_OP_AMBIGUATE:
-      blorp_mcs_ambiguate(batch, &surf, base_layer, layer_count);
-      break;
-   case ISL_AUX_OP_FULL_RESOLVE:
-   default:
-      unreachable("Unsupported MCS operation");
-   }
+   return anv_can_fast_clear_color(cmd_buffer, att->iview->image,
+                                   att->iview->vk.base_mip_level,
+                                   pRects, att->layout,
+                                   att->iview->planes[0].isl.format,
+                                   att->iview->planes[0].isl.swizzle,
+                                   clear_color);
 }
 
 static void
@@ -2275,6 +2310,7 @@ anv_image_clear_depth_stencil(struct anv_cmd_buffer *cmd_buffer,
 {
    assert(image->vk.aspects & (VK_IMAGE_ASPECT_DEPTH_BIT |
                                VK_IMAGE_ASPECT_STENCIL_BIT));
+   assert(layer_count > 0);
 
    struct blorp_batch batch;
    anv_blorp_batch_init(cmd_buffer, &batch, 0);

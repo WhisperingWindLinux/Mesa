@@ -1979,281 +1979,173 @@ anv_resource_barrier_body_for_access_flags(struct anv_cmd_buffer *cmd_buffer,
                                            struct GENX(RESOURCE_BARRIER_BODY) *body,
                                            const VkAccessFlags2 flags)
 {
-   u_foreach_bit64(b, flags) {
-      switch ((VkAccessFlags2)BITFIELD64_BIT(b)) {
-      case VK_ACCESS_2_SHADER_WRITE_BIT:
-      case VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT:
-      case VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR:
-         /* We're transitioning a buffer that was previously used as write
-          * destination through the data port. To make its content available
-          * to future operations, flush the hdc pipeline.
-          */
-         body->L1DataportUAVFlush |= true;
-         break;
-      case VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT:
-         /* We're transitioning a buffer that was previously used as render
-          * target. To make its content available to future operations, flush
-          * the render target cache.
-          */
-         body->ColorCache |= true;
-         break;
-      case VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT:
-         /* We're transitioning a buffer that was previously used as depth
-          * buffer. To make its content available to future operations, flush
-          * the depth cache.
-          */
-         body->DepthCache |= true;
-         break;
-      case VK_ACCESS_2_TRANSFER_WRITE_BIT:
-         /* We're transitioning a buffer that was previously used as a
-          * transfer write destination. Generic write operations include color
-          * & depth operations as well as buffer operations like :
-          *     - vkCmdClearColorImage()
-          *     - vkCmdClearDepthStencilImage()
-          *     - vkCmdBlitImage()
-          *     - vkCmdCopy*(), vkCmdUpdate*(), vkCmdFill*()
-          *
-          * Most of these operations are implemented using Blorp which writes
-          * through the render target cache or the depth cache on the graphics
-          * queue. On the compute queue, the writes are done through the data
-          * port.
-          */
-         if (anv_cmd_buffer_is_render_queue(cmd_buffer)) {
-            /* Most operations are done through RT/detph writes */
-            body->DepthCache |= true;
-            body->ColorCache |= true;
-         } else if (anv_cmd_buffer_is_compute_queue(cmd_buffer)) {
-            body->L1DataportUAVFlush |= true;
-         }
-         break;
-      case VK_ACCESS_2_MEMORY_WRITE_BIT:
-         /* We're transitioning a buffer for generic write operations. Flush
-          * all the caches.
-          */
-         body->DepthCache |= true;
-         body->ColorCache |= true;
-         body->L1DataportUAVFlush |= true;
-         break;
-      case VK_ACCESS_2_HOST_WRITE_BIT:
-         /* We're transitioning a buffer for access by CPU,
-          * Invalidate all caches.
-          */
-         body->L1DataportCacheInvalidate |= true;
-         body->TextureRO |= true;
-         body->VFRO |= true;
-         body->ConstantCache |= true;
-         body->StateRO |= true;
-         break;
-      case VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT:
-      case VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT:
-         /* TODO: try to drop this if CS is L3 coherent */
-         body->L1DataportUAVFlush |= true;
-         body->TextureRO |= true;
-         body->VFRO |= true;
-         body->ConstantCache |= true;
-         body->StateRO |= true;
-         break;
-      case VK_ACCESS_2_TRANSFER_READ_BIT:
-      case VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT:
-      case VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT:
-      case VK_ACCESS_2_SHADER_SAMPLED_READ_BIT:
-         /* Transitioning a buffer to be read through the sampler, so
-          * invalidate the texture cache, we don't want any stale data.
-          */
-         body->TextureRO |= true;
-         body->StateRO |= true;
-         break;
-      case VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT:
-         body->L1DataportCacheInvalidate |= true;
-         break;
-      case VK_ACCESS_2_INDEX_READ_BIT:
-      case VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT:
-         /* We transitioning a buffer to be used for as input for vkCmdDraw*
-          * commands, so we invalidate the VF cache to make sure there is no
-          * stale data when we start rendering.
-          */
-         body->VFRO |= true;
-         break;
-      case VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT:
-         /* For CmdDipatchIndirect, we also load gl_NumWorkGroups through a
-          * UBO from the buffer, so we need to invalidate constant cache.
-          */
-         body->ConstantCache |= true;
-         body->L1DataportCacheInvalidate |= true;
-         break;
-      case VK_ACCESS_2_UNIFORM_READ_BIT:
-      case VK_ACCESS_2_SHADER_BINDING_TABLE_READ_BIT_KHR:
-         /* We transitioning a buffer to be used as uniform data. Because
-          * uniform is accessed through the data port & sampler, we need to
-          * invalidate the texture cache (sampler) & constant cache (data
-          * port) to avoid stale data.
-          */
-         body->ConstantCache |= true;
-         body->L1DataportCacheInvalidate |= true;
-         break;
-      case VK_ACCESS_2_SHADER_READ_BIT:
-         /* Same as VK_ACCESS_2_UNIFORM_READ_BIT and
-          * VK_ACCESS_2_SHADER_SAMPLED_READ_BIT cases above
-          */
-         body->ConstantCache |= true;
-         body->TextureRO |= true;
-         body->L1DataportCacheInvalidate |= true;
-         break;
-      case VK_ACCESS_2_MEMORY_READ_BIT:
-         /* Transitioning a buffer for generic read, invalidate all the
-          * caches.
-          */
-         body->L1DataportCacheInvalidate |= true;
-         body->TextureRO |= true;
-         body->VFRO |= true;
-         body->ConstantCache |= true;
-         body->StateRO |= true;
-         break;
-      case VK_ACCESS_2_SHADER_STORAGE_READ_BIT:
-      case VK_ACCESS_2_CONDITIONAL_RENDERING_READ_BIT_EXT:
-      case VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT:
-         /* TODO: try to drop this if CS is L3 coherent */
-         body->L1DataportCacheInvalidate |= true;
-         break;
-      case VK_ACCESS_2_HOST_READ_BIT:
-         /* We're transitioning a buffer that was written by CPU.  Flush
-          * all the caches.
-          */
-         body->DepthCache |= true;
-         body->ColorCache |= true;
-         body->L1DataportUAVFlush |= true;
-         break;
-      case VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR:
-      case VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR:
-         /* TODO: ??? */
-         break;
-      case VK_ACCESS_2_DESCRIPTOR_BUFFER_READ_BIT_EXT:
-         body->StateRO |= true;
-         break;
-      case VK_ACCESS_2_FRAGMENT_SHADING_RATE_ATTACHMENT_READ_BIT_KHR:
-         break;
-      default:
-         unreachable("Unhandled access flag");
-         break; /* Nothing to do */
-      }
-   }
+   const VkAccessFlags2 L1DataportUAVFlushFlags =
+      VK_ACCESS_2_SHADER_WRITE_BIT |
+      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+      VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR |
+      VK_ACCESS_2_MEMORY_WRITE_BIT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT |
+      VK_ACCESS_2_HOST_READ_BIT |
+      (anv_cmd_buffer_is_compute_queue(cmd_buffer) ?
+         VK_ACCESS_2_TRANSFER_WRITE_BIT : 0);
+
+   const VkAccessFlags2 ColorCacheFlags =
+      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+      VK_ACCESS_2_MEMORY_WRITE_BIT |
+      VK_ACCESS_2_HOST_READ_BIT |
+      (anv_cmd_buffer_is_render_queue(cmd_buffer) ?
+         VK_ACCESS_2_TRANSFER_WRITE_BIT : 0);
+
+   const VkAccessFlags2 DepthCacheFlags =
+      VK_ACCESS_2_HOST_READ_BIT |
+      VK_ACCESS_2_MEMORY_WRITE_BIT |
+      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+      (anv_cmd_buffer_is_render_queue(cmd_buffer) ?
+       VK_ACCESS_2_TRANSFER_WRITE_BIT : 0);
+
+   const VkAccessFlags2 L1DataportCacheInvalidateFlags =
+      VK_ACCESS_2_HOST_WRITE_BIT |
+      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT |
+      VK_ACCESS_2_UNIFORM_READ_BIT |
+      VK_ACCESS_2_SHADER_BINDING_TABLE_READ_BIT_KHR |
+      VK_ACCESS_2_SHADER_READ_BIT |
+      VK_ACCESS_2_MEMORY_READ_BIT |
+      VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+      VK_ACCESS_2_CONDITIONAL_RENDERING_READ_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT;
+
+   const VkAccessFlags2 TextureROFlags =
+      VK_ACCESS_2_HOST_WRITE_BIT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFER_READ_BIT |
+      VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+      VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT |
+      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT |
+      VK_ACCESS_2_SHADER_READ_BIT |
+      VK_ACCESS_2_MEMORY_READ_BIT;
+
+   const VkAccessFlags2 VFROFlags =
+      VK_ACCESS_2_HOST_WRITE_BIT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT |
+      VK_ACCESS_2_INDEX_READ_BIT |
+      VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT |
+      VK_ACCESS_2_MEMORY_READ_BIT;
+
+   const VkAccessFlags2 ConstantCacheFlags =
+      VK_ACCESS_2_HOST_WRITE_BIT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT |
+      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT |
+      VK_ACCESS_2_UNIFORM_READ_BIT |
+      VK_ACCESS_2_SHADER_BINDING_TABLE_READ_BIT_KHR |
+      VK_ACCESS_2_SHADER_READ_BIT |
+      VK_ACCESS_2_MEMORY_READ_BIT;
+
+   const VkAccessFlags2 StateROFlags =
+      VK_ACCESS_2_HOST_WRITE_BIT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT |
+      VK_ACCESS_2_TRANSFER_READ_BIT |
+      VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+      VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT |
+      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT |
+      VK_ACCESS_2_MEMORY_READ_BIT |
+      VK_ACCESS_2_DESCRIPTOR_BUFFER_READ_BIT_EXT;
+
+   body->L1DataportCacheInvalidate = L1DataportCacheInvalidateFlags & flags;
+   body->DepthCache = DepthCacheFlags & flags;
+   body->ColorCache = ColorCacheFlags & flags;
+   body->L1DataportUAVFlush = L1DataportUAVFlushFlags & flags;
+   body->TextureRO = TextureROFlags & flags;
+   body->StateRO = StateROFlags & flags;
+   body->VFRO = VFROFlags & flags;
+   body->ConstantCache = ConstantCacheFlags & flags;
 }
 
 static inline enum GENX(RESOURCE_BARRIER_STAGE)
 anv_resource_barrier_signal_stage(const struct anv_cmd_buffer *cmd_buffer,
                                   const VkPipelineStageFlags2 srcStageMask)
 {
-   enum GENX(RESOURCE_BARRIER_STAGE) signal_stage = RESOURCE_BARRIER_STAGE_NONE;
+   if (!srcStageMask)
+      return RESOURCE_BARRIER_STAGE_NONE;
 
-   u_foreach_bit64(bit, srcStageMask) {
-      switch((VkPipelineStageFlags2)BITFIELD64_BIT(bit)) {
-      case VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT:
-      case VK_PIPELINE_STAGE_2_HOST_BIT:
-      case VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT:
-         signal_stage |= RESOURCE_BARRIER_STAGE_GEOM;
-         break;
-      case VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR:
-      case VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR:
-      case VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR:
-         signal_stage |= RESOURCE_BARRIER_STAGE_GPGPU;
-         break;
-      case VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT:
-      case VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT:
-      case VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT:
-      case VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT:
-         signal_stage |= RESOURCE_BARRIER_STAGE_GEOM;
-         break;
-      case VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT:
-         signal_stage |= RESOURCE_BARRIER_STAGE_DEPTH;
-         break;
-      case VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR:
-         signal_stage |= RESOURCE_BARRIER_STAGE_PIXEL;
-         break;
-      case VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT:
-      case VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT:
-      case VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT:
-         signal_stage |= RESOURCE_BARRIER_STAGE_COLOR;
-         break;
-      case VK_PIPELINE_STAGE_2_BLIT_BIT:
-      case VK_PIPELINE_STAGE_2_COPY_BIT:
-      case VK_PIPELINE_STAGE_2_CLEAR_BIT:
-      case VK_PIPELINE_STAGE_2_RESOLVE_BIT:
-      case VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT:
-      case VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT:
-      case VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT:
-         signal_stage |= RESOURCE_BARRIER_STAGE_COLOR |
-                         RESOURCE_BARRIER_STAGE_GPGPU;
-         break;
-      }
-   }
+   if (srcStageMask & (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR))
+      return RESOURCE_BARRIER_STAGE_PIXEL;
 
-   return signal_stage;
+   if (srcStageMask & VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT)
+      return RESOURCE_BARRIER_STAGE_DEPTH;
+
+   if (srcStageMask & (VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_BLIT_BIT |
+                       VK_PIPELINE_STAGE_2_COPY_BIT |
+                       VK_PIPELINE_STAGE_2_CLEAR_BIT |
+                       VK_PIPELINE_STAGE_2_RESOLVE_BIT |
+                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT |
+                       VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT |
+                       VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT))
+      return RESOURCE_BARRIER_STAGE_GPGPU;
+
+   if (srcStageMask & (VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT |
+                       VK_PIPELINE_STAGE_2_HOST_BIT |
+                       VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT |
+                       VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT))
+      return RESOURCE_BARRIER_STAGE_GEOM;
+
+   return RESOURCE_BARRIER_STAGE_COLOR;
 }
 
 static inline enum GENX(RESOURCE_BARRIER_STAGE)
 anv_resource_barrier_wait_stage(const struct anv_cmd_buffer *cmd_buffer,
                                 const VkPipelineStageFlags2 dstStageMask)
 {
-   enum GENX(RESOURCE_BARRIER_STAGE) wait_stage = RESOURCE_BARRIER_STAGE_NONE;
+   if (dstStageMask & (VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT |
+                       VK_PIPELINE_STAGE_2_HOST_BIT |
+                       VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_COPY_BIT |
+                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT |
+                       VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT |
+                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT |
+                       VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT |
+                       VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT |
+                       VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT |
+                       VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT))
+      return RESOURCE_BARRIER_STAGE_TOP;
 
-   u_foreach_bit64(bit, dstStageMask) {
-      switch((VkPipelineStageFlags2)BITFIELD64_BIT(bit)) {
-      case VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT:
-      case VK_PIPELINE_STAGE_2_HOST_BIT:
-      case VK_PIPELINE_STAGE_2_CONDITIONAL_RENDERING_BIT_EXT:
-      case VK_PIPELINE_STAGE_2_COPY_BIT:
-      case VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT:
-      case VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT:
-      case VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR:
-      case VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR:
-      case VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR:
-      case VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_TESSELLATION_CONTROL_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_TESSELLATION_EVALUATION_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_GEOMETRY_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT:
-      case VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT:
-      case VK_PIPELINE_STAGE_2_TRANSFORM_FEEDBACK_BIT_EXT:
-      case VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT:
-      case VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT:
-         wait_stage |= RESOURCE_BARRIER_STAGE_TOP;
-         break;
-      case VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT:
-      case VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR:
-         wait_stage |= RESOURCE_BARRIER_STAGE_RASTER;
-         break;
-      case VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT:
-      case VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT:
-      case VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT:
-      case VK_PIPELINE_STAGE_2_RESOLVE_BIT:
-      case VK_PIPELINE_STAGE_2_BLIT_BIT:
-         wait_stage |= RESOURCE_BARRIER_STAGE_PIXEL;
-         break;
-      case VK_PIPELINE_STAGE_2_CLEAR_BIT:
-      case VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT:
-         wait_stage |= RESOURCE_BARRIER_STAGE_GPGPU |
-                       RESOURCE_BARRIER_STAGE_PIXEL;
-         break;
-      default:
-         break;
-      }
-   }
+   if (dstStageMask & (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR))
+      return RESOURCE_BARRIER_STAGE_RASTER;
 
-   return wait_stage;
+   return RESOURCE_BARRIER_STAGE_PIXEL;
 }
 
 static void anv_emit_barrier_for_type(struct anv_cmd_buffer *cmd_buffer,
@@ -2316,19 +2208,13 @@ static void fill_access_mask_for_stage(struct anv_cmd_buffer *cmd_buffer,
    enum GENX(RESOURCE_BARRIER_STAGE) hw_src_stage =
       anv_resource_barrier_signal_stage(cmd_buffer, srcStageMask);
 
-   //TODO: is this really necessary? CTS seems to be happy without it
-   if (hw_src_stage == RESOURCE_BARRIER_STAGE_NONE) {
-      access_mask_per_stage[hw_src_stage].srcAccess |= srcAccessMask;
-      access_mask_per_stage[hw_src_stage].dstAccess |= dstAccessMask;
-      access_mask_per_stage[hw_src_stage].dstStageMask |= dstStageMask;
-      return;
-   }
+   assert(hw_src_stage < MAX_HW_STAGES);
+   assert(util_is_power_of_two_or_zero(hw_src_stage));
 
-   u_foreach_bit(b, hw_src_stage) {
-      access_mask_per_stage[BITFIELD_BIT(b)].srcAccess |= srcAccessMask;
-      access_mask_per_stage[BITFIELD_BIT(b)].dstAccess |= dstAccessMask;
-      access_mask_per_stage[BITFIELD_BIT(b)].dstStageMask |= dstStageMask;
-   }
+   access_mask_per_stage[hw_src_stage].srcAccess |= srcAccessMask;
+   access_mask_per_stage[hw_src_stage].dstAccess |= dstAccessMask;
+   access_mask_per_stage[hw_src_stage].dstStageMask |= dstStageMask;
+   return;
 }
 
 #endif /* GFX_VER >= 20 */
@@ -4962,14 +4848,16 @@ cmd_buffer_barrier(struct anv_cmd_buffer *cmd_buffer,
 
    } else {
 #if GFX_VER >= 20
-      for (int i = 0; i < MAX_HW_STAGES; i++) {
-         const struct intel_access_mask access_mask = access_mask_per_stage[i];
+      for (int i = 0; i < ffs(MAX_HW_STAGES); i++) {
+         const enum GENX(RESOURCE_BARRIER_STAGE) signal_stage = 1 << i;
+         const struct intel_access_mask access_mask =
+            access_mask_per_stage[signal_stage];
 
          if (!access_mask.srcAccess && !access_mask.dstAccess)
             continue;
 
          anv_add_resource_barrier(cmd_buffer,
-                                  i,
+                                  signal_stage,
                                   access_mask.srcAccess,
                                   access_mask.dstStageMask,
                                   access_mask.dstAccess);

@@ -1280,9 +1280,10 @@ static struct si_texture *si_texture_create_object(struct pipe_screen *screen,
 
    /* Execute the clears. */
    if (num_clears) {
-      si_execute_clears(si_get_aux_context(&sscreen->aux_context.general), clears, num_clears, 0,
-                        false);
-      si_put_aux_context_flush(&sscreen->aux_context.general);
+      struct si_context *sctx = si_get_aux_context(&sscreen->aux_context.compute_resource_init);
+
+      si_execute_clears(sctx, clears, num_clears, false);
+      si_put_aux_context_flush(&sscreen->aux_context.compute_resource_init);
    }
 
    /* Initialize the CMASK base register value. */

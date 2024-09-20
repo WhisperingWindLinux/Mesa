@@ -416,6 +416,7 @@ FreedrenoDriver::setup_a7xx_counters()
 
    /* TODO: current numbers are specific to a750, but this
     * should be runtime-configurable, somehow.
+    * FIXME: use fd_dev_info, that's how.
     */
    struct {
       unsigned number_of_sp;
@@ -462,12 +463,15 @@ FreedrenoDriver::setup_a7xx_counters()
    auto PERF_TSE_CLIPPED_PRIM = countable("TSE", "PERF_TSE_CLIPPED_PRIM");
    auto PERF_TSE_OUTPUT_VISIBLE_PRIM = countable("TSE", "PERF_TSE_OUTPUT_VISIBLE_PRIM");
 
-   /* UCHE: 5/12 counters */
+   /* UCHE: 8/12 counters */
    auto PERF_UCHE_STALL_CYCLES_ARBITER = countable("UCHE", "PERF_UCHE_STALL_CYCLES_ARBITER");
    auto PERF_UCHE_VBIF_READ_BEATS_TP = countable("UCHE", "PERF_UCHE_VBIF_READ_BEATS_TP");
    auto PERF_UCHE_VBIF_READ_BEATS_VFD = countable("UCHE", "PERF_UCHE_VBIF_READ_BEATS_VFD");
    auto PERF_UCHE_VBIF_READ_BEATS_SP = countable("UCHE", "PERF_UCHE_VBIF_READ_BEATS_SP");
    auto PERF_UCHE_READ_REQUESTS_TP = countable("UCHE", "PERF_UCHE_READ_REQUESTS_TP");
+   auto PERF_UCHE_READ_REQUESTS_SP = countable("UCHE", "PERF_UCHE_READ_REQUESTS_SP");
+   auto PERF_UCHE_WRITE_REQUESTS_SP = countable("UCHE", "PERF_UCHE_WRITE_REQUESTS_SP");
+   auto PERF_UCHE_EVICTS = countable("UCHE", "PERF_UCHE_EVICTS");
 
    /* TP: 8/12 counters, BV_TP: 7/6 counters FIXME */
    auto PERF_TP_BUSY_CYCLES = countable("TP", "PERF_TP_BUSY_CYCLES");
@@ -527,51 +531,47 @@ FreedrenoDriver::setup_a7xx_counters()
          return 42;
       }
    );
-   counter("Bytes Data Actually Written", Counter::Units::None, [=]() {
+   counter("Bytes Data Actually Written", Counter::Units::Byte, [=]() {
          /* Number of bytes requested to be written by the GPU. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_18 = PERF_UCHE_EVICTS
           * Notes:
           *   - Equation: PERF_UCHE_EVICTS * 64
           */
-         /* TODO: enable */
-         return 42;
+         return PERF_UCHE_EVICTS * 64;
       }
    );
-   counter("Bytes Data Write Requested", Counter::Units::None, [=]() {
+   counter("Bytes Data Write Requested", Counter::Units::Byte, [=]() {
          /* Number of bytes requested to be written by the GPU. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_15 = PERF_UCHE_WRITE_REQUESTS_SP
           * Notes:
           *   - Equation: PERF_UCHE_WRITE_REQUESTS_SP * 16
           */
-         /* TODO: enable */
-         return 42;
+         return PERF_UCHE_WRITE_REQUESTS_SP * 16;
       }
    );
-   counter("Global Buffer Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+   counter("Global Buffer Data Read BW (Bytes/sec)", Counter::Units::Byte, [=]() {
          /* Number of bytes of global buffer data read in by the GPU, per second from the system memory (when the data is not found in L2 cache). */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_8 = PERF_UCHE_VBIF_READ_BEATS_SP
           * Notes:
           *   - Equation: (PERF_UCHE_VBIF_READ_BEATS_SP * 32) / time
           */
-         /* TODO: enable */
-         return 42;
+         return (PERF_UCHE_VBIF_READ_BEATS_SP * 32) / time;
       }
    );
-   counter("Global Buffer Data Read Request BW (Bytes/sec)", Counter::Units::None, [=]() {
+   counter("Global Buffer Data Read Request BW (Bytes/sec)", Counter::Units::Byte, [=]() {
          /* Number of bytes of global buffer read requests, made by a compute kernel to the L2 cache, per second. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_13 = PERF_UCHE_READ_REQUESTS_SP
           * Notes:
           *   - Equation: (PERF_UCHE_READ_REQUESTS_SP * 16) / time
           */
-         /* TODO: enable */
-         return 42;
+         return (PERF_UCHE_READ_REQUESTS_SP * 16) / time;
       }
    );
-   counter("% Global Buffer Read L2 Hit", Counter::Units::None, [=]() {
+   counter("% Global Buffer Read L2 Hit", Counter::Units::Percent, [=]() {
          /* Percentage of total global buffer read requests that were fulfilled by L2 cache hit which is populated by looking at the number of read requests that were forwarded to VBIF to read from the system memory. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_8 = PERF_UCHE_VBIF_READ_BEATS_SP
@@ -579,11 +579,10 @@ FreedrenoDriver::setup_a7xx_counters()
           * Notes:
           *   - Equation: (PERF_UCHE_READ_REQUESTS_SP - (PERF_UCHE_VBIF_READ_BEATS_SP / 2)) / PERF_UCHE_READ_REQUESTS_SP
           */
-         /* TODO: enable */
-         return 42;
+         return percent(PERF_UCHE_READ_REQUESTS_SP - (PERF_UCHE_VBIF_READ_BEATS_SP / 2), PERF_UCHE_READ_REQUESTS_SP);
       }
    );
-   counter("% Global Buffer Write L2 Hit", Counter::Units::None, [=]() {
+   counter("% Global Buffer Write L2 Hit", Counter::Units::Percent, [=]() {
          /* Percentage of global write L2 Hit. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_18 = PERF_UCHE_EVICTS
@@ -591,41 +590,37 @@ FreedrenoDriver::setup_a7xx_counters()
           * Notes:
           *   - Equation: (PERF_UCHE_WRITE_REQUESTS_SP - PERF_UCHE_EVICTS) / PERF_UCHE_WRITE_REQUESTS_SP
           */
-         /* TODO: enable */
-         return 42;
+         return percent(PERF_UCHE_WRITE_REQUESTS_SP - PERF_UCHE_EVICTS, PERF_UCHE_WRITE_REQUESTS_SP);
       }
    );
-   counter("Global Image Compressed Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+   counter("Global Image Compressed Data Read BW (Bytes/sec)", Counter::Units::Byte, [=]() {
          /* Number of bytes of global Image data (compressed) read in by the GPU per second from the system memory (when the data is not found in L2 cache). */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_CMP::COUNTABLE_7 = PERF_CMPDECMP_VBIF_READ_DATA
           * Notes:
           *   - Equation: (PERF_CMPDECMP_VBIF_READ_DATA * 32) / time
           */
-         /* TODO: enable */
-         return 42;
+         return (PERF_CMPDECMP_VBIF_READ_DATA * 32) / time;
       }
    );
-   counter("Global Image Data Read Request BW (Bytes/sec)", Counter::Units::None, [=]() {
+   counter("Global Image Data Read Request BW (Bytes/sec)", Counter::Units::Byte, [=]() {
          /* Number of bytes of image buffer read requests, made by a compute kernel to the L2 cache, per second. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_9 = PERF_UCHE_READ_REQUESTS_TP
           * Notes:
           *   - Equation: (PERF_UCHE_READ_REQUESTS_TP * 16) / time
           */
-         /* TODO: enable */
-         return 42;
+         return (PERF_UCHE_READ_REQUESTS_TP * 16) / time;
       }
    );
-   counter("Global Image Uncompressed Data Read BW (Bytes/sec)", Counter::Units::None, [=]() {
+   counter("Global Image Uncompressed Data Read BW (Bytes/sec)", Counter::Units::Byte, [=]() {
          /* Number of bytes of global Image data (uncompressed) read in by the GPU per second from the system memory (when the data is not found in L2 cache). */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_4 = PERF_UCHE_VBIF_READ_BEATS_TP
           * Notes:
           *   - Equation: (PERF_UCHE_VBIF_READ_BEATS_TP * 32) / time
           */
-         /* TODO: enable */
-         return 42;
+         return (PERF_UCHE_VBIF_READ_BEATS_TP * 32) / time;
       }
    );
    counter("Global Memory Atomic Instructions", Counter::Units::None, [=]() {
@@ -633,9 +628,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_32 = PERF_SP_GM_ATOMICS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_GM_ATOMICS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -644,9 +639,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_30 = PERF_SP_GM_LOAD_INSTRUCTIONS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_GM_LOAD_INSTRUCTIONS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -655,13 +650,13 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_31 = PERF_SP_GM_STORE_INSTRUCTIONS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_GM_STORE_INSTRUCTIONS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
-   counter("% Image Read L2 Hit", Counter::Units::None, [=]() {
+   counter("% Image Read L2 Hit", Counter::Units::Percent, [=]() {
          /* Percentage of total image read requests that were fulfilled by L2 cache hit which is populated by looking at the number of read requests that were forwarded to VBIF to read from the system memory. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_UCHE::COUNTABLE_4 = PERF_UCHE_VBIF_READ_BEATS_TP
@@ -669,11 +664,10 @@ FreedrenoDriver::setup_a7xx_counters()
           * Notes:
           *   - Equation: (PERF_UCHE_READ_REQUESTS_TP - (PERF_UCHE_VBIF_READ_BEATS_TP / 2)) / PERF_UCHE_READ_REQUESTS_TP
           */
-         /* TODO: enable */
-         return 42;
+         return percent(PERF_UCHE_READ_REQUESTS_TP - (PERF_UCHE_VBIF_READ_BEATS_TP / 2), PERF_UCHE_READ_REQUESTS_TP);
       }
    );
-   counter("% Kernel Load Cycles", Counter::Units::None, [=]() {
+   counter("% Kernel Load Cycles", Counter::Units::Percent, [=]() {
          /* Percentage of cycles used for a compute kernel loading; excludes execution cycles. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_CP::COUNTABLE_0 = PERF_CP_ALWAYS_COUNT
@@ -682,11 +676,10 @@ FreedrenoDriver::setup_a7xx_counters()
           * Notes:
           *   - Equation: (PERF_RBBM_STATUS_MASKED - (PERF_SP_BUSY_CYCLES * #uSPTP)) / PERF_CP_ALWAYS_COUNT
           */
-         /* TODO: enable */
-         return 42;
+         return percent(PERF_RBBM_STATUS_MASKED - (PERF_SP_BUSY_CYCLES * hardware.number_of_sp * hardware.number_of_usptp), PERF_CP_ALWAYS_COUNT);
       }
    );
-   counter("% L1 Hit", Counter::Units::None, [=]() {
+   counter("% L1 Hit", Counter::Units::Percent, [=]() {
          /* Percentage of L1 texture cache requests that were hits. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_TP::COUNTABLE_6 = PERF_TP_L1_CACHELINE_REQUESTS
@@ -694,20 +687,18 @@ FreedrenoDriver::setup_a7xx_counters()
           * Notes:
           *   - Equation: (PERF_TP_L1_CACHELINE_REQUESTS - PERF_TP_L1_CACHELINE_MISSES) / PERF_TP_L1_CACHELINE_REQUESTS
           */
-         /* TODO: enable */
-         return 42;
+         return percent(PERF_TP_L1_CACHELINE_REQUESTS[BR] - PERF_TP_L1_CACHELINE_MISSES[BR], PERF_TP_L1_CACHELINE_REQUESTS[BR]);
       }
    );
-
-   counter("Load-Store Utilization", Counter::Units::None, [=]() {
+   counter("Load-Store Utilization", Counter::Units::Percent, [=]() {
          /* Percentage of the Load-Store unit is utilized compared to theoretical Load/Store throughput. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_63 = PERF_SP_LOAD_CONTROL_WORKING_CYCLES
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_0 = PERF_SP_BUSY_CYCLES
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_LOAD_CONTROL_WORKING_CYCLES / PERF_SP_BUSY_CYCLES
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -716,9 +707,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_29 = PERF_SP_LM_ATOMICS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_LM_ATOMICS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -727,9 +718,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_27 = PERF_SP_LM_LOAD_INSTRUCTIONS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_LM_LOAD_INSTRUCTIONS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -738,9 +729,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_SP::COUNTABLE_28 = PERF_SP_LM_STORE_INSTRUCTIONS
           * Notes:
+          *   - FIXME: disabled due to lack of SP counter capacity
           *   - Equation: PERF_SP_LM_STORE_INSTRUCTIONS * 4
           */
-         /* TODO: enable */
          return 42;
       }
    );
@@ -765,10 +756,11 @@ FreedrenoDriver::setup_a7xx_counters()
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_35 = PERF_GBIF_AXI1_READ_DATA_BEATS_TOTAL
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_46 = PERF_GBIF_AXI0_WRITE_DATA_BEATS_TOTAL
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_47 = PERF_GBIF_AXI1_WRITE_DATA_BEATS_TOTAL
-          * TODO: result = ??
+          * Notes: 
+          *   - TODO: requires VBIF perfcounter group exposure.
+          *   - Equation: (PERF_UCHE_STALL_CYCLES_ARBITER + sum(PERF_GBIF_AXI{0,1}_{READ,WRITE}_DATA_BEATS_TOTAL)) / (4 * PERF_RBBM_STATUS_MASKED)
           */
-         /* TODO: verify */
-         return 0;
+         return 42;
       }
    );
    /**   GPU Frequency
@@ -781,10 +773,8 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Percentage utilization of the GPU. */
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_RBBM::COUNTABLE_6 = PERF_RBBM_STATUS_MASKED
-          * TODO: result = ??
           */
-         /* TODO: verify */
-         return 0;
+         return percent(PERF_RBBM_STATUS_MASKED, max_freq);
       }
    );
 
@@ -815,8 +805,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_34 = PERF_GBIF_AXI0_READ_DATA_BEATS_TOTAL
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_35 = PERF_GBIF_AXI1_READ_DATA_BEATS_TOTAL
-          * TODO: result = (PERF_GBIF_AXI0_READ_DATA_BEATS_TOTAL + PERF_GBIF_AXI1_READ_DATA_BEATS_TOTAL) * 32 / time
-          *   - requires VBIF perfcounter group exposure.
+          * Notes:
+          *   - TODO: requires VBIF perfcounter group exposure.
+          *   - Equation: (PERF_GBIF_AXI0_READ_DATA_BEATS_TOTAL + PERF_GBIF_AXI1_READ_DATA_BEATS_TOTAL) * 32 / time
           */
          return 0;
       }
@@ -851,8 +842,9 @@ FreedrenoDriver::setup_a7xx_counters()
          /* Countables:
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_46 = PERF_GBIF_AXI0_WRITE_DATA_BEATS_TOTAL
           * KGSL_PERFCOUNTER_GROUP_VBIF::COUNTABLE_47 = PERF_GBIF_AXI1_WRITE_DATA_BEATS_TOTAL
-          * TODO: result = (PERF_GBIF_AXI0_WRITE_DATA_BEATS_TOTAL + PERF_GBIF_AXI1_WRITE_DATA_BEATS_TOTAL) * 32 / time
-          *   - requires VBIF perfcounter group exposure.
+          * Notes:
+          *   - TODO: requires VBIF perfcounter group exposure.
+          *   - Equation: (PERF_GBIF_AXI0_WRITE_DATA_BEATS_TOTAL + PERF_GBIF_AXI1_WRITE_DATA_BEATS_TOTAL) * 32 / time
           */
          return 42;
       }
@@ -1105,9 +1097,10 @@ FreedrenoDriver::setup_a7xx_counters()
           * KGSL_PERFCOUNTER_GROUP_BV_TP::COUNTABLE_10 = PERF_TP_OUTPUT_PIXELS
           * KGSL_PERFCOUNTER_GROUP_TP::COUNTABLE_29 = PERF_TP_OUTPUT_PIXELS_ZERO_LOD
           * KGSL_PERFCOUNTER_GROUP_BV_TP::COUNTABLE_29 = PERF_TP_OUTPUT_PIXELS_ZERO_LOD
+          * Notes:
+          *   - FIXME: disabled due to lack of TP counter capacity
+          *   - Equation: 100.0 - percent(cbSum(PERF_TP_OUTPUT_PIXELS_ZERO_LOD), cbSum(PERF_TP_OUTPUT_PIXELS));
           */
-         // FIXME: Disabled due to overuse of BV_TP counters
-         // return 100.0 - percent(cbSum(PERF_TP_OUTPUT_PIXELS_ZERO_LOD), cbSum(PERF_TP_OUTPUT_PIXELS));
          return 42;
       }
    );

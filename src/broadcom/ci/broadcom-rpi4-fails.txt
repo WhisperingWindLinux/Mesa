@@ -586,3 +586,5 @@ arm32-KHR-GL31.texture_size_promotion.functional,Fail
 
 # https://gitlab.freedesktop.org/mesa/piglit/-/merge_requests/931
 asan-spec@arb_texture_buffer_object@formats (vs- ext_gpu_shader4),Fail
+KHR-GL31.framebuffer_blit.framebuffer_blit_functionality_multisampled_to_singlesampled_blit,Fail
+KHR-GL31.transform_feedback3.multiple_streams,Fail

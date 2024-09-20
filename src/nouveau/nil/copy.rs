@@ -414,18 +414,20 @@ impl<C: Copy16B> CopyGOB for CopyGOB2D<C> {
     ) {
         debug_assert!(linear.x_divisor() == C::X_DIVISOR);
         gob2d_for_each_16b(|offset, x, y| {
-            let tiled = tiled + (offset as usize);
-            let linear = linear.at(Offset4D::new(x, y, 0, 0));
-            if x >= start.x && x + 16 <= end.x {
-                C::copy_16b(tiled as *mut _, linear as *mut _);
-            } else if x + 16 >= start.x && x < end.x {
-                let start = (std::cmp::max(x, start.x) - x) as usize;
-                let end = std::cmp::min(end.x - x, 16) as usize;
-                C::copy(
-                    (tiled + start) as *mut _,
-                    (linear + start) as *mut _,
-                    end - start,
-                );
+            if y >= start.y && y < end.y {
+                let tiled = tiled + (offset as usize);
+                let linear = linear.at(Offset4D::new(x, y, 0, 0));
+                if x >= start.x && x + 16 <= end.x {
+                    C::copy_16b(tiled as *mut _, linear as *mut _);
+                } else if x + 16 >= start.x && x < end.x {
+                    let start = (std::cmp::max(x, start.x) - x) as usize;
+                    let end = std::cmp::min(end.x - x, 16) as usize;
+                    C::copy(
+                        (tiled + start) as *mut _,
+                        (linear + start) as *mut _,
+                        end - start,
+                    );
+                }
             }
         });
     }

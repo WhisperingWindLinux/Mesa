@@ -106,7 +106,8 @@ void GENX(pan_blitter_cache_cleanup)(struct pan_blitter_cache *cache);
 unsigned GENX(pan_preload_fb)(struct pan_blitter_cache *cache,
                               struct pan_pool *desc_pool,
                               struct pan_fb_info *fb, unsigned layer_idx,
-                              mali_ptr tsd, struct panfrost_ptr *jobs);
+                              bool emit_preload, mali_ptr tsd,
+                              struct panfrost_ptr *jobs);
 #endif
 
 #endif

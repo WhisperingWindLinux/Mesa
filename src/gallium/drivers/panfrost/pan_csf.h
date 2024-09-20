@@ -58,6 +58,9 @@ struct panfrost_csf_context {
 
    /* Temporary geometry buffer. Used as a FIFO by the tiler. */
    struct panfrost_bo *tmp_geom_bo;
+
+   struct cs_builder *tiler_oom_handler;
+   struct panfrost_bo *oom_regs_bo;
 };
 
 #if defined(PAN_ARCH) && PAN_ARCH >= 10

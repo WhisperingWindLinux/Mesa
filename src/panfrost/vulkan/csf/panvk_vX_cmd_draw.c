@@ -788,8 +788,8 @@ get_fb_descs(struct panvk_cmd_buffer *cmdbuf)
    uint32_t fbds_sz =
       calc_fbd_size(cmdbuf) * cmdbuf->state.gfx.render.layer_count;
 
-   memset(&cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds, 0,
-          sizeof(cmdbuf->state.gfx.render.fb.info.bifrost.pre_post.dcds));
+   memset(&cmdbuf->state.gfx.render.fb.info.bifrost.pre_post[0].dcds, 0,
+          sizeof(cmdbuf->state.gfx.render.fb.info.bifrost.pre_post[0].dcds));
 
    cmdbuf->state.gfx.render.fbds = panvk_cmd_alloc_dev_mem(
       cmdbuf, desc, fbds_sz, pan_alignment(FRAMEBUFFER));
@@ -1769,7 +1769,7 @@ prepare_fb_desc(struct panvk_cmd_buffer *cmdbuf, uint32_t layer, void *fbd)
    if (cmdbuf->state.tls.desc.gpu) {
       ASSERTED unsigned num_preload_jobs =
          GENX(pan_preload_fb)(&dev->blitter.cache, &cmdbuf->desc_pool.base,
-                              &cmdbuf->state.gfx.render.fb.info, layer,
+                              &cmdbuf->state.gfx.render.fb.info, layer, false,
                               cmdbuf->state.tls.desc.gpu, NULL);
 
       /* Valhall GPUs use pre frame DCDs to preload the FB content. We
@@ -1783,7 +1783,7 @@ prepare_fb_desc(struct panvk_cmd_buffer *cmdbuf, uint32_t layer, void *fbd)
    };
 
    return GENX(pan_emit_fbd)(&cmdbuf->state.gfx.render.fb.info, layer, NULL,
-                             &tiler_ctx, fbd);
+                             &tiler_ctx, PAN_RENDERING_NO_INCREMENTAL_PASS, fbd);
 }
 
 static void

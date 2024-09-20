@@ -42,7 +42,7 @@ void
 GENX(jm_init_batch)(struct panfrost_batch *batch)
 {
    /* Reserve the framebuffer and local storage descriptors */
-   batch->framebuffer =
+   batch->fbds[PAN_RENDERING_NO_INCREMENTAL_PASS] =
 #if PAN_ARCH == 4
       pan_pool_alloc_desc(&batch->pool.base, FRAMEBUFFER);
 #else
@@ -55,13 +55,13 @@ GENX(jm_init_batch)(struct panfrost_batch *batch)
    batch->tls = pan_pool_alloc_desc(&batch->pool.base, LOCAL_STORAGE);
 #else
    /* On Midgard, the TLS is embedded in the FB descriptor */
-   batch->tls = batch->framebuffer;
+   batch->tls = batch->fbds[PAN_RENDERING_NO_INCREMENTAL_PASS];
 
 #if PAN_ARCH == 5
    struct mali_framebuffer_pointer_packed ptr;
 
    pan_pack(ptr.opaque, FRAMEBUFFER_POINTER, cfg) {
-      cfg.pointer = batch->framebuffer.gpu;
+      cfg.pointer = batch->fbds[PAN_RENDERING_NO_INCREMENTAL_PASS].gpu;
       cfg.render_target_count = 1; /* a necessary lie */
    }
 
@@ -242,7 +242,7 @@ GENX(jm_preload_fb)(struct panfrost_batch *batch, struct pan_fb_info *fb)
    struct panfrost_ptr preload_jobs[2];
 
    unsigned preload_job_count = GENX(pan_preload_fb)(
-      &dev->blitter, &batch->pool.base, fb, 0, batch->tls.gpu, preload_jobs);
+      &dev->blitter, &batch->pool.base, fb, 0, false, batch->tls.gpu, preload_jobs);
 
    assert(PAN_ARCH < 6 || !preload_job_count);
 
@@ -260,7 +260,7 @@ GENX(jm_emit_fragment_job)(struct panfrost_batch *batch,
       pan_pool_alloc_desc(&batch->pool.base, FRAGMENT_JOB);
 
    GENX(pan_emit_fragment_job_payload)
-   (pfb, batch->framebuffer.gpu, transfer.cpu);
+   (pfb, batch->fbds[PAN_RENDERING_NO_INCREMENTAL_PASS].gpu, transfer.cpu);
 
    pan_section_pack(transfer.cpu, FRAGMENT_JOB, HEADER, header) {
       header.type = MALI_JOB_TYPE_FRAGMENT;

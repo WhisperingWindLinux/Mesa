@@ -146,8 +146,9 @@ struct panfrost_batch {
    /* Shared memory BO bound to the batch, or NULL if none bound yet */
    struct panfrost_bo *shared_memory;
 
-   /* Framebuffer descriptor. */
-   struct panfrost_ptr framebuffer;
+   /* Framebuffer descriptors. Only first one is used if incremental
+    * rendering is not implemented. */
+   struct panfrost_ptr fbds[4];
 
    /* Thread local storage descriptor. */
    struct panfrost_ptr tls;

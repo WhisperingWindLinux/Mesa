@@ -56,6 +56,97 @@ csf_alloc_cs_buffer(void *cookie)
    };
 }
 
+/*
+ * Some OOM registers are used to pass information from/to the main context:
+ *
+ *   74 - Tiler Context Address
+ *   76 - Framebuffer Descriptor Address (for 2nd, 3th, etc. OOM event)
+ *   78 - Incremental Rendering Counter
+ */
+
+static void
+csf_oom_handler_init(struct panfrost_context *ctx)
+{
+   struct panfrost_device *dev = pan_device(ctx->base.screen);
+   struct panfrost_bo *cs_bo =
+      panfrost_bo_create(dev, 4096, 0, "Temporary CS buffer");
+   assert(cs_bo);
+
+   struct panfrost_bo *reg_save_bo =
+      panfrost_bo_create(dev, 4096, 0, "reg save bo");
+   assert(reg_save_bo);
+
+   ctx->csf.oom_regs_bo =
+      panfrost_bo_create(dev, 4096, 0, "reg save bo");
+
+   struct cs_buffer queue = {
+      .cpu = cs_bo->ptr.cpu,
+      .gpu = cs_bo->ptr.gpu,
+      .capacity = panfrost_bo_size(cs_bo) / sizeof(uint64_t),
+   };
+   struct cs_builder *b = malloc(sizeof(struct cs_builder));
+   const struct cs_builder_conf conf = {
+      .nr_registers = 96,
+      .nr_kernel_registers = 4,
+   };
+   cs_builder_init(b, &conf, queue);
+
+   struct cs_index tiler_ctx = cs_reg64(b, 74);
+   struct cs_index alt_fbd = cs_reg64(b, 76);
+   struct cs_index counter = cs_reg32(b, 78);
+   struct cs_index zero = cs_reg64(b, 80);
+   struct cs_index completed_top = cs_reg64(b, 82);
+   struct cs_index completed_bottom = cs_reg64(b, 84);
+   struct cs_index completed_chunks = cs_reg_tuple(b, 82, 4);
+   struct cs_index main_regs = cs_reg64(b, 86);
+   struct cs_index oom_regs = cs_reg64(b, 88);
+
+   cs_move64_to(b, main_regs, reg_save_bo->ptr.gpu);
+   cs_move64_to(b, oom_regs, ctx->csf.oom_regs_bo->ptr.gpu);
+   cs_save_all_regs(b, main_regs);
+   cs_restore_all_regs(b, oom_regs);
+
+   /* Use different framebuffer descriptor if incremental rendering has
+    * already been triggered */
+   struct cs_if if_incr;
+   cs_push_if(b, &if_incr, MALI_CS_CONDITION_GREATER, counter);
+      cs_add64(b, cs_reg64(b, 40), alt_fbd, 0);
+   cs_pop_if(b);
+
+   /* Increment counter */
+   cs_add32(b, counter, counter, 1);
+   cs_wait_slot(b, 0, false);
+
+   /* Run the fragment job and wait; registers are already pre-filled in
+    * csf_launch_draw()  */
+   cs_set_scoreboard_entry(b, 3, 0);
+   cs_run_fragment(b, false, MALI_TILE_RENDER_ORDER_Z_ORDER, false);
+   cs_wait_slot(b, 3, false);
+
+   /* Load completed chunks */
+   cs_load_to(b, completed_chunks, tiler_ctx, BITFIELD_MASK(4), 10*4);
+   cs_wait_slot(b, 0, false);
+
+   cs_finish_fragment(b, false, completed_top, completed_bottom, cs_now());
+   cs_wait_slot(b, 3, false);
+
+   /* Zero out polygon list, completed_top and completed_bottom */
+   cs_move64_to(b, zero, 0);
+   cs_store(b, zero, tiler_ctx, BITFIELD_MASK(2), 0);
+   cs_store(b, zero, tiler_ctx, BITFIELD_MASK(2), 10*4);
+   cs_store(b, zero, tiler_ctx, BITFIELD_MASK(2), 12*4);
+   cs_wait_slot(b, 0, false);
+
+   cs_set_scoreboard_entry(b, 2, 0);
+
+   cs_save_reg(b, counter, oom_regs);
+   cs_restore_all_regs(b, main_regs);
+
+   assert(cs_is_valid(b));
+   cs_finish(b);
+   ctx->csf.tiler_oom_handler = b;
+}
+
 void
 GENX(csf_cleanup_batch)(struct panfrost_batch *batch)
 {
@@ -92,9 +183,11 @@ GENX(csf_init_batch)(struct panfrost_batch *batch)
    struct cs_builder *b = batch->csf.cs.builder;
    cs_set_scoreboard_entry(b, 2, 0);
 
-   batch->framebuffer = pan_pool_alloc_desc_aggregate(
-      &batch->pool.base, PAN_DESC(FRAMEBUFFER), PAN_DESC(ZS_CRC_EXTENSION),
-      PAN_DESC_ARRAY(MAX2(batch->key.nr_cbufs, 1), RENDER_TARGET));
+   for (unsigned i = 0; i < 4; ++i) {
+      batch->fbds[i] = pan_pool_alloc_desc_aggregate(
+         &batch->pool.base, PAN_DESC(FRAMEBUFFER), PAN_DESC(ZS_CRC_EXTENSION),
+         PAN_DESC_ARRAY(MAX2(batch->key.nr_cbufs, 1), RENDER_TARGET));
+   }
    batch->tls = pan_pool_alloc_desc(&batch->pool.base, LOCAL_STORAGE);
 }
 
@@ -462,13 +555,25 @@ GENX(csf_preload_fb)(struct panfrost_batch *batch, struct pan_fb_info *fb)
    struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
 
    GENX(pan_preload_fb)
-   (&dev->blitter, &batch->pool.base, fb, 0, batch->tls.gpu, NULL);
+   (&dev->blitter, &batch->pool.base, fb, 0, false, batch->tls.gpu, NULL);
+}
+
+static void
+csf_setup_fragment_job(struct cs_builder *b, struct panfrost_batch *batch,
+                       enum pan_rendering_pass pass)
+{
+   cs_move64_to(b, cs_reg64(b, 40), batch->fbds[pass].gpu);
+   cs_move32_to(b, cs_reg32(b, 42), (batch->miny << 16) | batch->minx);
+   cs_move32_to(b, cs_reg32(b, 43), ((batch->maxy - 1) << 16) | (batch->maxx - 1));
+   cs_move64_to(b, cs_reg64(b, 44), 0);
+   cs_move32_to(b, cs_reg32(b, 46), 0);
 }
 
 void
 GENX(csf_emit_fragment_job)(struct panfrost_batch *batch,
                             const struct pan_fb_info *pfb)
 {
+   struct panfrost_context *ctx = batch->ctx;
    struct cs_builder *b = batch->csf.cs.builder;
 
    if (batch->draw_count > 0) {
@@ -478,11 +583,21 @@ GENX(csf_emit_fragment_job)(struct panfrost_batch *batch,
       cs_vt_end(b, cs_now());
    }
 
-   /* Set up the fragment job */
-   cs_move64_to(b, cs_reg64(b, 40), batch->framebuffer.gpu);
-   cs_move32_to(b, cs_reg32(b, 42), (batch->miny << 16) | batch->minx);
-   cs_move32_to(b, cs_reg32(b, 43),
-                ((batch->maxy - 1) << 16) | (batch->maxx - 1));
+   csf_setup_fragment_job(b, batch, PAN_RENDERING_NO_INCREMENTAL_PASS);
+
+   /* Use different framebuffer descriptor if incremental rendering was
+    * triggered */
+   struct cs_index counter = cs_reg32(b, 78);
+   struct cs_index oom_regs = cs_reg32(b, 80);
+   struct cs_if if_oom;
+
+   cs_move64_to(b, oom_regs, ctx->csf.oom_regs_bo->ptr.gpu);
+   cs_load_reg(b, counter, oom_regs);
+   cs_wait_slot(b, 0, false);
+   cs_push_if(b, &if_oom, MALI_CS_CONDITION_GREATER, counter);
+      cs_move64_to(b, cs_reg64(b, 40),
+                   batch->fbds[PAN_RENDERING_LAST_INCREMENTAL_PASS].gpu);
+   cs_pop_if(b);
 
    /* Run the fragment job and wait */
    cs_run_fragment(b, false, MALI_TILE_RENDER_ORDER_Z_ORDER, false);
@@ -735,6 +850,16 @@ csf_emit_draw_state(struct panfrost_batch *batch,
 
    struct cs_builder *b = batch->csf.cs.builder;
 
+   /* Set up the registers for OOM handler */
+   csf_setup_fragment_job(b, batch, PAN_RENDERING_FIRST_INCREMENTAL_PASS);
+   cs_move64_to(b, cs_reg64(b, 74), csf_get_tiler_desc(batch));
+   cs_move64_to(b, cs_reg64(b, 76),
+                batch->fbds[PAN_RENDERING_MIDDLE_INCREMENTAL_PASS].gpu);
+   cs_move64_to(b, cs_reg64(b, 78), 0);
+
+   cs_move64_to(b, cs_reg64(b, 80), ctx->csf.oom_regs_bo->ptr.gpu);
+   cs_save_all_regs(b, cs_reg64(b, 80));
+
    if (batch->draw_count == 0)
       cs_vt_start(batch->csf.cs.builder, cs_now());
 
@@ -760,7 +885,8 @@ csf_emit_draw_state(struct panfrost_batch *batch,
    cs_move32_to(b, cs_reg32(b, 37), 0);
    cs_move32_to(b, cs_reg32(b, 38), 0);
 
-   cs_move64_to(b, cs_reg64(b, 40), csf_get_tiler_desc(batch));
+   assert(batch->tiler_ctx.valhall.desc);
+   cs_move64_to(b, cs_reg64(b, 40), batch->tiler_ctx.valhall.desc);
 
    STATIC_ASSERT(sizeof(batch->scissor) == pan_size(SCISSOR));
    STATIC_ASSERT(sizeof(uint64_t) == pan_size(SCISSOR));
@@ -1104,6 +1230,8 @@ GENX(csf_init_context)(struct panfrost_context *ctx)
    if (cs_bo == NULL)
       goto err_tiler_heap_cs_bo;
 
+   csf_oom_handler_init(ctx);
+
    struct cs_buffer init_buffer = {
       .cpu = cs_bo->ptr.cpu,
       .gpu = cs_bo->ptr.gpu,
@@ -1118,6 +1246,15 @@ GENX(csf_init_context)(struct panfrost_context *ctx)
    struct cs_index heap = cs_reg64(&b, 72);
    cs_move64_to(&b, heap, thc.tiler_heap_ctx_gpu_va);
    cs_heap_set(&b, heap);
+
+   struct cs_index oom_handler_addr = cs_reg64(&b, 86);
+   struct cs_index oom_handler_length = cs_reg32(&b, 88);
+   cs_move64_to(&b, oom_handler_addr,
+                ctx->csf.tiler_oom_handler->root_chunk.buffer.gpu);
+   cs_move32_to(&b, oom_handler_length,
+                ctx->csf.tiler_oom_handler->root_chunk.size * 8);
+   cs_set_exception_handler(&b, MALI_CS_EXCEPTION_TYPE_TILER_OOM,
+                            oom_handler_addr, oom_handler_length);
 
    struct drm_panthor_queue_submit qsubmit;
    struct drm_panthor_group_submit gsubmit;

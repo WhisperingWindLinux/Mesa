@@ -2567,7 +2567,7 @@ emit_tls(struct panfrost_batch *batch)
    struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
 
    /* Emitted with the FB descriptor on Midgard. */
-   if (PAN_ARCH <= 5 && batch->framebuffer.gpu)
+   if (PAN_ARCH <= 5 && batch->fbds[0].gpu)
       return;
 
    struct panfrost_bo *tls_bo =
@@ -2610,8 +2610,10 @@ emit_fbd(struct panfrost_batch *batch, struct pan_fb_info *fb)
       panfrost_sample_positions_offset(pan_sample_pattern(fb->nr_samples));
 #endif
 
-   batch->framebuffer.gpu |=
-      GENX(pan_emit_fbd)(fb, 0, &tls, &batch->tiler_ctx, batch->framebuffer.cpu);
+   for (unsigned i = 0; i < (PAN_ARCH >= 10 ? 4 : 1); ++i) {
+      batch->fbds[i].gpu |=
+         GENX(pan_emit_fbd)(fb, 0, &tls, &batch->tiler_ctx, i, batch->fbds[i].cpu);
+   }
 }
 
 /* Mark a surface as written */

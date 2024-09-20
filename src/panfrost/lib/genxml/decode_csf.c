@@ -915,6 +915,31 @@ interpret_ceu_instr(struct pandecode_context *ctx, struct queue_ctx *qctx)
       return interpret_ceu_jump(ctx, qctx, I.address, I.length);
    }
 
+   case MALI_CS_OPCODE_SET_EXCEPTION_HANDLER: {
+      pan_unpack(bytes, CS_SET_EXCEPTION_HANDLER, I);
+
+      if (qctx->call_stack_depth == MAX_CALL_STACK_DEPTH) {
+         fprintf(stderr, "CS call stack overflow\n");
+         return false;
+      }
+
+      if (!I.address) return true;
+
+      assert(qctx->call_stack_depth < MAX_CALL_STACK_DEPTH);
+
+      qctx->ip++;
+
+      /* Note: tail calls are not optimized in the hardware. */
+      assert(qctx->ip <= qctx->end);
+
+      unsigned depth = qctx->call_stack_depth++;
+
+      qctx->call_stack[depth].lr = qctx->ip;
+      qctx->call_stack[depth].end = qctx->end;
+
+      return interpret_ceu_jump(ctx, qctx, I.address, I.length);
+   }
+
    case MALI_CS_OPCODE_JUMP: {
       pan_unpack(bytes, CS_JUMP, I);
 

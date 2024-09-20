@@ -977,6 +977,52 @@ cs_while_end(struct cs_builder *b, struct cs_loop *loop)
 #define cs_break(__b)                                                          \
    cs_loop_conditional_break(__b, __loop, MALI_CS_CONDITION_ALWAYS, cs_undef())
 
+struct cs_if {
+   struct cs_label end_if, end_else;
+   struct cs_block block;
+   bool has_else;
+};
+
+static inline struct cs_if *
+cs_push_if(struct cs_builder *b, struct cs_if *if_stmt,
+           enum mali_cs_condition cond, struct cs_index val)
+{
+   assert(cond != MALI_CS_CONDITION_ALWAYS);
+
+   cs_block_start(b, &if_stmt->block);
+   cs_label_init(&if_stmt->end_if);
+   cs_label_init(&if_stmt->end_else);
+   if_stmt->has_else = false;
+
+   cs_branch_label(b, &if_stmt->end_if, cs_invert_cond(cond), val);
+
+   return if_stmt;
+}
+
+static inline void
+cs_push_else(struct cs_builder *b)
+{
+   assert(b->blocks.cur);
+
+   struct cs_if *if_stmt = container_of(b->blocks.cur, struct cs_if, block);
+   assert(!if_stmt->has_else);
+
+   cs_branch_label(b, &if_stmt->end_else, MALI_CS_CONDITION_ALWAYS, cs_undef());
+   cs_set_label(b, &if_stmt->end_if);
+   if_stmt->has_else = true;
+}
+
+static inline void
+cs_pop_if(struct cs_builder *b)
+{
+   assert(b->blocks.cur);
+
+   struct cs_if *if_stmt = container_of(b->blocks.cur, struct cs_if, block);
+
+   cs_set_label(b, if_stmt->has_else ? &if_stmt->end_else : &if_stmt->end_if);
+   cs_block_end(b);
+}
+
 /* Pseudoinstructions follow */
 
 static inline void
@@ -1631,3 +1677,49 @@ cs_match_end(struct cs_builder *b, struct cs_match *match)
            false;                                                              \
         });                                                                    \
         !__default_defined; __default_defined = true)
+
+static inline void
+cs_nop(struct cs_builder *b)
+{
+   cs_emit(b, NOP, I) {};
+}
+
+/* Helpers to load/store register file content from/to memory */
+
+#define CS_REGS_RW_OP(b, addr, op)                                        \
+   int nr_registers = b->conf.nr_registers - b->conf.nr_kernel_registers; \
+   int stride = 16;                                                       \
+   for (int i = 0; i < DIV_ROUND_UP(nr_registers, 16); i++) {             \
+      int offset = i * stride;                                            \
+      if (offset + stride > nr_registers)                                 \
+         stride = nr_registers % stride;                                  \
+      cs_##op(b, cs_reg_tuple(b, offset, stride), addr,                   \
+              BITFIELD_MASK(stride), offset * 4);                         \
+   }                                                                      \
+   cs_wait_slot(b, 0, false);
+
+static inline void
+cs_save_all_regs(struct cs_builder *b, struct cs_index addr)
+{
+   CS_REGS_RW_OP(b, addr, store)
+}
+
+static inline void
+cs_restore_all_regs(struct cs_builder *b, struct cs_index addr)
+{
+   CS_REGS_RW_OP(b, addr, load_to)
+}
+
+static inline void
+cs_save_reg(struct cs_builder *b, struct cs_index idx, struct cs_index addr)
+{
+   assert(idx.type == CS_INDEX_REGISTER);
+   cs_store(b, idx, addr, BITFIELD_MASK(idx.size), idx.reg * 4);
+}
+
+static inline void
+cs_load_reg(struct cs_builder *b, struct cs_index idx, struct cs_index addr)
+{
+   assert(idx.type == CS_INDEX_REGISTER);
+   cs_load_to(b, idx, addr, BITFIELD_MASK(idx.size), idx.reg * 4);
+}

@@ -3084,6 +3084,9 @@ TEST_P(validation_test, dpas_sdepth)
       BRW_SYSTOLIC_DEPTH_8,
    };
 
+   brw_set_default_exec_size(p, devinfo.ver >= 20 ? BRW_EXECUTE_16
+                                                  : BRW_EXECUTE_8);
+
    for (unsigned i = 0; i < ARRAY_SIZE(depth); i++) {
       brw_DPAS(p,
                depth[i],
@@ -3116,6 +3119,9 @@ TEST_P(validation_test, dpas_exec_size)
       BRW_EXECUTE_32,
    };
 
+   const brw_execution_size valid_exec_size =
+      devinfo.ver >= 20 ? BRW_EXECUTE_16 : BRW_EXECUTE_8;
+
    for (unsigned i = 0; i < ARRAY_SIZE(test_vectors); i++) {
       brw_set_default_exec_size(p, test_vectors[i]);
 
@@ -3127,7 +3133,7 @@ TEST_P(validation_test, dpas_exec_size)
                retype(brw_vec8_grf(16, 0), BRW_TYPE_HF),
                retype(brw_vec8_grf(32, 0), BRW_TYPE_HF));
 
-      const bool expected_result = test_vectors[i] == BRW_EXECUTE_8;
+      const bool expected_result = test_vectors[i] == valid_exec_size;
 
       EXPECT_EQ(expected_result, validate(p)) <<
          "Exec size = " << (1u << test_vectors[i]);
@@ -3239,6 +3245,9 @@ TEST_P(validation_test, dpas_sub_byte_precision)
       },
    };
 
+   brw_set_default_exec_size(p, devinfo.ver >= 20 ? BRW_EXECUTE_16
+                                                  : BRW_EXECUTE_8);
+
    for (unsigned i = 0; i < ARRAY_SIZE(test_vectors); i++) {
       brw_inst *inst =
          brw_DPAS(p,
@@ -3330,6 +3339,9 @@ TEST_P(validation_test, dpas_types)
    };
 
 #undef TV
+
+   brw_set_default_exec_size(p, devinfo.ver >= 20 ? BRW_EXECUTE_16
+                                                  : BRW_EXECUTE_8);
 
    for (unsigned i = 0; i < ARRAY_SIZE(test_vectors); i++) {
       brw_DPAS(p,
@@ -3431,6 +3443,9 @@ TEST_P(validation_test, dpas_src_subreg_nr)
    };
 
 #undef TV
+
+   brw_set_default_exec_size(p, devinfo.ver >= 20 ? BRW_EXECUTE_16
+                                                  : BRW_EXECUTE_8);
 
    for (unsigned i = 0; i < ARRAY_SIZE(test_vectors); i++) {
       struct brw_reg dst =

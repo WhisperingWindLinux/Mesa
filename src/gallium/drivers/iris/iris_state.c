@@ -1478,6 +1478,26 @@ iris_init_compute_context(struct iris_batch *batch)
 #endif
 
 #if GFX_VERx10 >= 125
+   iris_emit_cmd(batch, GENX(STATE_COMPUTE_MODE), cm) {
+#if GFX_VER >= 20
+      cm.AsyncComputeThreadLimit = PACTL_Max8;
+      cm.ZPassAsyncComputeThreadLimit = ZPACTL_Max64;
+      cm.ZAsyncThrottlesettings = ZATS_DefertoAsyncComputeThreadLimit;
+      cm.AsyncComputeThreadLimitMask = 0x7;
+      cm.ZPassAsyncComputeThreadLimitMask = 0x7;
+      cm.ZAsyncThrottlesettingsMask = 0x3;
+#else
+      cm.PixelAsyncComputeThreadLimit = PACTL_Max8;
+      cm.ZPassAsyncComputeThreadLimit = ZPACTL_Max60;
+      cm.ZAsyncThrottlesettings = ZATS_DefertoPixelAsyncComputeThreadLimit;
+      cm.PixelAsyncComputeThreadLimitMask = 0x7;
+      cm.ZPassAsyncComputeThreadLimitMask = 0x7;
+      cm.ZAsyncThrottlesettingsMask = 0x3;
+#endif
+   }
+#endif
+
+#if GFX_VERx10 >= 125
    iris_emit_cmd(batch, GENX(CFE_STATE), cfe) {
       cfe.MaximumNumberofThreads =
          devinfo->max_cs_threads * devinfo->subslice_total;

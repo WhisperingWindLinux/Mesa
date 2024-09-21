@@ -11545,8 +11545,9 @@ radv_dgc_execute_ib(struct radv_cmd_buffer *cmd_buffer, const VkGeneratedCommand
    const uint32_t cmdbuf_size = radv_get_indirect_gfx_cmdbuf_size(pGeneratedCommandsInfo);
    const uint64_t ib_va =
       radv_buffer_get_va(prep_buffer->bo) + prep_buffer->offset + pGeneratedCommandsInfo->preprocessOffset;
+   const uint64_t gfx_ib_va = ib_va + radv_get_indirect_gfx_cmdbuf_offset(pGeneratedCommandsInfo);
 
-   device->ws->cs_execute_ib(cmd_buffer->cs, NULL, ib_va, cmdbuf_size >> 2, cmd_buffer->state.predicating);
+   device->ws->cs_execute_ib(cmd_buffer->cs, NULL, gfx_ib_va, cmdbuf_size >> 2, cmd_buffer->state.predicating);
 
    if (has_task_shader) {
       const uint32_t ace_cmdbuf_size = radv_get_indirect_ace_cmdbuf_size(pGeneratedCommandsInfo);

@@ -34,6 +34,8 @@ static const struct debug_named_value shader_debug_options[] = {
    {"noearlypreamble", IR3_DBG_NOEARLYPREAMBLE, "Disable early preambles"},
    {"nodescprefetch", IR3_DBG_NODESCPREFETCH, "Disable descriptor prefetch optimization"},
    {"expandrpt",  IR3_DBG_EXPANDRPT,  "Expand rptN instructions"},
+   {"noaliastex", IR3_DBG_NOALIASTEX, "Don't use alias.tex"},
+   {"noaliasrt",  IR3_DBG_NOALIASRT,  "Don't use alias.rt"},
 #if MESA_DEBUG
    /* MESA_DEBUG-only options: */
    {"schedmsgs",  IR3_DBG_SCHEDMSGS,  "Enable scheduler debug messages"},
@@ -150,6 +152,7 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
    compiler->bitops_can_write_predicates = false;
    compiler->has_branch_and_or = false;
    compiler->has_rpt_bary_f = false;
+   compiler->has_alias = false;
 
    if (compiler->gen >= 6) {
       compiler->samgq_workaround = true;
@@ -219,6 +222,10 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->fs_must_have_non_zero_constlen_quirk = dev_info->a7xx.fs_must_have_non_zero_constlen_quirk;
       compiler->has_early_preamble = dev_info->a6xx.has_early_preamble;
       compiler->has_rpt_bary_f = true;
+
+      if (compiler->gen >= 7) {
+         compiler->has_alias = true;
+      }
    } else {
       compiler->max_const_pipeline = 512;
       compiler->max_const_geom = 512;

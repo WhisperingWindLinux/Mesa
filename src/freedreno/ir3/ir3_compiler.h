@@ -276,6 +276,9 @@ struct ir3_compiler {
 
    /* True if (rptN) is supported for bary.f. */
    bool has_rpt_bary_f;
+
+   /* True if alias.tex and alias.rt are supported. */
+   bool has_alias;
 };
 
 void ir3_compiler_destroy(struct ir3_compiler *compiler);
@@ -335,6 +338,8 @@ enum ir3_shader_debug {
    /* MESA_DEBUG-only options: */
    IR3_DBG_SCHEDMSGS = BITFIELD_BIT(20),
    IR3_DBG_RAMSGS = BITFIELD_BIT(21),
+   IR3_DBG_NOALIASTEX = BITFIELD_BIT(22),
+   IR3_DBG_NOALIASRT = BITFIELD_BIT(23),
 
    /* Only used for the disk-caching logic: */
    IR3_DBG_ROBUST_UBO_ACCESS = BITFIELD_BIT(30),

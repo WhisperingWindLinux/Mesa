@@ -52,6 +52,7 @@ struct ir3_legalize_state {
    regmask_t needs_ss_or_sy_scalar_war;
    regmask_t needs_sy;
    bool needs_ss_for_const;
+   bool needs_sy_for_const;
 
    /* Each of these arrays contains the cycle when the corresponding register
     * becomes "ready" i.e. does not require any more nops. There is a special
@@ -125,6 +126,7 @@ apply_sy(struct ir3_instruction *instr,
    regmask_init(&state->needs_sy, mergedregs);
    regmask_init(&state->needs_ss_or_sy_war, mergedregs);
    regmask_init(&state->needs_ss_or_sy_scalar_war, mergedregs);
+   state->needs_sy_for_const = false;
 }
 
 static bool
@@ -231,6 +233,9 @@ delay_update(struct ir3_legalize_state *state,
       return;
 
    foreach_dst_n (dst, n, instr) {
+      if (dst->flags & IR3_REG_RT)
+         continue;
+
       unsigned elems = post_ra_reg_elems(dst);
       unsigned num = post_ra_reg_num(dst);
       unsigned dst_cycle = cycle;
@@ -355,6 +360,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
                  &pstate->needs_ss_or_sy_war);
       regmask_or(&state->needs_sy, &state->needs_sy, &pstate->needs_sy);
       state->needs_ss_for_const |= pstate->needs_ss_for_const;
+      state->needs_sy_for_const |= pstate->needs_sy_for_const;
 
       /* Our nop state is the max of the predecessor blocks */
       for (unsigned i = 0; i < ARRAY_SIZE(state->pred_ready); i++)
@@ -513,6 +519,9 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
                apply_ss(n, state, mergedregs);
                last_input_needs_ss = false;
             }
+            if (state->needs_sy_for_const) {
+               apply_sy(n, state, mergedregs);
+            }
          } else if (reg_is_addr1(reg) && block->in_early_preamble) {
             if (regmask_get(&state->needs_ss, reg)) {
                apply_ss(n, state, mergedregs);
@@ -522,6 +531,8 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       }
 
       foreach_dst (reg, n) {
+         if (reg->flags & IR3_REG_RT)
+            continue;
          if (needs_ss_war(state, reg, n_is_scalar_alu)) {
             apply_ss(n, state, mergedregs);
             last_input_needs_ss = false;
@@ -539,7 +550,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
        * clever if we were aware of this during scheduling, but
        * this should be a pretty rare case:
        */
-      if ((n->flags & IR3_INSTR_SS) && (opc_cat(n->opc) >= 5)) {
+      if ((n->flags & IR3_INSTR_SS) && !supports_ss(n)) {
          struct ir3_instruction *nop;
          nop = ir3_NOP(block);
          nop->flags |= IR3_INSTR_SS;
@@ -638,8 +649,10 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
          } else {
             regmask_set(&state->needs_ss, n->dsts[0]);
          }
-      } else if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO) {
+      } else if (n->opc == OPC_PUSH_CONSTS_LOAD_MACRO || n->opc == OPC_STC) {
          state->needs_ss_for_const = true;
+      } else if (n->opc == OPC_LDC_K) {
+         state->needs_sy_for_const = true;
       }
 
       if (is_ssbo(n->opc) || is_global_a3xx_atomic(n->opc) ||
@@ -1822,6 +1835,7 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
       progress |= expand_dummy_dests(block);
    }
 
+   ir3_insert_alias_tex(ir);
    ir3_count_instructions(ir);
    resolve_jumps(ir);
 

@@ -61,6 +61,9 @@ static int parse_reg(const char *str)
 		num++;
 	}
 	str++;
+	if (str[0] == 't') {
+		str++;
+	}
 	num += strtol(str, (char **)&str, 10) << 3;
 	switch (str[1]) {
 	case 'x': num += 0; break;
@@ -130,6 +133,7 @@ static int parse_reg(const char *str)
 
 [h]?"r"[0-9]+"."[xyzw]            ir3_yylval.num = parse_reg(yytext); return T_REGISTER;
 [h]?"c"[0-9]+"."[xyzw]            ir3_yylval.num = parse_reg(yytext); return T_CONSTANT;
+"rt"[0-7]"."[xyzw]                ir3_yylval.num = parse_reg(yytext); return T_RT;
 "a0.x"                            return T_A0;
 "a1.x"                            return T_A1;
 "p0."[xyzw]                       ir3_yylval.num = parse_reg(yytext); return T_P0;
@@ -383,8 +387,6 @@ static int parse_reg(const char *str)
 "stc"                             return TOKEN(T_OP_STC);
 "stsc"                            return TOKEN(T_OP_STSC);
 
-("b16"|"b32"){1} ir3_yylval.str = yytext; return T_INSTR_TYPE;
-
                                   /* category 7: */
 "bar"                             return TOKEN(T_OP_BAR);
 "fence"                           return TOKEN(T_OP_FENCE);
@@ -408,6 +410,8 @@ static int parse_reg(const char *str)
 "s32"                             return TOKEN(T_TYPE_S32);
 "u8"                              return TOKEN(T_TYPE_U8);
 "u8_32"                           return TOKEN(T_TYPE_U8_32);
+"b16"                             return TOKEN(T_TYPE_B16);
+"b32"                             return TOKEN(T_TYPE_B32);
 
 "untyped"                         return TOKEN(T_UNTYPED);
 "typed"                           return TOKEN(T_TYPED);

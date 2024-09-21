@@ -1666,7 +1666,7 @@ blorp_exec_compute(struct blorp_batch *batch, const struct blorp_params *params)
       cw.ThreadGroupIDXDimension        = group_x1;
       cw.ThreadGroupIDYDimension        = group_y1;
       cw.ThreadGroupIDZDimension        = group_z1;
-      cw.ExecutionMask                  = 0xffffffff;
+      cw.ExecutionMask                  = dispatch.right_mask;
       cw.PostSync.MOCS                  = isl_mocs(batch->blorp->isl_dev, 0, false);
 
       uint32_t surfaces_offset = blorp_setup_binding_table(batch, params);

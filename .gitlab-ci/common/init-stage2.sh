@@ -95,7 +95,6 @@ fi
 # it in /install
 ln -sf $CI_PROJECT_DIR/install /install
 export LD_LIBRARY_PATH=/install/lib
-export LIBGL_DRIVERS_PATH=/install/lib/dri
 
 # https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/22495#note_1876691
 # The navi21 boards seem to have trouble with ld.so.cache, so try explicitly

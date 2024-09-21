@@ -67,6 +67,9 @@ get_device_extensions(const struct panvk_physical_device *device,
       .KHR_device_group = true,
       .KHR_descriptor_update_template = true,
       .KHR_driver_properties = true,
+      .KHR_get_memory_requirements2 = true,
+      .KHR_maintenance1 = true,
+      .KHR_maintenance2 = true,
       .KHR_maintenance3 = true,
       .KHR_pipeline_executable_properties = true,
       .KHR_pipeline_library = true,
@@ -1040,16 +1043,6 @@ end:
    out_properties->linearTilingFeatures = tex;
    out_properties->optimalTilingFeatures = tex;
    out_properties->bufferFeatures = buffer;
-}
-
-VKAPI_ATTR void VKAPI_CALL
-panvk_GetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice,
-                                        VkFormat format,
-                                        VkFormatProperties *pFormatProperties)
-{
-   VK_FROM_HANDLE(panvk_physical_device, physical_device, physicalDevice);
-
-   get_format_properties(physical_device, format, pFormatProperties);
 }
 
 VKAPI_ATTR void VKAPI_CALL

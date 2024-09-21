@@ -538,6 +538,11 @@ struct tu_cmd_state
    struct tu_tess_params tess_params;
 
    uint64_t descriptor_buffer_iova[MAX_SETS];
+
+   struct {
+      uint32_t buffer_id;
+      bool pending_resolves;
+   } resolve_group;
 };
 
 struct tu_cmd_buffer

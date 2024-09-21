@@ -45,6 +45,7 @@ enum fd_gpu_event : uint32_t {
     FD_LRZ_FLUSH,
     FD_BLIT,
     FD_LABEL,
+    FD_CCU_END_RESOLVE_GROUP,
 
     FD_GPU_EVENT_MAX,
 };
@@ -83,6 +84,7 @@ constexpr inline struct fd_gpu_event_info fd_gpu_events<A6XX>[FD_GPU_EVENT_MAX] 
     {LRZ_FLUSH, false},               /* FD_LRZ_FLUSH */
     {BLIT, false},                    /* FD_BLIT */
     {LABEL, false},                   /* FD_LABEL */
+    {CCU_END_RESOLVE_GROUP, false},   /* FD_CCU_END_RESOLVE_GROUP */
 };
 
 template <>
@@ -111,6 +113,7 @@ constexpr inline struct fd_gpu_event_info fd_gpu_events<A7XX>[FD_GPU_EVENT_MAX] 
     {LRZ_FLUSH, false},               /* FD_LRZ_FLUSH */
     {BLIT, false},                    /* FD_BLIT */
     {LABEL, false},                   /* FD_LABEL */
+    {CCU_END_RESOLVE_GROUP, false},   /* FD_CCU_END_RESOLVE_GROUP */
 };
 
 #endif

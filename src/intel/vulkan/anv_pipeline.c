@@ -272,8 +272,14 @@ void anv_DestroyPipeline(
          anv_pipeline_to_graphics_base(pipeline);
 
       for (unsigned s = 0; s < ARRAY_SIZE(gfx_pipeline->shaders); s++) {
-         if (gfx_pipeline->shaders[s])
+         if (gfx_pipeline->shaders[s]) {
+            vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_FREE_EXT,
+                                         (uint64_t)gfx_pipeline->shaders[s]->kernel.map,
+                                         gfx_pipeline->shaders[s]->kernel.alloc_size,
+                                         VK_OBJECT_TYPE_PIPELINE,
+                                         (uint64_t)anv_pipeline_to_handle(pipeline), 0 /* heap 0: device memory */);
             anv_shader_bin_unref(device, gfx_pipeline->shaders[s]);
+	 }
       }
       break;
    }
@@ -282,8 +288,14 @@ void anv_DestroyPipeline(
       struct anv_compute_pipeline *compute_pipeline =
          anv_pipeline_to_compute(pipeline);
 
-      if (compute_pipeline->cs)
+      if (compute_pipeline->cs) {
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_FREE_EXT,
+                                      (uint64_t)compute_pipeline->cs->kernel.map,
+                                      compute_pipeline->cs->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(pipeline), 0 /* heap 0: device memory */);
          anv_shader_bin_unref(device, compute_pipeline->cs);
+      }
 
       break;
    }
@@ -294,6 +306,11 @@ void anv_DestroyPipeline(
 
       util_dynarray_foreach(&rt_pipeline->shaders,
                             struct anv_shader_bin *, shader) {
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_FREE_EXT,
+                                      (uint64_t)(*shader)->kernel.map,
+                                      (*shader)->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(pipeline), 0 /* heap 0: device memory */);
          anv_shader_bin_unref(device, *shader);
       }
       break;
@@ -1950,6 +1967,11 @@ anv_graphics_pipeline_load_cached_shaders(struct anv_graphics_base_pipeline *pip
       if (stages[s].bin) {
          found++;
          pipeline->shaders[s] = stages[s].bin;
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                      (uint64_t)stages[s].bin->kernel.map,
+                                      stages[s].bin->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
       }
 
       if (cache_hit) {
@@ -2550,9 +2572,21 @@ anv_graphics_pipeline_compile(struct anv_graphics_base_pipeline *pipeline,
 
       stage->bin =
          anv_device_upload_kernel(device, cache, &upload_params);
-      if (!stage->bin) {
+      if (stage->bin) {
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                      (uint64_t)stage->bin->kernel.map,
+                                      stage->bin->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
+      }
+      else {
          ralloc_free(stage_ctx);
          result = vk_error(pipeline, VK_ERROR_OUT_OF_HOST_MEMORY);
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT,
+                                      0,
+                                      upload_params.kernel_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)VK_NULL_HANDLE, 0 /* heap 0: device memory */);
          goto fail;
       }
 
@@ -2668,9 +2702,15 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
                                                &cache_hit);
    }
 
-   if (stage.bin == NULL &&
-       (pipeline->base.flags & VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT))
+   if (stage.bin) {
+      vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                   (uint64_t)stage.bin->kernel.map,
+                                   stage.bin->kernel.alloc_size,
+                                   VK_OBJECT_TYPE_PIPELINE,
+                                   (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
+   } else if (pipeline->base.flags & VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT) {
       return VK_PIPELINE_COMPILE_REQUIRED;
+   }
 
    void *mem_ctx = ralloc_context(NULL);
    if (stage.bin == NULL) {
@@ -2752,8 +2792,20 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
       };
 
       stage.bin = anv_device_upload_kernel(device, cache, &upload_params);
-      if (!stage.bin) {
+      if (stage.bin) {
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                      (uint64_t)stage.bin->kernel.map,
+                                      stage.bin->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
+      }
+      else {
          ralloc_free(mem_ctx);
+         vk_device_memory_report_emit(&device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT,
+                                      0,
+                                      upload_params.kernel_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)VK_NULL_HANDLE, 0 /* heap 0: device memory */);
          return vk_error(pipeline, VK_ERROR_OUT_OF_HOST_MEMORY);
       }
 
@@ -3448,8 +3500,21 @@ compile_upload_rt_shader(struct anv_ray_tracing_pipeline *pipeline,
 
    stage->bin =
       anv_device_upload_kernel(pipeline->base.device, cache, &upload_params);
-   if (stage->bin == NULL)
+   if (stage->bin) {
+      vk_device_memory_report_emit(&pipeline->base.device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                   (uint64_t)stage->bin->kernel.map,
+                                   stage->bin->kernel.alloc_size,
+                                   VK_OBJECT_TYPE_PIPELINE,
+                                   (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
+   }
+   else {
+      vk_device_memory_report_emit(&pipeline->base.device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT,
+                                   0,
+                                   upload_params.kernel_size,
+                                   VK_OBJECT_TYPE_PIPELINE,
+                                   (uint64_t)VK_NULL_HANDLE, 0 /* heap 0: device memory */);
       return vk_error(pipeline, VK_ERROR_OUT_OF_HOST_MEMORY);
+   }
 
    anv_pipeline_add_executables(&pipeline->base, stage);
 
@@ -3643,8 +3708,14 @@ anv_ray_tracing_pipeline_load_cached_shaders(struct anv_ray_tracing_pipeline *pi
             VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT;
       }
 
-      if (stages[i].bin != NULL)
+      if (stages[i].bin != NULL) {
          anv_pipeline_add_executables(&pipeline->base, &stages[i]);
+         vk_device_memory_report_emit(&pipeline->base.device->vk, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+                                      (uint64_t)stages[i].bin->kernel.map,
+                                      stages[i].bin->kernel.alloc_size,
+                                      VK_OBJECT_TYPE_PIPELINE,
+                                      (uint64_t)anv_pipeline_to_handle(&pipeline->base), 0 /* heap 0: device memory */);
+      }
 
       stages[i].feedback.duration += os_time_get_nano() - stage_start;
    }

@@ -723,7 +723,7 @@ void *writePNG(void *data) {
    if (!file) {
       LOG(ERROR, "Failed to open output file, '%s', error(%d): %s\n", tmpFilename, errno, strerror(errno));
       pthread_cond_signal(&ptCondition);
-      return nullptr;
+      goto release;
    }
    VkResult res;
    png_byte **row_pointer;
@@ -751,7 +751,7 @@ void *writePNG(void *data) {
    if (checks_failed) {
       fclose(file);
       pthread_cond_signal(&ptCondition);
-      return nullptr;
+      goto release;
    }
    threadData->device_data->vtable.WaitForFences(threadData->device_data->device, 1, &threadData->fence, VK_TRUE, UINT64_MAX);
    auto start_time = get_time();
@@ -801,6 +801,7 @@ void *writePNG(void *data) {
    else
       LOG(INFO, "Successfully renamed from '%s' to '%s'\n", tmpFilename, filename);
 
+release:
    if(filename)
       free(filename);
    if(tmpFilename)

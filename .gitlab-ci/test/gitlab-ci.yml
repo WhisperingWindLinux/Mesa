@@ -20,6 +20,10 @@
     - !reference [.common-rules, rules]
     - !reference [.never-post-merge-rules, rules]
 
+.test-in-situ:
+  extends:
+    - .test
+
 .formatting-check:
   # Cancel job if a newer commit is pushed to the same branch
   interruptible: true

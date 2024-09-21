@@ -11,6 +11,8 @@
       when: on_success
 
 .softpipe-test:
+  extends:
+    - .test-in-situ
   variables:
     GPU_VERSION: softpipe
     LIBGL_ALWAYS_SOFTWARE: "true"

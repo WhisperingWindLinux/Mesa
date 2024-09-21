@@ -124,6 +124,13 @@ MakeContextCurrent(Display * dpy, GLXDrawable draw,
    __glXLock();
 
    if (oldGC != &dummyContext) {
+      if (!gc && oldGC->currentDpy == dpy) {
+         /* try to release drawables */
+         if (oldGC->vtable->bind(oldGC, None, None) == Success) {
+            oldGC->currentDrawable = None;
+            oldGC->currentReadable = None;
+         }
+      }
       oldGC->vtable->unbind(oldGC);
       oldGC->currentDpy = NULL;
 

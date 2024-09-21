@@ -537,8 +537,8 @@ union packed_instr {
       unsigned instr_type : 4;
       unsigned deref_type : 3;
       unsigned cast_type_same_as_last : 1;
-      unsigned modes : 5; /* See (de|en)code_deref_modes() */
-      unsigned _pad : 9;
+      unsigned modes : 6; /* See (de|en)code_deref_modes() */
+      unsigned _pad : 8;
       unsigned in_bounds : 1;
       unsigned packed_src_ssa_16bit : 1; /* deref_var redefines this */
       unsigned def : 8;
@@ -832,7 +832,7 @@ read_alu(read_ctx *ctx, union packed_instr header)
 }
 
 #define NUM_GENERIC_MODES 4
-#define MODE_ENC_GENERIC_BIT (1 << 4)
+#define MODE_ENC_GENERIC_BIT (1 << 5)
 
 static nir_variable_mode
 decode_deref_modes(unsigned modes)
@@ -853,7 +853,7 @@ encode_deref_modes(nir_variable_mode modes)
     * case, we need the full bitfield.  Fortunately, there are only 4 of
     * these.  For all other modes, we can only have one mode at a time so we
     * can compress them by only storing the bit position.  This, plus one bit
-    * to select encoding, lets us pack the entire bitfield in 5 bits.
+    * to select encoding, lets us pack the entire bitfield in 6 bits.
     */
 
    /* Assert that the modes we are compressing fit along with the generic bit
@@ -1963,6 +1963,8 @@ write_function(write_ctx *ctx, const nir_function *fxn)
       flags |= 0x20;
    if (fxn->is_subroutine)
       flags |= 0x40;
+   if (fxn->is_tmp_globals_wrapper)
+      flags |= 0x80;
    blob_write_uint32(ctx->blob, flags);
    if (fxn->name)
       blob_write_string(ctx->blob, fxn->name);
@@ -1981,6 +1983,8 @@ write_function(write_ctx *ctx, const nir_function *fxn)
          ((uint32_t)fxn->params[i].num_components) |
          ((uint32_t)fxn->params[i].bit_size) << 8;
       blob_write_uint32(ctx->blob, val);
+      encode_type_to_blob(ctx->blob, fxn->params[i].type);
+      blob_write_uint32(ctx->blob, encode_deref_modes(fxn->params[i].mode));
    }
 
    /* At first glance, it looks like we should write the function_impl here.
@@ -2014,6 +2018,8 @@ read_function(read_ctx *ctx)
       uint32_t val = blob_read_uint32(ctx->blob);
       fxn->params[i].num_components = val & 0xff;
       fxn->params[i].bit_size = (val >> 8) & 0xff;
+      fxn->params[i].type = decode_type_from_blob(ctx->blob);
+      fxn->params[i].mode = decode_deref_modes(blob_read_uint32(ctx->blob));
    }
 
    fxn->is_entrypoint = flags & 0x1;
@@ -2023,6 +2029,7 @@ read_function(read_ctx *ctx)
    fxn->should_inline = flags & 0x10;
    fxn->dont_inline = flags & 0x20;
    fxn->is_subroutine = flags & 0x40;
+   fxn->is_tmp_globals_wrapper = flags & 0x80;
 }
 
 static void

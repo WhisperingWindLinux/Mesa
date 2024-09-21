@@ -42,6 +42,8 @@
 
 #include "pipe/p_state.h"
 
+struct nir_shader;
+
 /**
  * Shader information needed by both gl_shader and gl_linked shader.
  */
@@ -178,6 +180,7 @@ struct gl_shader
     */
    GLbitfield BlendSupport;
 
+   struct nir_shader *nir;
    struct exec_list *ir;
    struct glsl_symbol_table *symbols;
 
@@ -266,9 +269,6 @@ struct gl_linked_shader
     * sizes divided by sizeof(float), and num_uniform_compoennts.
     */
    unsigned num_combined_uniform_components;
-
-   struct exec_list *ir;
-   struct glsl_symbol_table *symbols;
 
    /**
     * ARB_gl_spirv related data.

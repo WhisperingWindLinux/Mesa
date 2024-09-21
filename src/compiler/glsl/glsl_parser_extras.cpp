@@ -37,6 +37,7 @@
 #include "ast.h"
 #include "glsl_parser_extras.h"
 #include "glsl_parser.h"
+#include "glsl_to_nir.h"
 #include "ir_optimization.h"
 #include "builtin_functions.h"
 
@@ -1031,56 +1032,6 @@ _mesa_glsl_process_extension(const char *name, YYLTYPE *name_locp,
    }
 
    return true;
-}
-
-bool
-_mesa_glsl_can_implicitly_convert(const glsl_type *from, const glsl_type *desired,
-                                  bool has_implicit_conversions,
-                                  bool has_implicit_int_to_uint_conversion)
-{
-   if (from == desired)
-      return true;
-
-   /* GLSL 1.10 and ESSL do not allow implicit conversions. */
-   if (!has_implicit_conversions)
-      return false;
-
-   /* There is no conversion among matrix types. */
-   if (from->matrix_columns > 1 || desired->matrix_columns > 1)
-      return false;
-
-   /* Vector size must match. */
-   if (from->vector_elements != desired->vector_elements)
-      return false;
-
-   /* int and uint can be converted to float. */
-   if (glsl_type_is_float(desired) && (glsl_type_is_integer_32(from) ||
-       glsl_type_is_float_16(from)))
-      return true;
-
-   /* With GLSL 4.0, ARB_gpu_shader5, or MESA_shader_integer_functions, int
-    * can be converted to uint.  Note that state may be NULL here, when
-    * resolving function calls in the linker. By this time, all the
-    * state-dependent checks have already happened though, so allow anything
-    * that's allowed in any shader version.
-    */
-   if (has_implicit_int_to_uint_conversion &&
-       desired->base_type == GLSL_TYPE_UINT && from->base_type == GLSL_TYPE_INT)
-      return true;
-
-   /* No implicit conversions from double. */
-   if (glsl_type_is_double(from))
-      return false;
-
-   /* Conversions from different types to double. */
-   if (glsl_type_is_double(desired)) {
-      if (glsl_type_is_float_16_32(from))
-         return true;
-      if (glsl_type_is_integer_32(from))
-         return true;
-   }
-
-   return false;
 }
 
 /**
@@ -2380,9 +2331,19 @@ can_skip_compile(struct gl_context *ctx, struct gl_shader *shader,
    return false;
 }
 
+static void
+log_compile_skip(struct gl_context *ctx, struct gl_shader *shader)
+{
+   if (ctx->_Shader->Flags & GLSL_DUMP) {
+      _mesa_log("No GLSL IR for shader %d (shader may be from cache)\n",
+                shader->Name);
+   }
+}
+
 void
 _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
-                          bool dump_ast, bool dump_hir, bool force_recompile)
+                          FILE *dump_ir_file, bool dump_ast, bool dump_hir,
+                          bool force_recompile)
 {
    const char *source;
    const uint8_t *source_blake3;
@@ -2408,8 +2369,10 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
     */
    if (!source_has_shader_include &&
        can_skip_compile(ctx, shader, source, source_blake3, force_recompile,
-                        false))
+                        false)) {
+      log_compile_skip(ctx, shader);
       return;
+   }
 
     struct _mesa_glsl_parse_state *state =
       new(shader) _mesa_glsl_parse_state(ctx, shader->Stage, shader);
@@ -2429,8 +2392,10 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
     */
    if (source_has_shader_include &&
        can_skip_compile(ctx, shader, source, source_blake3, force_recompile,
-                        true))
+                        true)) {
+      log_compile_skip(ctx, shader);
       return;
+   }
 
    if (!state->error) {
      _mesa_glsl_lexer_ctor(state, source);
@@ -2447,6 +2412,7 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
    }
 
    ralloc_free(shader->ir);
+   ralloc_free(shader->nir);
    shader->ir = new(shader) exec_list;
    if (!state->error && !state->translation_unit.is_empty())
       _mesa_ast_to_hir(shader->ir, state);
@@ -2507,8 +2473,34 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
    delete state->symbols;
    ralloc_free(state);
 
-   if (shader->CompileStatus == COMPILE_SUCCESS)
+   if (ctx->_Shader && ctx->_Shader->Flags & GLSL_DUMP) {
+      if (shader->CompileStatus) {
+         assert(shader->ir);
+         _mesa_log("GLSL IR for shader %d:\n", shader->Name);
+         _mesa_print_ir(mesa_log_get_file(), shader->ir, NULL);
+         _mesa_log("\n\n");
+      } else {
+         _mesa_log("GLSL shader %d failed to compile.\n", shader->Name);
+      }
+      if (shader->InfoLog && shader->InfoLog[0] != 0) {
+         _mesa_log("GLSL shader %d info log:\n", shader->Name);
+         _mesa_log("%s\n", shader->InfoLog);
+      }
+   }
+
+   if (dump_ir_file) {
+      if (shader->CompileStatus) {
+         assert(shader->ir);
+         _mesa_print_ir(dump_ir_file, shader->ir, NULL);
+      }
+   }
+
+   if (shader->CompileStatus == COMPILE_SUCCESS) {
       memcpy(shader->compiled_source_blake3, source_blake3, BLAKE3_OUT_LEN);
+
+      shader->nir = glsl_to_nir(&ctx->Const, &shader->ir, NULL, shader->Stage,
+                                options->NirOptions, source_blake3);
+   }
 
    if (ctx->Cache && shader->CompileStatus == COMPILE_SUCCESS) {
       char sha1_buf[41];

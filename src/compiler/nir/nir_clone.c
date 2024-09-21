@@ -163,6 +163,13 @@ nir_variable_clone(const nir_variable *var, nir_shader *shader)
    }
    nvar->interface_type = var->interface_type;
 
+   if (var->max_ifc_array_access) {
+      nvar->max_ifc_array_access =
+         rzalloc_array(nvar, int, var->interface_type->length);
+      memcpy(nvar->max_ifc_array_access, var->max_ifc_array_access,
+             var->interface_type->length * sizeof(unsigned));
+   }
+
    nvar->num_members = var->num_members;
    if (var->num_members) {
       nvar->members = ralloc_array(nvar, struct nir_variable_data,
@@ -668,18 +675,27 @@ clone_function_impl(clone_state *state, const nir_function_impl *fi)
 }
 
 nir_function_impl *
-nir_function_impl_clone(nir_shader *shader, const nir_function_impl *fi)
+nir_function_impl_clone_remap_globals(nir_shader *shader,
+                                      const nir_function_impl *fi,
+                                      struct hash_table *remap_table)
 {
    clone_state state;
-   init_clone_state(&state, NULL, false, false);
+   init_clone_state(&state, remap_table, !!remap_table, false);
 
    state.ns = shader;
 
    nir_function_impl *nfi = clone_function_impl(&state, fi);
 
-   free_clone_state(&state);
+   if (!remap_table)
+      free_clone_state(&state);
 
    return nfi;
+}
+
+nir_function_impl *
+nir_function_impl_clone(nir_shader *shader, const nir_function_impl *fi)
+{
+   return nir_function_impl_clone_remap_globals(shader, fi, NULL);
 }
 
 nir_function *
@@ -696,6 +712,7 @@ nir_function_clone(nir_shader *ns, const nir_function *fxn)
    nfxn->should_inline = fxn->should_inline;
    nfxn->dont_inline = fxn->dont_inline;
    nfxn->is_subroutine = fxn->is_subroutine;
+   nfxn->is_tmp_globals_wrapper = fxn->is_tmp_globals_wrapper;
    nfxn->num_subroutine_types = fxn->num_subroutine_types;
    nfxn->subroutine_index = fxn->subroutine_index;
    if (fxn->num_subroutine_types) {

@@ -44,6 +44,10 @@ tu_bo_init_new_explicit_iova(struct tu_device *dev,
    if (result != VK_SUCCESS)
       return result;
 
+   if ((mem_property & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) &&
+       !(mem_property & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+      (*out_bo)->cached_non_coherent = true;
+
    vk_address_binding_report(&instance->vk, base ? base : &dev->vk.base,
                              (*out_bo)->iova, (*out_bo)->size,
                              VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT);

@@ -44,6 +44,9 @@ radv_amdgpu_bo_va_op(struct radv_amdgpu_winsys *ws, amdgpu_bo_handle bo, uint64_
          flags |= AMDGPU_VM_PAGE_WRITEABLE;
    }
 
+   if (ws->info.has_explicit_sync_vm_ops)
+      flags |= AMDGPU_VM_EXPLICIT_SYNC;
+
    size = align64(size, getpagesize());
 
    return amdgpu_bo_va_op_raw(ws->dev, bo, offset, size, addr, flags, ops);

@@ -200,7 +200,7 @@ radv_init_dri_options(struct radv_instance *instance)
 
    instance->drirc.clear_lds = driQueryOptionb(&instance->drirc.options, "radv_clear_lds");
 
-   instance->drirc.zero_vram = driQueryOptionb(&instance->drirc.options, "radv_zero_vram");
+   instance->drirc.zero_vram = driQueryOptionb(&instance->drirc.options, "vk_zero_vram");
 
    instance->drirc.disable_aniso_single_level =
       driQueryOptionb(&instance->drirc.options, "radv_disable_aniso_single_level");

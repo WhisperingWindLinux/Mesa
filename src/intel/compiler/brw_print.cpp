@@ -291,6 +291,18 @@ brw_instruction_name(const struct brw_isa_info *isa, enum opcode op)
       return "memory_store";
    case SHADER_OPCODE_MEMORY_ATOMIC_LOGICAL:
       return "memory_atomic";
+   case SHADER_OPCODE_REDUCE:
+      return "reduce";
+   case SHADER_OPCODE_INCLUSIVE_SCAN:
+      return "inclusive_scan";
+   case SHADER_OPCODE_EXCLUSIVE_SCAN:
+      return "exclusive_scan";
+   case SHADER_OPCODE_VOTE_ANY:
+      return "vote_any";
+   case SHADER_OPCODE_VOTE_ALL:
+      return "vote_all";
+   case SHADER_OPCODE_VOTE_EQUAL:
+      return "vote_equal";
    }
 
    unreachable("not reached");

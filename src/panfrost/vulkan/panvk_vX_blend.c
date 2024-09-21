@@ -124,7 +124,7 @@ get_blend_shader_locked(struct panvk_device *dev,
                        "couldn't allocate blend shader object");
 
    nir_shader *nir =
-      GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt);
+      GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt, false);
 
    NIR_PASS_V(nir, nir_shader_instructions_pass, lower_load_blend_const,
               nir_metadata_control_flow, NULL);

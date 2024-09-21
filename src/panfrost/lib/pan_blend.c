@@ -618,7 +618,7 @@ pan_inline_blend_constants(nir_builder *b, nir_intrinsic_instr *intr,
 nir_shader *
 GENX(pan_blend_create_shader)(const struct pan_blend_state *state,
                               nir_alu_type src0_type, nir_alu_type src1_type,
-                              unsigned rt)
+                              unsigned rt, bool alpha_to_one)
 {
    const struct pan_blend_rt_state *rt_state = &state->rts[rt];
    char equation_str[128] = {0};
@@ -686,6 +686,12 @@ GENX(pan_blend_create_shader)(const struct pan_blend_state *state,
          &b, 4, nir_alu_type_get_type_size(src_type), pixel, zero,
          .io_semantics.location = i ? VARYING_SLOT_VAR0 : VARYING_SLOT_COL0,
          .io_semantics.num_slots = 1, .base = i, .dest_type = src_type);
+
+      if (alpha_to_one && src_type == nir_type_float32) {
+         src = nir_vector_insert_imm(&b, src,
+                                     nir_imm_floatN_t(&b, 1.0, src->bit_size),
+                                     3);
+      }
 
       /* On Midgard, the blend shader is responsible for format conversion.
        * As the OpenGL spec requires integer conversions to saturate, we must
@@ -796,7 +802,8 @@ struct pan_blend_shader_variant *
 GENX(pan_blend_get_shader_locked)(struct pan_blend_shader_cache *cache,
                                   const struct pan_blend_state *state,
                                   nir_alu_type src0_type,
-                                  nir_alu_type src1_type, unsigned rt)
+                                  nir_alu_type src1_type, unsigned rt,
+                                  bool alpha_to_one)
 {
    struct pan_blend_shader_key key = {
       .format = state->rts[rt].format,
@@ -809,9 +816,8 @@ GENX(pan_blend_get_shader_locked)(struct pan_blend_shader_cache *cache,
       .nr_samples = state->rts[rt].nr_samples,
       .equation = state->rts[rt].equation,
    };
-
    /* Blend shaders should only be used for blending on Bifrost onwards */
-   assert(PAN_ARCH <= 5 || state->logicop_enable ||
+   assert(PAN_ARCH <= 5 || state->logicop_enable || alpha_to_one ||
           !pan_blend_is_opaque(state->rts[rt].equation));
    assert(state->rts[rt].equation.color_mask != 0);
 
@@ -852,7 +858,7 @@ GENX(pan_blend_get_shader_locked)(struct pan_blend_shader_cache *cache,
    memcpy(variant->constants, state->constants, sizeof(variant->constants));
 
    nir_shader *nir =
-      GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt);
+      GENX(pan_blend_create_shader)(state, src0_type, src1_type, rt, alpha_to_one);
 
    nir_shader_intrinsics_pass(nir, pan_inline_blend_constants,
                               nir_metadata_control_flow,

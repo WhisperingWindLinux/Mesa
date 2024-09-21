@@ -30,6 +30,7 @@ use std::convert::TryInto;
 use std::mem;
 use std::mem::size_of;
 use std::ops::Deref;
+use std::os::raw::c_uint;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
@@ -76,6 +77,7 @@ struct BufferMapping {
 struct ImageMapping {
     origin: CLVec<usize>,
     region: CLVec<usize>,
+    mipmap: usize,
 }
 
 #[repr(transparent)]
@@ -248,12 +250,12 @@ impl_cl_type_trait!(cl_mem, Image, CL_INVALID_MEM_OBJECT, base.base);
 pub trait CLImageDescInfo {
     fn type_info(&self) -> (u8, bool);
     fn pixels(&self) -> usize;
-    fn bx(&self) -> CLResult<pipe_box>;
+    fn bx(&self, mipmap_level: usize) -> CLResult<pipe_box>;
     fn row_pitch(&self) -> CLResult<u32>;
     fn slice_pitch(&self) -> usize;
     fn width(&self) -> CLResult<u32>;
     fn height(&self) -> CLResult<u32>;
-    fn size(&self) -> CLVec<usize>;
+    fn size(&self, mipmap_level: usize) -> CLVec<usize>;
 
     fn dims(&self) -> u8 {
         self.type_info().0
@@ -304,9 +306,16 @@ impl CLImageDescInfo for cl_image_desc {
         res
     }
 
-    fn size(&self) -> CLVec<usize> {
-        let mut height = cmp::max(self.image_height, 1);
-        let mut depth = cmp::max(self.image_depth, 1);
+    fn size(&self, mipmap_level: usize) -> CLVec<usize> {
+        // We need to adjust the size according to the choose mipmap level. From the spec:
+        //
+        //   Each successively smaller mipmap level is half the size of the previous level, rounded
+        //   down to the nearest integer.
+        //
+        // This means we can simply shift by mipmap here, but also make sure it's at least 1.
+        let width = cmp::max(self.image_width >> mipmap_level, 1);
+        let mut height = cmp::max(self.image_height >> mipmap_level, 1);
+        let mut depth = cmp::max(self.image_depth >> mipmap_level, 1);
 
         match self.image_type {
             CL_MEM_OBJECT_IMAGE1D_ARRAY => height = self.image_array_size,
@@ -314,11 +323,11 @@ impl CLImageDescInfo for cl_image_desc {
             _ => {}
         }
 
-        CLVec::new([self.image_width, height, depth])
+        CLVec::new([width, height, depth])
     }
 
-    fn bx(&self) -> CLResult<pipe_box> {
-        create_pipe_box(CLVec::default(), self.size(), self.image_type)
+    fn bx(&self, mipmap_level: usize) -> CLResult<pipe_box> {
+        create_pipe_box(CLVec::default(), self.size(mipmap_level), self.image_type)
     }
 
     fn row_pitch(&self) -> CLResult<u32> {
@@ -604,6 +613,7 @@ impl MemBase {
             export_out.modifier,
             mem_type,
             export_in.target,
+            image_format,
             pipe_format,
             gl_mem_props.clone(),
         )?;
@@ -646,6 +656,7 @@ impl MemBase {
                 gl_object_target: gl_export_manager.export_in.target,
                 gl_object_type: gl_object_type,
                 gl_object_name: export_in.obj,
+                gl_miplevel: export_in.miplevel as cl_GLint,
                 shadow_map: shadow_map,
             }),
             cbs: Mutex::new(Vec::new()),
@@ -672,7 +683,12 @@ impl MemBase {
                     image_array_size: gl_mem_props.array_size as usize,
                     image_row_pitch: 0,
                     image_slice_pitch: 0,
-                    num_mip_levels: 1,
+                    // TODO: not entirely sure what we are supposed to return here, but the miplevel
+                    // argument selects _one_ specific miplevel, a negative value would select how
+                    // many and 0 selects the main resource.
+                    // However, we don't support negative values yet and I think returning 0 is
+                    // probably the best option here...
+                    num_mip_levels: 0,
                     num_samples: 1,
                     ..Default::default()
                 },
@@ -828,23 +844,19 @@ impl Buffer {
         dst_offset: usize,
         size: usize,
     ) -> CLResult<()> {
-        let src_offset = self.apply_offset(src_offset)?;
-        let dst_offset = dst.apply_offset(dst_offset)?;
         let src_res = self.get_res_of_dev(q.device)?;
         let dst_res = dst.get_res_of_dev(q.device)?;
+        let size = size.try_into().map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
+        let src_offset = self
+            .apply_offset(src_offset)?
+            .try_into()
+            .map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
+        let dst_offset = dst
+            .apply_offset(dst_offset)?
+            .try_into()
+            .map_err(|_| CL_OUT_OF_HOST_MEMORY)?;
 
-        let bx = create_pipe_box(
-            [src_offset, 0, 0].into(),
-            [size, 1, 1].into(),
-            CL_MEM_OBJECT_BUFFER,
-        )?;
-        let dst_origin: [u32; 3] = [
-            dst_offset.try_into().map_err(|_| CL_OUT_OF_HOST_MEMORY)?,
-            0,
-            0,
-        ];
-
-        ctx.resource_copy_region(src_res, dst_res, &dst_origin, &bx);
+        ctx.resource_copy_buffer(src_res, src_offset, dst_res, dst_offset, size);
         Ok(())
     }
 
@@ -855,6 +867,7 @@ impl Buffer {
         dst: &Image,
         src_offset: usize,
         dst_origin: CLVec<usize>,
+        dst_mipmap: usize,
         region: &CLVec<usize>,
     ) -> CLResult<()> {
         let src_offset = self.apply_offset(src_offset)?;
@@ -862,11 +875,14 @@ impl Buffer {
         let src_pitch = [bpp, bpp * region[0], bpp * region[0] * region[1]];
         let size = CLVec::calc_size(region, src_pitch);
         let tx_src = self.tx(q, ctx, src_offset, size, RWFlags::RD)?;
+        let dst_mipmap = dst_mipmap as c_uint;
 
         // If image is created from a buffer, use image's slice and row pitch instead
         let tx_dst;
         let dst_pitch;
         if let Some(Mem::Buffer(buffer)) = &dst.parent {
+            debug_assert_eq!(dst_mipmap, 0);
+
             dst_pitch = [
                 bpp,
                 dst.image_desc.row_pitch()? as usize,
@@ -880,6 +896,7 @@ impl Buffer {
                 q,
                 ctx,
                 &create_pipe_box(dst_origin, *region, dst.mem_type)?,
+                dst_mipmap,
                 RWFlags::WR,
             )?;
 
@@ -1138,15 +1155,19 @@ impl Image {
         ctx: &PipeContext,
         dst: &Buffer,
         src_origin: CLVec<usize>,
+        src_mipmap: usize,
         dst_offset: usize,
         region: &CLVec<usize>,
     ) -> CLResult<()> {
         let dst_offset = dst.apply_offset(dst_offset)?;
         let bpp = self.image_format.pixel_size().unwrap().into();
+        let src_mipmap = src_mipmap as c_uint;
 
         let src_pitch;
         let tx_src;
         if let Some(Mem::Buffer(buffer)) = &self.parent {
+            debug_assert_eq!(src_mipmap, 0);
+
             src_pitch = [
                 bpp,
                 self.image_desc.row_pitch()? as usize,
@@ -1159,6 +1180,7 @@ impl Image {
                 q,
                 ctx,
                 &create_pipe_box(src_origin, *region, self.mem_type)?,
+                src_mipmap,
                 RWFlags::RD,
             )?;
             src_pitch = [1, tx_src.row_pitch() as usize, tx_src.slice_pitch()];
@@ -1198,13 +1220,17 @@ impl Image {
         ctx: &PipeContext,
         dst: &Image,
         src_origin: CLVec<usize>,
+        src_mipmap: usize,
         dst_origin: CLVec<usize>,
+        dst_mipmap: usize,
         region: &CLVec<usize>,
     ) -> CLResult<()> {
         let src_parent = self.get_parent();
         let dst_parent = dst.get_parent();
         let src_res = src_parent.get_res_of_dev(q.device)?;
         let dst_res = dst_parent.get_res_of_dev(q.device)?;
+        let src_mipmap = src_mipmap as c_uint;
+        let dst_mipmap = dst_mipmap as c_uint;
 
         // We just want to use sw_copy if mem objects have different types or if copy can have
         // custom strides (image2d from buff/images)
@@ -1216,6 +1242,8 @@ impl Image {
             let dst_pitch;
             let src_pitch;
             if let Some(Mem::Buffer(buffer)) = &self.parent {
+                debug_assert_eq!(src_mipmap, 0);
+
                 src_pitch = [
                     bpp,
                     self.image_desc.row_pitch()? as usize,
@@ -1229,6 +1257,7 @@ impl Image {
                     q,
                     ctx,
                     &create_pipe_box(src_origin, *region, src_parent.mem_type)?,
+                    src_mipmap,
                     RWFlags::RD,
                 )?;
 
@@ -1236,6 +1265,8 @@ impl Image {
             }
 
             if let Some(Mem::Buffer(buffer)) = &dst.parent {
+                debug_assert_eq!(dst_mipmap, 0);
+
                 // If image is created from a buffer, use image's slice and row pitch instead
                 dst_pitch = [
                     bpp,
@@ -1250,6 +1281,7 @@ impl Image {
                     q,
                     ctx,
                     &create_pipe_box(dst_origin, *region, dst_parent.mem_type)?,
+                    dst_mipmap,
                     RWFlags::WR,
                 )?;
 
@@ -1284,7 +1316,7 @@ impl Image {
                 (dst_origin[1], dst_origin[2]) = (dst_origin[2], dst_origin[1]);
             }
 
-            ctx.resource_copy_region(src_res, dst_res, &dst_origin, &bx);
+            ctx.resource_copy_texture(src_res, src_mipmap, dst_res, &dst_origin, dst_mipmap, &bx);
         }
         Ok(())
     }
@@ -1296,6 +1328,7 @@ impl Image {
         pattern: &[u32],
         origin: &CLVec<usize>,
         region: &CLVec<usize>,
+        mipmap: usize,
     ) -> CLResult<()> {
         let res = self.get_res_of_dev(q.device)?;
 
@@ -1325,6 +1358,8 @@ impl Image {
 
         // If image is created from a buffer, use clear_image_buffer instead
         if self.is_parent_buffer() {
+            debug_assert_eq!(mipmap, 0);
+
             let strides = (
                 self.image_desc.row_pitch()? as usize,
                 self.image_desc.slice_pitch(),
@@ -1332,7 +1367,7 @@ impl Image {
             ctx.clear_image_buffer(res, &new_pattern, origin, region, strides, pixel_size);
         } else {
             let bx = create_pipe_box(*origin, *region, self.mem_type)?;
-            ctx.clear_texture(res, &new_pattern, &bx);
+            ctx.clear_texture(res, &new_pattern, &bx, mipmap as c_uint);
         }
 
         Ok(())
@@ -1352,6 +1387,7 @@ impl Image {
         &self,
         origin: CLVec<usize>,
         region: CLVec<usize>,
+        mipmap: usize,
         row_pitch: &mut usize,
         slice_pitch: &mut usize,
         writes: bool,
@@ -1402,6 +1438,7 @@ impl Image {
             ImageMapping {
                 origin: origin,
                 region: region,
+                mipmap: mipmap,
             },
         )
     }
@@ -1426,6 +1463,7 @@ impl Image {
         ctx: &PipeContext,
         region: &CLVec<usize>,
         src_origin: &CLVec<usize>,
+        mipmap: usize,
         dst_row_pitch: usize,
         dst_slice_pitch: usize,
     ) -> CLResult<()> {
@@ -1436,6 +1474,8 @@ impl Image {
         let src_row_pitch;
         let src_slice_pitch;
         if let Some(Mem::Buffer(buffer)) = &self.parent {
+            debug_assert_eq!(mipmap, 0);
+
             src_row_pitch = self.image_desc.image_row_pitch;
             src_slice_pitch = self.image_desc.image_slice_pitch;
 
@@ -1448,7 +1488,7 @@ impl Image {
             tx = buffer.tx(q, ctx, offset, size, RWFlags::RD)?;
         } else {
             let bx = create_pipe_box(*src_origin, *region, self.mem_type)?;
-            tx = self.tx_image(q, ctx, &bx, RWFlags::RD)?;
+            tx = self.tx_image(q, ctx, &bx, mipmap as c_uint, RWFlags::RD)?;
             src_row_pitch = tx.row_pitch() as usize;
             src_slice_pitch = tx.slice_pitch();
         };
@@ -1491,6 +1531,7 @@ impl Image {
             ctx,
             &mapping.region,
             &mapping.origin,
+            mapping.mipmap,
             row_pitch,
             slice_pitch,
         )
@@ -1515,6 +1556,7 @@ impl Image {
                         q,
                         ctx,
                         &mapping.region,
+                        mapping.mipmap,
                         row_pitch,
                         slice_pitch,
                         &mapping.origin,
@@ -1536,10 +1578,11 @@ impl Image {
         q: &Queue,
         ctx: &'a PipeContext,
         bx: &pipe_box,
+        level: c_uint,
         rw: RWFlags,
     ) -> CLResult<PipeTransfer<'a>> {
         let r = self.get_res_of_dev(q.device)?;
-        ctx.texture_map(r, bx, rw).ok_or(CL_OUT_OF_RESOURCES)
+        ctx.texture_map(r, bx, level, rw).ok_or(CL_OUT_OF_RESOURCES)
     }
 
     pub fn unmap(&self, ptr: MutMemoryPtr) -> CLResult<bool> {
@@ -1560,6 +1603,7 @@ impl Image {
         q: &Queue,
         ctx: &PipeContext,
         region: &CLVec<usize>,
+        mipmap: usize,
         src_row_pitch: usize,
         mut src_slice_pitch: usize,
         dst_origin: &CLVec<usize>,
@@ -1567,11 +1611,14 @@ impl Image {
         let src = src.as_ptr();
         let dst_row_pitch = self.image_desc.image_row_pitch;
         let dst_slice_pitch = self.image_desc.image_slice_pitch;
+        let mipmap = mipmap as u32;
 
         // texture_subdata most likely maps the resource anyway
         perf_warning!("clEnqueueWriteImage and clEnqueueUnmapMemObject stall the GPU");
 
         if let Some(Mem::Buffer(buffer)) = &self.parent {
+            debug_assert_eq!(mipmap, 0);
+
             let pixel_size = self.image_format.pixel_size().unwrap();
             let (offset, size) = CLVec::calc_offset_size(
                 dst_origin,
@@ -1603,6 +1650,7 @@ impl Image {
             ctx.texture_subdata(
                 res,
                 &bx,
+                mipmap,
                 src,
                 src_row_pitch
                     .try_into()
@@ -1620,6 +1668,9 @@ pub struct Sampler {
     pub normalized_coords: bool,
     pub addressing_mode: cl_addressing_mode,
     pub filter_mode: cl_filter_mode,
+    mip_filter_mode: cl_filter_mode,
+    lod_min: cl_float,
+    lod_max: cl_float,
     pub props: Option<Properties<cl_sampler_properties>>,
 }
 
@@ -1631,6 +1682,9 @@ impl Sampler {
         normalized_coords: bool,
         addressing_mode: cl_addressing_mode,
         filter_mode: cl_filter_mode,
+        mip_filter_mode: cl_filter_mode,
+        lod_min: cl_float,
+        lod_max: cl_float,
         props: Option<Properties<cl_sampler_properties>>,
     ) -> Arc<Sampler> {
         Arc::new(Self {
@@ -1639,6 +1693,9 @@ impl Sampler {
             normalized_coords: normalized_coords,
             addressing_mode: addressing_mode,
             filter_mode: filter_mode,
+            mip_filter_mode: mip_filter_mode,
+            lod_min: lod_min,
+            lod_max: lod_max,
             props: props,
         })
     }
@@ -1677,7 +1734,29 @@ impl Sampler {
             bool,
         ),
     ) -> pipe_sampler_state {
-        let mut res = pipe_sampler_state::default();
+        Self::cl_with_lod_to_pipe(
+            addressing_mode,
+            filter_mode,
+            CL_FILTER_NEAREST,
+            0.0,
+            cl_float::MAX,
+            normalized_coords,
+        )
+    }
+
+    pub fn cl_with_lod_to_pipe(
+        addressing_mode: cl_addressing_mode,
+        filter_mode: cl_filter_mode,
+        mip_filter_mode: cl_filter_mode,
+        lod_min: cl_float,
+        lod_max: cl_float,
+        normalized_coords: bool,
+    ) -> pipe_sampler_state {
+        let mut res = pipe_sampler_state {
+            min_lod: lod_min,
+            max_lod: lod_max,
+            ..Default::default()
+        };
 
         let wrap = match addressing_mode {
             CL_ADDRESS_CLAMP_TO_EDGE => pipe_tex_wrap::PIPE_TEX_WRAP_CLAMP_TO_EDGE,
@@ -1694,8 +1773,15 @@ impl Sampler {
             _ => panic!("unknown filter_mode"),
         };
 
+        let mip_filter = match mip_filter_mode {
+            CL_FILTER_NEAREST => pipe_tex_mipfilter::PIPE_TEX_MIPFILTER_NEAREST,
+            CL_FILTER_LINEAR => pipe_tex_mipfilter::PIPE_TEX_MIPFILTER_LINEAR,
+            _ => panic!("unknown filter_mode"),
+        };
+
         res.set_min_img_filter(img_filter);
         res.set_mag_img_filter(img_filter);
+        res.set_min_mip_filter(mip_filter);
         res.set_unnormalized_coords((!normalized_coords).into());
         res.set_wrap_r(wrap);
         res.set_wrap_s(wrap);
@@ -1705,10 +1791,13 @@ impl Sampler {
     }
 
     pub fn pipe(&self) -> pipe_sampler_state {
-        Self::cl_to_pipe((
+        Self::cl_with_lod_to_pipe(
             self.addressing_mode,
             self.filter_mode,
+            self.mip_filter_mode,
+            self.lod_min,
+            self.lod_max,
             self.normalized_coords,
-        ))
+        )
     }
 }

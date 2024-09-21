@@ -182,6 +182,7 @@ impl PipeScreen {
         height: u16,
         depth: u16,
         array_size: u16,
+        mipmap_levels: u8,
         target: pipe_texture_target,
         format: pipe_format,
         res_type: ResourceType,
@@ -195,6 +196,7 @@ impl PipeScreen {
         tmpl.height0 = height;
         tmpl.depth0 = depth;
         tmpl.array_size = array_size;
+        tmpl.last_level = mipmap_levels;
         tmpl.bind = PIPE_BIND_SAMPLER_VIEW;
 
         if support_image {
@@ -212,6 +214,7 @@ impl PipeScreen {
         height: u16,
         depth: u16,
         array_size: u16,
+        mipmap_levels: u8,
         target: pipe_texture_target,
         format: pipe_format,
         mem: *mut c_void,
@@ -225,6 +228,7 @@ impl PipeScreen {
         tmpl.height0 = height;
         tmpl.depth0 = depth;
         tmpl.array_size = array_size;
+        tmpl.last_level = mipmap_levels;
         tmpl.bind = PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_LINEAR;
 
         if support_image {
@@ -245,6 +249,7 @@ impl PipeScreen {
         height: u16,
         depth: u16,
         array_size: u16,
+        support_image: bool,
     ) -> Option<PipeResource> {
         let mut tmpl = pipe_resource::default();
         let mut handle = winsys_handle {
@@ -262,6 +267,15 @@ impl PipeScreen {
         tmpl.height0 = height;
         tmpl.depth0 = depth;
         tmpl.array_size = array_size;
+
+        if target == pipe_texture_target::PIPE_BUFFER {
+            tmpl.bind = PIPE_BIND_GLOBAL
+        } else {
+            tmpl.bind = PIPE_BIND_SAMPLER_VIEW;
+            if support_image {
+                tmpl.bind |= PIPE_BIND_SHADER_IMAGE;
+            }
+        }
 
         unsafe {
             PipeResource::new(

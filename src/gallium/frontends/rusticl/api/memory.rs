@@ -213,6 +213,38 @@ fn validate_matching_buffer_flags(mem: &MemBase, flags: cl_mem_flags) -> CLResul
     Ok(())
 }
 
+/// extracts the mipmap level from an origin
+fn parse_origin(i: &Image, origin: *const usize) -> (CLVec<usize>, usize) {
+    // clients not creating images with mip_levels might not pass in an origin big enough.
+    if i.image_desc.num_mip_levels == 0 {
+        return (unsafe { CLVec::from_raw(origin) }, 0);
+    }
+
+    // The mipmap image level(s) to access for each command are determined from the origin parameter
+    // when accessing a single image (non-copy functions), or from the src_origin and dst_origin
+    // parameters when accessing two src_image and dst_image images (copy functions). The logic
+    // below applies to each of these parameters, with image and origin replaced by src_image and
+    // src_origin, or dst_image and dst_origin as appropriate:
+    //   - If image is a 1D image, origin[1] specifies the mip level to use.
+    //   - If image is a 1D image array, origin[2] specifies the mip level to use.
+    //   - If image is a 2D image, origin[2] specifies the mip level to use.
+    //   - If image is a 2D image array or a 3D image, origin[3] specifies the mip level to use.
+
+    let idx = match i.mem_type {
+        CL_MEM_OBJECT_IMAGE1D => 1,
+        CL_MEM_OBJECT_IMAGE1D_ARRAY | CL_MEM_OBJECT_IMAGE2D => 2,
+        CL_MEM_OBJECT_IMAGE2D_ARRAY | CL_MEM_OBJECT_IMAGE3D => 3,
+        _ => 0,
+    };
+
+    let mut origin = unsafe { slice::from_raw_parts(origin, cmp::max(idx + 1, 3)) }.to_vec();
+
+    // We reset the value to 0 to simplify validation and everything else.
+    let mipmap = mem::take(&mut origin[idx]);
+
+    (CLVec::new([origin[0], origin[1], origin[2]]), mipmap)
+}
+
 #[cl_info_entrypoint(clGetMemObjectInfo)]
 impl CLInfo<cl_mem_info> for cl_mem {
     fn query(&self, q: cl_mem_info, _: &[u8]) -> CLResult<Vec<MaybeUninit<u8>>> {
@@ -471,8 +503,14 @@ fn validate_image_desc(
         return Err(CL_INVALID_IMAGE_SIZE);
     }
 
-    // num_mip_levels and num_samples must be 0.
-    if desc.num_mip_levels != 0 || desc.num_samples != 0 {
+    // num_samples must be 0.
+    if desc.num_samples != 0 {
+        return Err(err);
+    }
+
+    // Not really required by spec, but specifying something higher will lead to OOB accesses inside
+    // drivers. num_mip_levels is 1 based, so we compare with greater than.
+    if desc.num_mip_levels > Device::image_max_mipmaps() {
         return Err(err);
     }
 
@@ -561,10 +599,26 @@ fn validate_image_desc(
     Ok((desc, parent))
 }
 
-fn validate_image_bounds(i: &Image, origin: CLVec<usize>, region: CLVec<usize>) -> CLResult<()> {
+fn validate_image_bounds(
+    i: &Image,
+    origin: CLVec<usize>,
+    region: CLVec<usize>,
+    mipmap: usize,
+) -> CLResult<()> {
     let dims = i.image_desc.dims_with_array();
     let bound = region + origin;
-    if bound > i.image_desc.size() {
+
+    // CL_INVALID_MIP_LEVEL if the cl_khr_mipmap_image extension is supported, and the mip level
+    // specified in origin is not a valid level for image,
+    //
+    // We need to + 1, because both 0 and 1 in num_mip_levels indicate an image with a single level
+    // (a.k.a having no mipmaps).
+    if mipmap > (i.image_desc.num_mip_levels + 1) as usize {
+        return Err(CL_INVALID_MIP_LEVEL);
+    }
+
+    let size = i.image_desc.size(mipmap);
+    if bound > size {
         return Err(CL_INVALID_VALUE);
     }
 
@@ -775,6 +829,27 @@ fn create_image_with_properties(
 
     flags = validate_buffer(&desc, flags, format, host_ptr, elem_size.into())?;
 
+    // The following restrictions apply when mipmapped images are created with clCreateImage:
+    if desc.num_mip_levels != 0 {
+        // CL_MEM_USE_HOST_PTR or CL_MEM_COPY_HOST_PTR cannot be specified if a mipmapped image is created.
+        if bit_check(flags, CL_MEM_USE_HOST_PTR | CL_MEM_COPY_HOST_PTR) {
+            return Err(CL_INVALID_VALUE);
+        }
+
+        // The host_ptr argument to clCreateImage must be a NULL value.
+        //
+        // This is already implied by host_ptr validation and the HOST_PTR flag restriction
+
+        // Mip-mapped images cannot be created for CL_MEM_OBJECT_IMAGE1D_BUFFER images, depth images
+        // or multi-sampled (i.e. msaa) images.
+        if desc.image_type == CL_MEM_OBJECT_IMAGE1D_BUFFER
+            || format.image_channel_order == CL_DEPTH
+            || desc.num_samples != 0
+        {
+            return Err(CL_INVALID_VALUE);
+        }
+    }
+
     // For all image types except CL_MEM_OBJECT_IMAGE1D_BUFFER, if the value specified for flags is 0, the
     // default is used which is CL_MEM_READ_WRITE.
     if flags == 0 && desc.image_type != CL_MEM_OBJECT_IMAGE1D_BUFFER {
@@ -952,6 +1027,9 @@ fn create_sampler_impl(
     normalized_coords: cl_bool,
     addressing_mode: cl_addressing_mode,
     filter_mode: cl_filter_mode,
+    mip_filter_mode: cl_filter_mode,
+    lod_min: cl_float,
+    lod_max: cl_float,
     props: Option<Properties<cl_sampler_properties>>,
 ) -> CLResult<cl_sampler> {
     let c = Context::arc_from_raw(context)?;
@@ -973,6 +1051,9 @@ fn create_sampler_impl(
         check_cl_bool(normalized_coords).ok_or(CL_INVALID_VALUE)?,
         addressing_mode,
         filter_mode,
+        mip_filter_mode,
+        lod_min,
+        lod_max,
         props,
     );
     Ok(sampler.into_cl())
@@ -990,6 +1071,9 @@ fn create_sampler(
         normalized_coords,
         addressing_mode,
         filter_mode,
+        CL_FILTER_NEAREST,
+        0.0,
+        cl_float::MAX,
         None,
     )
 }
@@ -1002,6 +1086,9 @@ fn create_sampler_with_properties(
     let mut normalized_coords = CL_TRUE;
     let mut addressing_mode = CL_ADDRESS_CLAMP;
     let mut filter_mode = CL_FILTER_NEAREST;
+    let mut mip_filter_mode = CL_FILTER_NEAREST;
+    let mut lod_min = 0.0;
+    let mut lod_max = cl_float::MAX;
 
     // CL_INVALID_VALUE if the same property name is specified more than once.
     let sampler_properties = if sampler_properties.is_null() {
@@ -1011,9 +1098,15 @@ fn create_sampler_with_properties(
             Properties::from_ptr(sampler_properties).ok_or(CL_INVALID_VALUE)?;
         for p in &sampler_properties.props {
             match p.0 as u32 {
-                CL_SAMPLER_ADDRESSING_MODE => addressing_mode = p.1 as u32,
-                CL_SAMPLER_FILTER_MODE => filter_mode = p.1 as u32,
-                CL_SAMPLER_NORMALIZED_COORDS => normalized_coords = p.1 as u32,
+                CL_SAMPLER_ADDRESSING_MODE => addressing_mode = p.1 as cl_addressing_mode,
+                CL_SAMPLER_FILTER_MODE => filter_mode = p.1 as cl_filter_mode,
+                CL_SAMPLER_NORMALIZED_COORDS => normalized_coords = p.1 as cl_bool,
+
+                // cl_khr_mipmap_image
+                CL_SAMPLER_MIP_FILTER_MODE => mip_filter_mode = p.1 as cl_filter_mode,
+                CL_SAMPLER_LOD_MIN => lod_min = cl_float::from_bits(p.1 as u32),
+                CL_SAMPLER_LOD_MAX => lod_max = cl_float::from_bits(p.1 as u32),
+
                 // CL_INVALID_VALUE if the property name in sampler_properties is not a supported
                 // property name
                 _ => return Err(CL_INVALID_VALUE),
@@ -1027,6 +1120,9 @@ fn create_sampler_with_properties(
         normalized_coords,
         addressing_mode,
         filter_mode,
+        mip_filter_mode,
+        lod_min,
+        lod_max,
         sampler_properties,
     )
 }
@@ -1726,13 +1822,13 @@ fn enqueue_read_image(
     }
 
     let r = unsafe { CLVec::from_raw(region) };
-    let o = unsafe { CLVec::from_raw(origin) };
+    let (o, mipmap) = parse_origin(&i, origin);
 
     // CL_INVALID_VALUE if the region being read or written specified by origin and region is out of
     // bounds.
     // CL_INVALID_VALUE if values in origin and region do not follow rules described in the argument
     // description for origin and region.
-    validate_image_bounds(&i, o, r)?;
+    validate_image_bounds(&i, o, r, mipmap)?;
 
     // If row_pitch (or input_row_pitch) is set to 0, the appropriate row pitch is calculated based
     // on the size of each element in bytes multiplied by width.
@@ -1754,7 +1850,7 @@ fn enqueue_read_image(
         evs,
         event,
         block,
-        Box::new(move |q, ctx| i.read(ptr, q, ctx, &r, &o, row_pitch, slice_pitch)),
+        Box::new(move |q, ctx| i.read(ptr, q, ctx, &r, &o, mipmap, row_pitch, slice_pitch)),
     )
 
     //• CL_INVALID_IMAGE_SIZE if image dimensions (image width, height, specified or compute row and/or slice pitch) for image are not supported by device associated with queue.
@@ -1805,13 +1901,13 @@ fn enqueue_write_image(
     }
 
     let r = unsafe { CLVec::from_raw(region) };
-    let o = unsafe { CLVec::from_raw(origin) };
+    let (o, mipmap) = parse_origin(&i, origin);
 
     // CL_INVALID_VALUE if the region being read or written specified by origin and region is out of
     // bounds.
     // CL_INVALID_VALUE if values in origin and region do not follow rules described in the argument
     // description for origin and region.
-    validate_image_bounds(&i, o, r)?;
+    validate_image_bounds(&i, o, r, mipmap)?;
 
     // If row_pitch (or input_row_pitch) is set to 0, the appropriate row pitch is calculated based
     // on the size of each element in bytes multiplied by width.
@@ -1833,7 +1929,7 @@ fn enqueue_write_image(
         evs,
         event,
         block,
-        Box::new(move |q, ctx| i.write(ptr, q, ctx, &r, row_pitch, slice_pitch, &o)),
+        Box::new(move |q, ctx| i.write(ptr, q, ctx, &r, mipmap, row_pitch, slice_pitch, &o)),
     )
 
     //• CL_INVALID_IMAGE_SIZE if image dimensions (image width, height, specified or compute row and/or slice pitch) for image are not supported by device associated with queue.
@@ -1874,16 +1970,16 @@ fn enqueue_copy_image(
     }
 
     let region = unsafe { CLVec::from_raw(region) };
-    let dst_origin = unsafe { CLVec::from_raw(dst_origin) };
-    let src_origin = unsafe { CLVec::from_raw(src_origin) };
+    let (dst_origin, dst_mipmap) = parse_origin(&dst_image, dst_origin);
+    let (src_origin, src_mipmap) = parse_origin(&src_image, src_origin);
 
     // CL_INVALID_VALUE if the 2D or 3D rectangular region specified by src_origin and
     // src_origin + region refers to a region outside src_image, or if the 2D or 3D rectangular
     // region specified by dst_origin and dst_origin + region refers to a region outside dst_image.
     // CL_INVALID_VALUE if values in src_origin, dst_origin and region do not follow rules described
     // in the argument description for src_origin, dst_origin and region.
-    validate_image_bounds(&src_image, src_origin, region)?;
-    validate_image_bounds(&dst_image, dst_origin, region)?;
+    validate_image_bounds(&src_image, src_origin, region, src_mipmap)?;
+    validate_image_bounds(&dst_image, dst_origin, region, dst_mipmap)?;
 
     create_and_queue(
         q,
@@ -1892,7 +1988,9 @@ fn enqueue_copy_image(
         event,
         false,
         Box::new(move |q, ctx| {
-            src_image.copy_to_image(q, ctx, &dst_image, src_origin, dst_origin, &region)
+            src_image.copy_to_image(
+                q, ctx, &dst_image, src_origin, src_mipmap, dst_origin, dst_mipmap, &region,
+            )
         }),
     )
 
@@ -1929,13 +2027,13 @@ fn enqueue_fill_image(
     }
 
     let region = unsafe { CLVec::from_raw(region.cast()) };
-    let origin = unsafe { CLVec::from_raw(origin.cast()) };
+    let (origin, mipmap) = parse_origin(&i, origin.cast());
 
     // CL_INVALID_VALUE if the region being filled as specified by origin and region is out of
     // bounds.
     // CL_INVALID_VALUE if values in origin and region do not follow rules described in the argument
     // description for origin and region.
-    validate_image_bounds(&i, origin, region)?;
+    validate_image_bounds(&i, origin, region, mipmap)?;
 
     // we have to copy memory and it's always a 4 component int value
     // TODO but not for CL_DEPTH
@@ -1946,7 +2044,7 @@ fn enqueue_fill_image(
         evs,
         event,
         false,
-        Box::new(move |q, ctx| i.fill(q, ctx, &fill_color, &origin, &region)),
+        Box::new(move |q, ctx| i.fill(q, ctx, &fill_color, &origin, &region, mipmap)),
     )
 
     //• CL_INVALID_IMAGE_SIZE if image dimensions (image width, height, specified or compute row and/or slice pitch) for image are not supported by device associated with queue.
@@ -1983,13 +2081,13 @@ fn enqueue_copy_buffer_to_image(
     }
 
     let region = unsafe { CLVec::from_raw(region) };
-    let dst_origin = unsafe { CLVec::from_raw(dst_origin) };
+    let (dst_origin, dst_mipmap) = parse_origin(&dst, dst_origin);
 
     // CL_INVALID_VALUE if values in dst_origin and region do not follow rules described in the
     // argument description for dst_origin and region.
     // CL_INVALID_VALUE if the 1D, 2D or 3D rectangular region specified by dst_origin and
     // dst_origin + region refer to a region outside dst_image,
-    validate_image_bounds(&dst, dst_origin, region)?;
+    validate_image_bounds(&dst, dst_origin, region, dst_mipmap)?;
 
     create_and_queue(
         q,
@@ -1997,7 +2095,9 @@ fn enqueue_copy_buffer_to_image(
         evs,
         event,
         false,
-        Box::new(move |q, ctx| src.copy_to_image(q, ctx, &dst, src_offset, dst_origin, &region)),
+        Box::new(move |q, ctx| {
+            src.copy_to_image(q, ctx, &dst, src_offset, dst_origin, dst_mipmap, &region)
+        }),
     )
 
     //• CL_INVALID_MEM_OBJECT if src_buffer is not a valid buffer object or dst_image is not a valid image object or if dst_image is a 1D image buffer object created from src_buffer.
@@ -2038,14 +2138,14 @@ fn enqueue_copy_image_to_buffer(
     }
 
     let region = unsafe { CLVec::from_raw(region) };
-    let src_origin = unsafe { CLVec::from_raw(src_origin) };
+    let (src_origin, src_mipmap) = parse_origin(&src, src_origin);
 
     // CL_INVALID_VALUE if values in src_origin and region do not follow rules described in the
     // argument description for src_origin and region.
     // CL_INVALID_VALUE if the 1D, 2D or 3D rectangular region specified by src_origin and
     // src_origin + region refers to a region outside src_image, or if the region specified by
     // dst_offset and dst_offset + dst_cb to a region outside dst_buffer.
-    validate_image_bounds(&src, src_origin, region)?;
+    validate_image_bounds(&src, src_origin, region, src_mipmap)?;
 
     create_and_queue(
         q,
@@ -2053,7 +2153,9 @@ fn enqueue_copy_image_to_buffer(
         evs,
         event,
         false,
-        Box::new(move |q, ctx| src.copy_to_buffer(q, ctx, &dst, src_origin, dst_offset, &region)),
+        Box::new(move |q, ctx| {
+            src.copy_to_buffer(q, ctx, &dst, src_origin, src_mipmap, dst_offset, &region)
+        }),
     )
 
     //• CL_INVALID_MEM_OBJECT if src_image is not a valid image object or dst_buffer is not a valid buffer object or if src_image is a 1D image buffer object created from dst_buffer.
@@ -2099,12 +2201,12 @@ fn enqueue_map_image(
     }
 
     let region = unsafe { CLVec::from_raw(region) };
-    let origin = unsafe { CLVec::from_raw(origin) };
+    let (origin, mipmap) = parse_origin(&i, origin);
 
     // CL_INVALID_VALUE if region being mapped given by (origin, origin + region) is out of bounds
     // CL_INVALID_VALUE if values in origin and region do not follow rules described in the argument
     // description for origin and region.
-    validate_image_bounds(&i, origin, region)?;
+    validate_image_bounds(&i, origin, region, mipmap)?;
 
     let mut dummy_slice_pitch: usize = 0;
     let image_slice_pitch = if image_slice_pitch.is_null() {
@@ -2121,6 +2223,7 @@ fn enqueue_map_image(
     let ptr = i.map(
         origin,
         region,
+        mipmap,
         unsafe { image_row_pitch.as_mut().unwrap() },
         image_slice_pitch,
         map_flags != CL_MAP_READ.into(),
@@ -2967,14 +3070,11 @@ fn create_pipe(
 impl CLInfo<cl_gl_texture_info> for cl_mem {
     fn query(&self, q: cl_gl_texture_info, _: &[u8]) -> CLResult<Vec<MaybeUninit<u8>>> {
         let mem = MemBase::ref_from_raw(*self)?;
+        let gl_obj = mem.gl_obj.as_ref().ok_or(CL_INVALID_GL_OBJECT)?;
+
         Ok(match *q {
-            CL_GL_MIPMAP_LEVEL => cl_prop::<cl_GLint>(0),
-            CL_GL_TEXTURE_TARGET => cl_prop::<cl_GLenum>(
-                mem.gl_obj
-                    .as_ref()
-                    .ok_or(CL_INVALID_GL_OBJECT)?
-                    .gl_object_target,
-            ),
+            CL_GL_MIPMAP_LEVEL => cl_prop::<cl_GLint>(gl_obj.gl_miplevel),
+            CL_GL_TEXTURE_TARGET => cl_prop::<cl_GLenum>(gl_obj.gl_object_target),
             _ => return Err(CL_INVALID_VALUE),
         })
     }
@@ -2999,9 +3099,17 @@ fn create_from_gl(
     // texture_target is not one of the values specified in the description of texture_target.
     validate_mem_flags(flags, target == GL_ARRAY_BUFFER)?;
 
-    // CL_INVALID_MIP_LEVEL if miplevel is greather than zero and the OpenGL
-    // implementation does not support creating from non-zero mipmap levels.
-    if miplevel > 0 {
+    // If texture_target is GL_TEXTURE_BUFFER, miplevel must be 0
+    if target == GL_TEXTURE_BUFFER && miplevel != 0 {
+        return Err(CL_INVALID_MIP_LEVEL);
+    }
+
+    // TODO: If both the cl_khr_mipmap_image and cl_khr_gl_sharing extensions are supported by the
+    // OpenCL device, clCreateFromGLTexture may also be used to create a mipmapped OpenCL image from
+    // a mipmapped OpenGL texture by specify a negative value for miplevel. In this case, then an
+    // OpenCL mipmapped image object is created from a mipmapped OpenGL texture object, instead of
+    // an OpenCL image object for a specific miplevel of the OpenGL texture.
+    if miplevel < 0 {
         return Err(CL_INVALID_MIP_LEVEL);
     }
 

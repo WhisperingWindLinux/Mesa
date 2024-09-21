@@ -168,6 +168,20 @@ a618_piglit_full:
     HWCI_START_WESTON: 1
     JOB_TIMEOUT: 60
 
+a618_piglit_cl:
+  extends:
+    - .lava-test-deqp:arm64
+    - .lava-sc7180-trogdor-lazor-limozeen:arm64
+    - .collabora-freedreno-rules
+  rules:
+    - !reference [.collabora-freedreno-rules, rules]
+    - !reference [.rusticl-rules, rules]
+  variables:
+    DEQP_SUITE: freedreno-a618-piglit-cl
+    FLAKES_CHANNEL: "#freedreno-ci"
+    HWCI_START_WESTON: 1
+    PIGLIT_PROFILES: cl
+
 a618-traces:
   extends:
     - .lava-piglit-traces:arm64
@@ -298,6 +312,19 @@ a630_piglit:
   variables:
     HWCI_START_WESTON: 1
     DEQP_SUITE: freedreno-a630-piglit
+
+.a630_piglit_cl:
+  extends:
+    - .baremetal-deqp-test
+    - .a630-test
+    - .google-freedreno-manual-rules
+  rules:
+    - !reference [.google-freedreno-manual-rules, rules]
+    - !reference [.rusticl-manual-rules, rules]
+  variables:
+    DEQP_SUITE: freedreno-a630-piglit-cl
+    HWCI_START_WESTON: 1
+    PIGLIT_PROFILES: cl
 
 a630_piglit_full:
   extends:

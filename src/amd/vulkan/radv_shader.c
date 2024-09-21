@@ -2290,6 +2290,39 @@ radv_shader_combine_cfg_tes_gs(const struct radv_shader *tes, const struct radv_
    }
 }
 
+struct radv_shader_binary_data {
+   void *stats;
+   void *code;
+   void *ir;
+   void *disasm;
+   void *debug_info;
+};
+
+static struct radv_shader_binary_data
+radv_shader_binary_get_data(struct radv_shader_binary_legacy *binary)
+{
+   struct radv_shader_binary_data data = {0};
+
+   uint32_t offset = 0;
+
+   data.stats = binary->data + offset;
+   offset += binary->stats_size;
+
+   data.code = binary->data + offset;
+   offset += binary->code_size;
+
+   data.ir = binary->data + offset;
+   offset += binary->ir_size;
+
+   data.disasm = binary->data + offset;
+   offset += binary->disasm_size;
+
+   data.debug_info = binary->data + offset;
+   offset += binary->debug_info_size;
+
+   return data;
+}
+
 static bool
 radv_shader_binary_upload(struct radv_device *device, const struct radv_shader_binary *binary,
                           struct radv_shader *shader, void *dest_ptr)
@@ -2334,10 +2367,12 @@ radv_shader_binary_upload(struct radv_device *device, const struct radv_shader_b
 #endif
    } else {
       struct radv_shader_binary_legacy *bin = (struct radv_shader_binary_legacy *)binary;
-      memcpy(dest_ptr, bin->data + bin->stats_size, bin->code_size);
+      struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
+
+      memcpy(dest_ptr, data.code, bin->code_size);
 
       if (shader->code) {
-         memcpy(shader->code, bin->data + bin->stats_size, bin->code_size);
+         memcpy(shader->code, data.code, bin->code_size);
       }
    }
 
@@ -2609,7 +2644,8 @@ radv_shader_create_uncached(struct radv_device *device, const struct radv_shader
 
       if (bin->stats_size) {
          shader->statistics = calloc(bin->stats_size, 1);
-         memcpy(shader->statistics, bin->data, bin->stats_size);
+         struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
+         memcpy(shader->statistics, data.stats, bin->stats_size);
       }
    }
 
@@ -2802,38 +2838,74 @@ radv_shader_part_cache_get(struct radv_device *device, struct radv_shader_part_c
    return shader_part;
 }
 
-static char *
-radv_dump_nir_shaders(struct nir_shader *const *shaders, int shader_count)
+char *
+radv_dump_nir_shaders(const struct radv_instance *instance, struct nir_shader *const *shaders, int shader_count)
 {
-   char *data = NULL;
-   char *ret = NULL;
-   size_t size = 0;
-   struct u_memstream mem;
-   if (u_memstream_open(&mem, &data, &size)) {
-      FILE *const memf = u_memstream_get(&mem);
-      for (int i = 0; i < shader_count; ++i)
-         nir_print_shader(shaders[i], memf);
-      u_memstream_close(&mem);
-   }
+   if (instance->debug_flags & RADV_DEBUG_NIR_DEBUG_INFO) {
+      char **strings = malloc(shader_count * sizeof(char *));
+      uint32_t total_size = 1;
+      uint32_t first_line = 1;
 
-   ret = malloc(size + 1);
-   if (ret) {
-      memcpy(ret, data, size);
-      ret[size] = 0;
+      for (uint32_t i = 0; i < shader_count; i++) {
+         char *string = nir_shader_gather_debug_info(shaders[i], "", first_line);
+         strings[i] = string;
+
+         uint32_t length = strlen(string);
+         total_size += length;
+
+         for (uint32_t c = 0; c < length; c++) {
+            if (string[c] == '\n')
+               first_line++;
+         }
+      }
+
+      char *ret = calloc(total_size, sizeof(char));
+      if (ret) {
+         for (uint32_t i = 0; i < shader_count; i++)
+            strcat(ret, strings[i]);
+      }
+
+      for (uint32_t i = 0; i < shader_count; i++)
+         ralloc_free(strings[i]);
+      free(strings);
+
+      return ret;
+   } else {
+      char *data = NULL;
+      char *ret = NULL;
+      size_t size = 0;
+      struct u_memstream mem;
+      if (u_memstream_open(&mem, &data, &size)) {
+         FILE *const memf = u_memstream_get(&mem);
+         for (int i = 0; i < shader_count; ++i)
+            nir_print_shader(shaders[i], memf);
+         u_memstream_close(&mem);
+      }
+
+      ret = malloc(size + 1);
+      if (ret) {
+         memcpy(ret, data, size);
+         ret[size] = 0;
+      }
+      free(data);
+      return ret;
    }
-   free(data);
-   return ret;
 }
 
 static void
 radv_aco_build_shader_binary(void **bin, const struct ac_shader_config *config, const char *llvm_ir_str,
                              unsigned llvm_ir_size, const char *disasm_str, unsigned disasm_size, uint32_t *statistics,
                              uint32_t stats_size, uint32_t exec_size, const uint32_t *code, uint32_t code_dw,
-                             const struct aco_symbol *symbols, unsigned num_symbols)
+                             const struct aco_symbol *symbols, unsigned num_symbols,
+                             const struct aco_debug_info *debug_info, unsigned debug_info_count)
 {
    struct radv_shader_binary **binary = (struct radv_shader_binary **)bin;
+
+   uint32_t debug_info_size = debug_info_count * sizeof(struct aco_debug_info);
+
    size_t size = llvm_ir_size;
 
+   size += debug_info_size;
    size += disasm_size;
    size += stats_size;
 
@@ -2847,28 +2919,29 @@ radv_aco_build_shader_binary(void **bin, const struct ac_shader_config *config, 
    legacy_binary->base.type = RADV_BINARY_TYPE_LEGACY;
    legacy_binary->base.total_size = size;
    legacy_binary->base.config = *config;
-
-   if (stats_size)
-      memcpy(legacy_binary->data, statistics, stats_size);
    legacy_binary->stats_size = stats_size;
-
-   memcpy(legacy_binary->data + legacy_binary->stats_size, code, code_dw * sizeof(uint32_t));
    legacy_binary->exec_size = exec_size;
    legacy_binary->code_size = code_dw * sizeof(uint32_t);
-
-   legacy_binary->disasm_size = 0;
    legacy_binary->ir_size = llvm_ir_size;
-
-   if (llvm_ir_size) {
-      memcpy((char *)legacy_binary->data + legacy_binary->stats_size + legacy_binary->code_size, llvm_ir_str,
-             llvm_ir_size);
-   }
-
    legacy_binary->disasm_size = disasm_size;
-   if (disasm_size) {
-      memcpy((char *)legacy_binary->data + legacy_binary->stats_size + legacy_binary->code_size + llvm_ir_size,
-             disasm_str, disasm_size);
-   }
+   legacy_binary->debug_info_size = debug_info_size;
+
+   struct radv_shader_binary_data data = radv_shader_binary_get_data(legacy_binary);
+
+   if (stats_size)
+      memcpy(data.stats, statistics, stats_size);
+
+   memcpy(data.code, code, code_dw * sizeof(uint32_t));
+
+   if (llvm_ir_size)
+      memcpy(data.ir, llvm_ir_str, llvm_ir_size);
+
+   if (disasm_size)
+      memcpy(data.disasm, disasm_str, disasm_size);
+
+   if (debug_info_size)
+      memcpy(data.debug_info, debug_info, debug_info_size);
+
    *binary = (struct radv_shader_binary *)legacy_binary;
 }
 
@@ -2913,8 +2986,6 @@ radv_capture_shader_executable_info(struct radv_device *device, struct radv_shad
                                     struct nir_shader *const *shaders, int shader_count,
                                     const struct radv_shader_binary *binary)
 {
-   shader->nir_string = radv_dump_nir_shaders(shaders, shader_count);
-
    if (binary->type == RADV_BINARY_TYPE_RTLD) {
 #if !defined(USE_LIBELF)
       return;
@@ -2941,10 +3012,14 @@ radv_capture_shader_executable_info(struct radv_device *device, struct radv_shad
 #endif
    } else {
       struct radv_shader_binary_legacy *bin = (struct radv_shader_binary_legacy *)binary;
+      struct radv_shader_binary_data data = radv_shader_binary_get_data(bin);
 
-      shader->ir_string = bin->ir_size ? strdup((const char *)(bin->data + bin->stats_size + bin->code_size)) : NULL;
-      shader->disasm_string =
-         bin->disasm_size ? strdup((const char *)(bin->data + bin->stats_size + bin->code_size + bin->ir_size)) : NULL;
+      shader->ir_string = bin->ir_size ? strdup(data.ir) : NULL;
+      shader->disasm_string = bin->disasm_size ? strdup(data.disasm) : NULL;
+
+      shader->debug_info = malloc(bin->debug_info_size);
+      memcpy(shader->debug_info, data.debug_info, bin->debug_info_size);
+      shader->debug_info_count = bin->debug_info_size / sizeof(struct aco_debug_info);
    }
 }
 

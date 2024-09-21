@@ -344,7 +344,7 @@ struct radv_shader_binary_legacy {
    uint32_t ir_size;
    uint32_t disasm_size;
    uint32_t stats_size;
-   uint32_t padding;
+   uint32_t debug_info_size;
 
    /* data has size of stats_size + code_size + ir_size + disasm_size + 2,
     * where the +2 is for 0 of the ir strings. */
@@ -444,6 +444,8 @@ struct radv_shader {
    char *disasm_string;
    char *ir_string;
    uint32_t *statistics;
+   struct aco_debug_info *debug_info;
+   uint32_t debug_info_count;
 };
 
 struct radv_shader_part {
@@ -537,6 +539,9 @@ void radv_shader_generate_debug_info(struct radv_device *device, bool dump_shade
                                      struct radv_shader_binary *binary, struct radv_shader *shader,
                                      struct nir_shader *const *shaders, int shader_count,
                                      struct radv_shader_info *info);
+
+struct radv_instance;
+char *radv_dump_nir_shaders(const struct radv_instance *instance, struct nir_shader *const *shaders, int shader_count);
 
 VkResult radv_shader_wait_for_upload(struct radv_device *device, uint64_t seq);
 

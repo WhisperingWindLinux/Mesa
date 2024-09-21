@@ -34,7 +34,8 @@ typedef void(aco_callback)(void** priv_ptr, const struct ac_shader_config* confi
                            const char* llvm_ir_str, unsigned llvm_ir_size, const char* disasm_str,
                            unsigned disasm_size, uint32_t* statistics, uint32_t stats_size,
                            uint32_t exec_size, const uint32_t* code, uint32_t code_dw,
-                           const struct aco_symbol* symbols, unsigned num_symbols);
+                           const struct aco_symbol* symbols, unsigned num_symbols,
+                           const struct aco_debug_info* debug_info, unsigned debug_info_count);
 
 typedef void(aco_shader_part_callback)(void** priv_ptr, uint32_t num_sgprs, uint32_t num_vgprs,
                                        const uint32_t* code, uint32_t code_size,
@@ -76,8 +77,8 @@ bool aco_is_gpu_supported(const struct radeon_info* info);
 
 bool aco_nir_op_supports_packed_math_16bit(const nir_alu_instr* alu);
 
-void aco_print_asm(const struct radeon_info *info, unsigned wave_size,
-                   uint32_t *binary, unsigned num_dw);
+void aco_print_asm(const struct radeon_info* info, unsigned wave_size, uint32_t* binary,
+                   unsigned num_dw);
 
 #ifdef __cplusplus
 }

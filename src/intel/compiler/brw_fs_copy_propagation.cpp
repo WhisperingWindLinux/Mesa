@@ -649,6 +649,7 @@ instruction_requires_packed_data(fs_inst *inst)
    case FS_OPCODE_DDY_FINE:
    case FS_OPCODE_DDY_COARSE:
    case SHADER_OPCODE_QUAD_SWIZZLE:
+   case SHADER_OPCODE_QUAD_SWAP:
       return true;
    default:
       return false;
@@ -1217,6 +1218,7 @@ try_constant_propagate_value(brw_reg val, brw_reg_type dst_type,
    case BRW_OPCODE_LRP:
    case FS_OPCODE_PACK_HALF_2x16_SPLIT:
    case SHADER_OPCODE_SHUFFLE:
+   case SHADER_OPCODE_BALLOT:
       inst->src[arg] = val;
       progress = true;
       break;

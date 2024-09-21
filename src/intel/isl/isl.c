@@ -3206,7 +3206,8 @@ isl_surf_supports_ccs(const struct isl_device *dev,
           * The drm_fourcc.h header doesn't require the aligned address for
           * compressed dmabufs, but it does require the aligned pitch.
           */
-         if (isl_surf_usage_is_display(surf->usage)) {
+         if (dev->info->ver == 12 &&
+             isl_surf_usage_is_display(surf->usage)) {
             assert(surf->tiling == ISL_TILING_4 ||
                    surf->tiling == ISL_TILING_Y0);
             if (surf->row_pitch_B % 512 != 0)

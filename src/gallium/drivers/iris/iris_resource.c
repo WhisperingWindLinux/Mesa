@@ -69,6 +69,8 @@ enum modifier_priority {
    MODIFIER_PRIORITY_4_DG2_RC_CCS_CC,
    MODIFIER_PRIORITY_4_MTL_RC_CCS,
    MODIFIER_PRIORITY_4_MTL_RC_CCS_CC,
+   MODIFIER_PRIORITY_4_LNL_CCS,
+   MODIFIER_PRIORITY_4_BMG_CCS,
 };
 
 static const uint64_t priority_to_modifier[] = {
@@ -84,6 +86,8 @@ static const uint64_t priority_to_modifier[] = {
    [MODIFIER_PRIORITY_4_DG2_RC_CCS_CC] = I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC,
    [MODIFIER_PRIORITY_4_MTL_RC_CCS] = I915_FORMAT_MOD_4_TILED_MTL_RC_CCS,
    [MODIFIER_PRIORITY_4_MTL_RC_CCS_CC] = I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC,
+   [MODIFIER_PRIORITY_4_LNL_CCS] = I915_FORMAT_MOD_4_TILED_LNL_CCS,
+   [MODIFIER_PRIORITY_4_BMG_CCS] = I915_FORMAT_MOD_4_TILED_BMG_CCS,
 };
 
 static bool
@@ -128,6 +132,14 @@ modifier_is_supported(const struct intel_device_info *devinfo,
       if (!intel_device_info_is_mtl_or_arl(devinfo))
          return false;
       break;
+   case I915_FORMAT_MOD_4_TILED_LNL_CCS:
+      if (devinfo->platform !=  INTEL_PLATFORM_LNL)
+         return false;
+      break;
+   case I915_FORMAT_MOD_4_TILED_BMG_CCS:
+      if (devinfo->platform !=  INTEL_PLATFORM_BMG)
+         return false;
+      break;
    case DRM_FORMAT_MOD_INVALID:
    default:
       return false;
@@ -156,6 +168,8 @@ modifier_is_supported(const struct intel_device_info *devinfo,
          return false;
       }
       break;
+   case I915_FORMAT_MOD_4_TILED_LNL_CCS:
+   case I915_FORMAT_MOD_4_TILED_BMG_CCS:
    case I915_FORMAT_MOD_4_TILED_MTL_RC_CCS:
    case I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC:
    case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
@@ -166,6 +180,7 @@ modifier_is_supported(const struct intel_device_info *devinfo,
       if (no_ccs)
          return false;
 
+      /* TODO: Do we still face these restrictions on Xe2+? */
       enum isl_format rt_format =
          iris_format_for_usage(devinfo, pfmt,
                                ISL_SURF_USAGE_RENDER_TARGET_BIT).fmt;
@@ -196,6 +211,12 @@ select_best_modifier(const struct intel_device_info *devinfo,
          continue;
 
       switch (modifiers[i]) {
+      case I915_FORMAT_MOD_4_TILED_BMG_CCS:
+         prio = MAX2(prio, MODIFIER_PRIORITY_4_BMG_CCS);
+         break;
+      case I915_FORMAT_MOD_4_TILED_LNL_CCS:
+         prio = MAX2(prio, MODIFIER_PRIORITY_4_LNL_CCS);
+         break;
       case I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC:
          prio = MAX2(prio, MODIFIER_PRIORITY_4_MTL_RC_CCS_CC);
          break;
@@ -272,6 +293,8 @@ iris_query_dmabuf_modifiers(struct pipe_screen *pscreen,
       I915_FORMAT_MOD_4_TILED_MTL_RC_CCS,
       I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC,
       I915_FORMAT_MOD_4_TILED_MTL_MC_CCS,
+      I915_FORMAT_MOD_4_TILED_LNL_CCS,
+      I915_FORMAT_MOD_4_TILED_BMG_CCS,
       I915_FORMAT_MOD_Y_TILED,
       I915_FORMAT_MOD_Y_TILED_CCS,
       I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS,
@@ -336,6 +359,8 @@ iris_get_dmabuf_modifier_planes(struct pipe_screen *pscreen, uint64_t modifier,
    case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS:
    case I915_FORMAT_MOD_Y_TILED_CCS:
       return 2 * planes;
+   case I915_FORMAT_MOD_4_TILED_LNL_CCS:
+   case I915_FORMAT_MOD_4_TILED_BMG_CCS:
    case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
    case I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
    default:
@@ -1045,11 +1070,8 @@ iris_resource_image_is_pat_compressible(const struct iris_screen *screen,
    if ((iris_bufmgr_vram_size(bufmgr) > 0) && (flags & BO_ALLOC_SMEM))
       return false;
 
-   /* We don't have modifiers with compression enabled on Xe2 so far. */
-   if (res->mod_info) {
-      assert(!isl_drm_modifier_has_aux(res->mod_info->modifier));
+   if (res->mod_info && !isl_drm_modifier_has_aux(res->mod_info->modifier))
       return false;
-   }
 
    /* Bspec 58797 (r58646):
     *
@@ -1085,7 +1107,8 @@ iris_resource_create_for_image(struct pipe_screen *pscreen,
                                const struct pipe_resource *templ,
                                const uint64_t *modifiers,
                                int modifiers_count,
-                               unsigned row_pitch_B)
+                               unsigned row_pitch_B,
+                               bool no_compression)
 {
    struct iris_screen *screen = (struct iris_screen *)pscreen;
    const struct intel_device_info *devinfo = screen->devinfo;
@@ -1127,7 +1150,22 @@ iris_resource_create_for_image(struct pipe_screen *pscreen,
 
    unsigned flags = iris_resource_alloc_flags(screen, templ, res);
 
-   if (iris_resource_image_is_pat_compressible(screen, templ, res, flags))
+   /* The no_compression flag is not for general compression control but a
+    * special purpose. We need to create a new uncompressed image from a
+    * compressed image to achieve a resolve on Xe2+ platforms. This flag is
+    * used in iris_reallocate_resource_inplace() to disable the compression on
+    * the destination image.
+    */
+   if (no_compression) {
+      /* This flag can only be true on images being created without a Xe2
+       * modifier that supports compression. Xe2 CCS modifiers are always
+       * with compression enabled. Otherwise, they shouldn't be present at
+       * all from isl.
+       */
+      assert(devinfo->ver >= 20);
+      assert(!res->mod_info ||
+             !isl_drm_modifier_has_aux(res->mod_info->modifier));
+   } else if (iris_resource_image_is_pat_compressible(screen, templ, res, flags))
       flags |= BO_ALLOC_COMPRESSED;
 
    /* These are for u_upload_mgr buffers only */
@@ -1160,6 +1198,25 @@ iris_resource_create_for_image(struct pipe_screen *pscreen,
       res->aux.clear_color_offset = align64(bo_size, 64);
       bo_size = res->aux.clear_color_offset +
                 iris_get_aux_clear_color_state_size(screen, res);
+   }
+
+   /* The I915_FORMAT_MOD_4_TILED_BMG_CCS modifier defined in drm_fourcc.h
+    * has a requirement on size:
+    *
+    *    The GEM object must be stored in contiguous memory with a size
+    *    aligned to 64KB.
+    *
+    * Xe kernel driver will provide continuous allocation on scanout buffers
+    * with CCS AND when the bo's size is a multiple of 64KB, so we need to
+    * set the scanout flag and adjust the size to make it happen.
+    *
+    * The kernel display driver only enables decompression on CCS modifiers,
+    * so we can limit the requirement to MOD_4_TILED_BMG_CCS.
+    */
+   if (res->mod_info &&
+       res->mod_info->modifier == I915_FORMAT_MOD_4_TILED_BMG_CCS) {
+      flags |= BO_ALLOC_SCANOUT;
+      bo_size = align64(bo_size, 64 * 1024);
    }
 
    /* The ISL alignment already includes AUX-TT requirements, so no additional
@@ -1195,7 +1252,7 @@ iris_resource_create_with_modifiers(struct pipe_screen *pscreen,
                                     int modifier_count)
 {
    return iris_resource_create_for_image(pscreen, templ, modifiers,
-                                         modifier_count, 0);
+                                         modifier_count, 0, false);
 }
 
 static struct pipe_resource *
@@ -1557,7 +1614,9 @@ iris_reallocate_resource_inplace(struct iris_context *ice,
    struct pipe_resource templ = old_res->base.b;
    templ.bind |= new_bind_flag;
 
-   struct iris_resource *new_res =
+   struct iris_screen *screen = (struct iris_screen *)pscreen;
+   struct iris_resource *new_res = screen->devinfo->ver >= 20 ?
+      iris_resource_create_for_image(pscreen, &templ, 0, 0, 0, true) :
       (void *) pscreen->resource_create(pscreen, &templ);
 
    assert(iris_bo_is_real(new_res->bo));
@@ -1628,15 +1687,24 @@ iris_flush_resource(struct pipe_context *ctx, struct pipe_resource *resource)
 {
    struct iris_context *ice = (struct iris_context *)ctx;
    struct iris_resource *res = (void *) resource;
-   const struct isl_drm_modifier_info *mod = res->mod_info;
    bool newly_external = false;
+   const struct isl_drm_modifier_info *mod = res->mod_info;
+   struct iris_screen *screen = (struct iris_screen *)ctx->screen;
+   const struct intel_device_info *devinfo = screen->devinfo;
+   bool xe2_copy = devinfo->ver >= 20 &&
+                   !(mod && isl_drm_modifier_has_aux(mod->modifier)) &&
+                   !(res->base.b.bind & PIPE_BIND_SHARED);
 
    /* flush_resource() may be used to prepare an image for sharing externally
     * with other clients (e.g. via eglCreateImage).  To account for this, we
     * make sure to eliminate suballocation and any compression that a consumer
     * wouldn't know how to handle.
     */
-   if (!iris_bo_is_real(res->bo)) {
+   /* On Xe2+ platforms, when an image wasn't created with a modifier that
+    * supports compression, we need to resolve by copying the image to an
+    * uncompressed bo.
+    */
+   if (!iris_bo_is_real(res->bo) || xe2_copy) {
       assert(!(res->base.b.bind & PIPE_BIND_SHARED));
       iris_reallocate_resource_inplace(ice, res, PIPE_BIND_SHARED);
       assert(res->base.b.bind & PIPE_BIND_SHARED);
@@ -2109,7 +2177,12 @@ iris_map_copy_region(struct iris_transfer *map)
 #endif
 
       map->staging =
-         iris_resource_create_for_image(pscreen, &templ, NULL, 0, row_pitch_B);
+         iris_resource_create_for_image(pscreen,
+                                        &templ,
+                                        NULL,
+                                        0,
+                                        row_pitch_B,
+                                        false);
    }
 
    /* If we fail to create a staging resource, the caller will fallback

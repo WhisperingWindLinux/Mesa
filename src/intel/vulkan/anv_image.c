@@ -974,6 +974,23 @@ add_primary_surface(struct anv_device *device,
 
    image->planes[plane].aux_usage = ISL_AUX_USAGE_NONE;
 
+   /* The I915_FORMAT_MOD_4_TILED_BMG_CCS modifier defined in drm_fourcc.h
+    * has a requirement on size:
+    *
+    *    The GEM object must be stored in contiguous memory with a size
+    *    aligned to 64KB.
+    *
+    * Xe kernel driver will provide continuous allocation on scanout buffers
+    * with CCS AND when the bo's size is a multiple of 64KB, so we also need
+    * to set the scanout to make it happen in anv_AllocateMemory.
+    *
+    * Assuming the kernel display driver doesn't enable compression without
+    * modifiers, we can limit the requirement to MOD_4_TILED_BMG_CCS.
+    */
+   if (image->vk.drm_format_mod == I915_FORMAT_MOD_4_TILED_BMG_CCS) {
+      anv_surf->isl.size_B = align64(anv_surf->isl.size_B, 64 * 1024);
+   }
+
    return add_surface(device, image, anv_surf,
                       ANV_IMAGE_MEMORY_BINDING_PLANE_0 + plane, offset);
 }
@@ -2044,56 +2061,8 @@ resolve_anb_image(struct anv_device *device,
 #endif
 }
 
-static bool
-anv_image_is_pat_compressible(struct anv_device *device, struct anv_image *image)
-{
-   if (INTEL_DEBUG(DEBUG_NO_CCS))
-      return false;
-
-   if (device->info->ver < 20)
-      return false;
-
-   /*
-    * Be aware that Vulkan spec requires that Images with some properties
-    * always returns the same memory types, so this function also needs to
-    * have the same return for the same set of properties.
-    *
-    *    For images created with a color format, the memoryTypeBits member is
-    *    identical for all VkImage objects created with the same combination
-    *    of values for the tiling member, the
-    *    VK_IMAGE_CREATE_SPARSE_BINDING_BIT bit of the flags member, the
-    *    VK_IMAGE_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT bit of the flags
-    *    member, handleTypes member of VkExternalMemoryImageCreateInfo, and
-    *    the VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT of the usage member in
-    *    the VkImageCreateInfo structure passed to vkCreateImage.
-    *
-    *    For images created with a depth/stencil format, the memoryTypeBits
-    *    member is identical for all VkImage objects created with the same
-    *    combination of values for the format member, the tiling member, the
-    *    VK_IMAGE_CREATE_SPARSE_BINDING_BIT bit of the flags member, the
-    *    VK_IMAGE_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT bit of the flags
-    *    member, handleTypes member of VkExternalMemoryImageCreateInfo, and
-    *    the VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT of the usage member in
-    *    the VkImageCreateInfo structure passed to vkCreateImage.
-    */
-
-   /* There are no compression-enabled modifiers on Xe2, and all legacy
-    * modifiers are not defined with compression. We simply disable
-    * compression on all modifiers.
-    *
-    * We disable this in anv_AllocateMemory() as well.
-    */
-   if (image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
-      return false;
-
-   return true;
-}
-
-void
-anv_image_get_memory_requirements(struct anv_device *device,
-                                  struct anv_image *image,
-                                  VkImageAspectFlags aspects,
-                                  VkMemoryRequirements2 *pMemoryRequirements)
+static uint32_t
+anv_get_image_memory_types(struct anv_device *device, struct anv_image *image)
 {
    /* The Vulkan spec (git aaed022) says:
     *
@@ -2102,16 +2071,60 @@ anv_image_get_memory_requirements(struct anv_device *device,
     *    only if the memory type `i` in the VkPhysicalDeviceMemoryProperties
     *    structure for the physical device is supported.
     */
-   uint32_t memory_types;
-
+   uint32_t memory_types = device->physical->memory.default_buffer_mem_types;
    if (image->vk.create_flags & VK_IMAGE_CREATE_PROTECTED_BIT) {
       memory_types = device->physical->memory.protected_mem_types;
-   } else {
-      memory_types = device->physical->memory.default_buffer_mem_types;
-      if (anv_image_is_pat_compressible(device, image))
+   } else if (!INTEL_DEBUG(DEBUG_NO_CCS) && device->info->ver >= 20) {
+      /*
+       * Be aware that Vulkan spec requires that Images with some properties
+       * always returns the same memory types, so this function also needs to
+       * have the same return for the same set of properties.
+       *
+       *    For images created with a color format, the memoryTypeBits member is
+       *    identical for all VkImage objects created with the same combination
+       *    of values for the tiling member, the
+       *    VK_IMAGE_CREATE_SPARSE_BINDING_BIT bit of the flags member, the
+       *    VK_IMAGE_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT bit of the flags
+       *    member, handleTypes member of VkExternalMemoryImageCreateInfo, and
+       *    the VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT of the usage member in
+       *    the VkImageCreateInfo structure passed to vkCreateImage.
+       *
+       *    For images created with a depth/stencil format, the memoryTypeBits
+       *    member is identical for all VkImage objects created with the same
+       *    combination of values for the format member, the tiling member, the
+       *    VK_IMAGE_CREATE_SPARSE_BINDING_BIT bit of the flags member, the
+       *    VK_IMAGE_CREATE_SPLIT_INSTANCE_BIND_REGIONS_BIT bit of the flags
+       *    member, handleTypes member of VkExternalMemoryImageCreateInfo, and
+       *    the VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT of the usage member in
+       *    the VkImageCreateInfo structure passed to vkCreateImage.
+       */
+      if (image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+          isl_drm_modifier_has_aux(image->vk.drm_format_mod)) {
+         /* On Xe2+ platforms, it is invalid to allocate uncompressed memory
+          * for an image created with a modifier supporting compression.
+          * Only reporting compressed memory types prevents an application
+          * from choosing a wrong memory type in this case.
+          */
+         memory_types = device->physical->memory.compressed_mem_types;
+      } else if (image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+                 image->vk.external_handle_types == 0) {
+         /* Report compression + default memory types on images without a
+          * modifier. But compression cannot be enabled on images to share
+          * externally without a modifier.
+          */
          memory_types |= device->physical->memory.compressed_mem_types;
+      }
    }
 
+   return memory_types;
+}
+
+void
+anv_image_get_memory_requirements(struct anv_device *device,
+                                  struct anv_image *image,
+                                  VkImageAspectFlags aspects,
+                                  VkMemoryRequirements2 *pMemoryRequirements)
+{
    vk_foreach_struct(ext, pMemoryRequirements->pNext) {
       switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
@@ -2163,7 +2176,7 @@ anv_image_get_memory_requirements(struct anv_device *device,
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
       .size = binding->memory_range.size,
       .alignment = binding->memory_range.alignment,
-      .memoryTypeBits = memory_types,
+      .memoryTypeBits = anv_get_image_memory_types(device, image),
    };
 }
 

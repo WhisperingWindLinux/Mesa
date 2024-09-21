@@ -399,7 +399,7 @@ iris_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
        * extensive checking in the driver for correctness, e.g. to prevent
        * illegal snoop <-> snoop transfers.
        */
-      return devinfo->has_llc;
+      return devinfo->has_llc && devinfo->has_userptr_uapi;
    case PIPE_CAP_THROTTLE:
       return screen->driconf.disable_throttling ? 0 : 1;
 
@@ -673,6 +673,7 @@ iris_screen_destroy(struct iris_screen *screen)
    u_transfer_helper_destroy(screen->base.transfer_helper);
    iris_bufmgr_unref(screen->bufmgr);
    disk_cache_destroy(screen->disk_cache);
+   intel_virtio_unref_fd(screen->winsys_fd);
    close(screen->winsys_fd);
    ralloc_free(screen);
 }
@@ -784,6 +785,9 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
       bo_reuse = true;
       break;
    }
+
+   if (intel_virtio_init_fd(fd) < 0)
+      return NULL;
 
    process_intel_debug_variable();
 

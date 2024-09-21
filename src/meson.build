@@ -66,6 +66,9 @@ endif
 if with_any_vk or with_gallium_zink
   subdir('vulkan')
 endif
+if system_has_kms_drm or with_gallium_virgl
+  subdir('virtio')
+endif
 if with_any_intel
   subdir('intel')
 endif
@@ -77,9 +80,6 @@ if with_any_broadcom
 endif
 if with_gallium_etnaviv
   subdir('etnaviv')
-endif
-if system_has_kms_drm or with_gallium_virgl
-  subdir('virtio')
 endif
 if with_gallium_freedreno or with_freedreno_vk or with_tools.contains('freedreno')
   subdir('freedreno')

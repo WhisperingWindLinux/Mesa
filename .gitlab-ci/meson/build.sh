@@ -122,6 +122,7 @@ meson setup _build \
       -D gallium-drivers=${GALLIUM_DRIVERS:-[]} \
       -D vulkan-drivers=${VULKAN_DRIVERS:-[]} \
       -D video-codecs=all \
+      -D llvm-orcjit=true \
       -D werror=true \
       ${EXTRA_OPTION}
 cd _build

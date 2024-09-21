@@ -33,15 +33,7 @@ struct nvk_queue_state {
       uint32_t bytes_per_warp;
       uint32_t bytes_per_tpc;
    } slm;
-
-   struct {
-      struct nvkmd_mem *mem;
-      uint32_t dw_count;
-   } push;
 };
-
-VkResult nvk_queue_state_update(struct nvk_device *dev,
-                                struct nvk_queue_state *qs);
 
 struct nvk_queue {
    struct vk_queue vk;

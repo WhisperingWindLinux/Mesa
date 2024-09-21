@@ -1,12 +1,12 @@
 <?xml version="1.0"?>
-<metrics version="1725302004" merge_md5="">
+<metrics version="1725304531" merge_md5="">
   <set name="RenderBasic"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="RenderBasic"
        underscore_name="render_basic"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="12f20772-0044-44ff-bcc0-d2bc252d140e"
+       hw_config_guid="f05e23fc-913d-4ab9-ba9a-43beb059a18c"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -854,6 +854,58 @@
              mdapi_supported_apis=""
              mdapi_hw_unit_type="gpu"
              />
+    <counter name="Host To GpuMem Transaction Read"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_READ"
+             underscore_name="host_to_gpumem_transaction_read"
+             description="Number of host 64B reads to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 59 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="Host To GpuMem Transaction Write"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_WRITE"
+             underscore_name="host_to_gpumem_transaction_write"
+             description="Number of host 64B writes to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 60 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Read"
+             symbol_name="SYSMEM_TRANSACTION_READ"
+             underscore_name="sysmem_transaction_read"
+             description="Number of system memory 64B reads (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 61 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Write"
+             symbol_name="SYSMEM_TRANSACTION_WRITE"
+             underscore_name="sysmem_transaction_write"
+             description="Number of system memory 64B writes (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 62 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
     <register_config type="OA">
         <register type="OA" address="0x00013000" value="0x00001801" />
         <register type="OA" address="0x00013004" value="0x00000000" />
@@ -1081,6 +1133,30 @@
         <register type="OA" address="0x000135D4" value="0x00000000" />
         <register type="OA" address="0x000137D0" value="0x00005E0B" />
         <register type="OA" address="0x000137D4" value="0x00000000" />
+        <register type="OA" address="0x000133D8" value="0x00006400" />
+        <register type="OA" address="0x000133DC" value="0x00000000" />
+        <register type="OA" address="0x000135D8" value="0x00006400" />
+        <register type="OA" address="0x000135DC" value="0x00000000" />
+        <register type="OA" address="0x000137D8" value="0x00006400" />
+        <register type="OA" address="0x000137DC" value="0x00000000" />
+        <register type="OA" address="0x000133E0" value="0x00006401" />
+        <register type="OA" address="0x000133E4" value="0x00000000" />
+        <register type="OA" address="0x000135E0" value="0x00006401" />
+        <register type="OA" address="0x000135E4" value="0x00000000" />
+        <register type="OA" address="0x000137E0" value="0x00006401" />
+        <register type="OA" address="0x000137E4" value="0x00000000" />
+        <register type="OA" address="0x000133E8" value="0x00006402" />
+        <register type="OA" address="0x000133EC" value="0x00000000" />
+        <register type="OA" address="0x000135E8" value="0x00006402" />
+        <register type="OA" address="0x000135EC" value="0x00000000" />
+        <register type="OA" address="0x000137E8" value="0x00006402" />
+        <register type="OA" address="0x000137EC" value="0x00000000" />
+        <register type="OA" address="0x000133F0" value="0x00006403" />
+        <register type="OA" address="0x000133F4" value="0x00000000" />
+        <register type="OA" address="0x000135F0" value="0x00006403" />
+        <register type="OA" address="0x000135F4" value="0x00000000" />
+        <register type="OA" address="0x000137F0" value="0x00006403" />
+        <register type="OA" address="0x000137F4" value="0x00000000" />
     </register_config>
     <register_config type="FLEX">
         <register type="FLEX" address="0x0000E458" value="0x00060000" />
@@ -1092,12 +1168,12 @@
   </set>
 
   <set name="ComputeBasic"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="ComputeBasic"
        underscore_name="compute_basic"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="72539be3-67d9-4101-b067-766b7811d2bb"
+       hw_config_guid="c7383a12-5c52-47a8-8e42-11b24d64d1f8"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -1815,6 +1891,58 @@
              mdapi_supported_apis=""
              mdapi_hw_unit_type="gpu"
              />
+    <counter name="Host To GpuMem Transaction Read"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_READ"
+             underscore_name="host_to_gpumem_transaction_read"
+             description="Number of host 64B reads to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 55 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="Host To GpuMem Transaction Write"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_WRITE"
+             underscore_name="host_to_gpumem_transaction_write"
+             description="Number of host 64B writes to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 56 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Read"
+             symbol_name="SYSMEM_TRANSACTION_READ"
+             underscore_name="sysmem_transaction_read"
+             description="Number of system memory 64B reads (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 57 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Write"
+             symbol_name="SYSMEM_TRANSACTION_WRITE"
+             underscore_name="sysmem_transaction_write"
+             description="Number of system memory 64B writes (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 58 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
     <register_config type="OA">
         <register type="OA" address="0x00013000" value="0x00001801" />
         <register type="OA" address="0x00013004" value="0x00000000" />
@@ -2006,6 +2134,30 @@
         <register type="OA" address="0x000135B4" value="0x00000000" />
         <register type="OA" address="0x000137B0" value="0x00005012" />
         <register type="OA" address="0x000137B4" value="0x00000000" />
+        <register type="OA" address="0x000133B8" value="0x00006400" />
+        <register type="OA" address="0x000133BC" value="0x00000000" />
+        <register type="OA" address="0x000135B8" value="0x00006400" />
+        <register type="OA" address="0x000135BC" value="0x00000000" />
+        <register type="OA" address="0x000137B8" value="0x00006400" />
+        <register type="OA" address="0x000137BC" value="0x00000000" />
+        <register type="OA" address="0x000133C0" value="0x00006401" />
+        <register type="OA" address="0x000133C4" value="0x00000000" />
+        <register type="OA" address="0x000135C0" value="0x00006401" />
+        <register type="OA" address="0x000135C4" value="0x00000000" />
+        <register type="OA" address="0x000137C0" value="0x00006401" />
+        <register type="OA" address="0x000137C4" value="0x00000000" />
+        <register type="OA" address="0x000133C8" value="0x00006402" />
+        <register type="OA" address="0x000133CC" value="0x00000000" />
+        <register type="OA" address="0x000135C8" value="0x00006402" />
+        <register type="OA" address="0x000135CC" value="0x00000000" />
+        <register type="OA" address="0x000137C8" value="0x00006402" />
+        <register type="OA" address="0x000137CC" value="0x00000000" />
+        <register type="OA" address="0x000133D0" value="0x00006403" />
+        <register type="OA" address="0x000133D4" value="0x00000000" />
+        <register type="OA" address="0x000135D0" value="0x00006403" />
+        <register type="OA" address="0x000135D4" value="0x00000000" />
+        <register type="OA" address="0x000137D0" value="0x00006403" />
+        <register type="OA" address="0x000137D4" value="0x00000000" />
     </register_config>
     <register_config type="FLEX">
         <register type="FLEX" address="0x0000E458" value="0x00000000" />
@@ -2013,12 +2165,12 @@
   </set>
 
   <set name="DepthProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="DepthProfile"
        underscore_name="depth_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="cae0b2ca-c52a-4111-b8bf-5af070677d57"
+       hw_config_guid="a80e9da5-d2c9-4c20-9f7c-c0adf74bbe89"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -2500,12 +2652,12 @@
   </set>
 
   <set name="DeviceCacheProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="DeviceCacheProfile"
        underscore_name="device_cache_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="70cc56cf-3a37-4f6c-8911-4455fe441b2a"
+       hw_config_guid="d8bb1c75-31d8-41a1-99db-99d98be17e78"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -3125,12 +3277,12 @@
   </set>
 
   <set name="MemoryProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="MemoryProfile"
        underscore_name="memory_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="01ffd51d-a6d6-4ff4-93d0-619f04c3a547"
+       hw_config_guid="d2e403f3-4c94-4b1b-bc09-f472a43251a4"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -3796,6 +3948,58 @@
              mdapi_supported_apis=""
              mdapi_hw_unit_type="gpu"
              />
+    <counter name="Host To GpuMem Transaction Read"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_READ"
+             underscore_name="host_to_gpumem_transaction_read"
+             description="Number of host 64B reads to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 60 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="Host To GpuMem Transaction Write"
+             symbol_name="HOST_TO_GPUMEM_TRANSACTION_WRITE"
+             underscore_name="host_to_gpumem_transaction_write"
+             description="Number of host 64B writes to GPU local (HBM) memory (downstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 61 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Read"
+             symbol_name="SYSMEM_TRANSACTION_READ"
+             underscore_name="sysmem_transaction_read"
+             description="Number of system memory 64B reads (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 62 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
+    <counter name="SysMem Transaction Write"
+             symbol_name="SYSMEM_TRANSACTION_WRITE"
+             underscore_name="sysmem_transaction_write"
+             description="Number of system memory 64B writes (upstream over an interface such as pcie, cxl or an integrated fabric as applicable to the respective product segment)"
+             data_type="uint64"
+             units="events"
+             semantic_type="event"
+             equation="PEC 63 READ"
+             mdapi_group="Memory"
+             mdapi_usage_flags="Frame Batch Draw"
+             mdapi_supported_apis=""
+             mdapi_hw_unit_type="gpu"
+             />
     <register_config type="OA">
         <register type="OA" address="0x00013000" value="0x00001801" />
         <register type="OA" address="0x00013004" value="0x00000000" />
@@ -4013,16 +4217,40 @@
         <register type="OA" address="0x000135DC" value="0x00000000" />
         <register type="OA" address="0x000137D8" value="0x00006E01" />
         <register type="OA" address="0x000137DC" value="0x00000000" />
+        <register type="OA" address="0x000133E0" value="0x00006400" />
+        <register type="OA" address="0x000133E4" value="0x00000000" />
+        <register type="OA" address="0x000135E0" value="0x00006400" />
+        <register type="OA" address="0x000135E4" value="0x00000000" />
+        <register type="OA" address="0x000137E0" value="0x00006400" />
+        <register type="OA" address="0x000137E4" value="0x00000000" />
+        <register type="OA" address="0x000133E8" value="0x00006401" />
+        <register type="OA" address="0x000133EC" value="0x00000000" />
+        <register type="OA" address="0x000135E8" value="0x00006401" />
+        <register type="OA" address="0x000135EC" value="0x00000000" />
+        <register type="OA" address="0x000137E8" value="0x00006401" />
+        <register type="OA" address="0x000137EC" value="0x00000000" />
+        <register type="OA" address="0x000133F0" value="0x00006402" />
+        <register type="OA" address="0x000133F4" value="0x00000000" />
+        <register type="OA" address="0x000135F0" value="0x00006402" />
+        <register type="OA" address="0x000135F4" value="0x00000000" />
+        <register type="OA" address="0x000137F0" value="0x00006402" />
+        <register type="OA" address="0x000137F4" value="0x00000000" />
+        <register type="OA" address="0x000133F8" value="0x00006403" />
+        <register type="OA" address="0x000133FC" value="0x00000000" />
+        <register type="OA" address="0x000135F8" value="0x00006403" />
+        <register type="OA" address="0x000135FC" value="0x00000000" />
+        <register type="OA" address="0x000137F8" value="0x00006403" />
+        <register type="OA" address="0x000137FC" value="0x00000000" />
     </register_config>
   </set>
 
   <set name="RenderPipeProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="RenderPipeProfile"
        underscore_name="render_pipe_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="6791470f-f1e6-4f77-9013-bcb0c4be6f57"
+       hw_config_guid="dad0d2c6-1290-4d50-a6aa-8b8104204232"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -4792,12 +5020,12 @@
   </set>
 
   <set name="RTProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="RTProfile"
        underscore_name="rt_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="d66ce633-4ae5-4de2-8678-9705adfd45bc"
+       hw_config_guid="da09a8a6-802c-48bc-8f3a-35834c9b8ba2"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -5372,12 +5600,12 @@
   </set>
 
   <set name="VectorEngineProfile"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="VectorEngineProfile"
        underscore_name="vector_engine_profile"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="e7338926-568c-4424-bc44-f90318a6b472"
+       hw_config_guid="dfe5251f-af3e-434c-b627-38490f2213da"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"
@@ -6297,12 +6525,12 @@
   </set>
 
   <set name="VectorEngineStalls"
-       chipset="LNL"
+       chipset="BMG"
        symbol_name="VectorEngineStalls"
        underscore_name="vector_engine_stalls"
        mdapi_supported_apis="VK OGL OCL IO"
        oa_format="576B_PEC64LL"
-       hw_config_guid="4ccd6535-fb9a-440f-b0f5-882879dc4cb0"
+       hw_config_guid="d008dcae-2a82-4929-a94d-2ba1e9c569d6"
        >
     <counter name="GPU Time Elapsed"
              symbol_name="GpuTime"

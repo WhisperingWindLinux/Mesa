@@ -340,7 +340,8 @@ try_optimize_branching_sequence(ssa_elimination_ctx& ctx, Block& block, const in
    if (exec_copy->opcode != and_saveexec && exec_copy->opcode != aco_opcode::p_parallelcopy)
       return;
 
-   if (exec_val->definitions.size() > 1)
+   /* Only allow SALU with multiple definitions. */
+   if (!exec_val->isSALU() && exec_val->definitions.size() > 1)
       return;
 
    const bool vcmpx_exec_only = ctx.program->gfx_level >= GFX10;
@@ -428,13 +429,6 @@ try_optimize_branching_sequence(ssa_elimination_ctx& ctx, Block& block, const in
              regs_intersect(exec_copy_def, Definition(instr->pseudo().scratch_sgpr, s1)))
             return;
       }
-
-      /* Check if the instruction may implicitly read VCC, eg. v_cndmask or add with carry.
-       * Rewriting these operands may require format conversion because of encoding limitations.
-       */
-      if (exec_wr_def.physReg() == vcc && instr->isVALU() && instr->operands.size() >= 3 &&
-          !instr->isVOP3())
-         return;
    }
 
    if (save_original_exec) {

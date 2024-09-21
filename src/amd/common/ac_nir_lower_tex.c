@@ -155,6 +155,7 @@ prepare_cube_coords(nir_builder *b, nir_tex_instr *tex, nir_def **coord, nir_src
 
    *coord = nir_vec3(b, sc, tc, id);
 
+   tex->sampler_dim = GLSL_SAMPLER_DIM_2D;
    tex->is_array = true;
 }
 

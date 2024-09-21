@@ -15,6 +15,7 @@
 #include "vk_device_memory.h"
 
 #include "tu_autotune.h"
+#include "tu_cs.h"
 #include "tu_pass.h"
 #include "tu_perfetto.h"
 #include "tu_suballoc.h"
@@ -122,6 +123,8 @@ struct tu_physical_device
    bool has_cached_coherent_memory;
    bool has_cached_non_coherent_memory;
    uintptr_t level1_dcache_size;
+
+   bool has_preemption;
 
    struct {
       uint32_t type_count;
@@ -233,6 +236,8 @@ struct tu6_global
    } flush_base[4];
 
    alignas(16) uint32_t cs_indirect_xyz[12];
+
+   uint32_t vsc_state[32];
 
    volatile uint32_t vtx_stats_query_not_running;
 
@@ -383,12 +388,14 @@ struct tu_device
     */
    struct u_vector zombie_vmas;
 
+   struct tu_cs sub_cs;
+
    /* Command streams to set pass index to a scratch reg */
-   struct tu_cs *perfcntrs_pass_cs;
    struct tu_cs_entry *perfcntrs_pass_cs_entries;
 
-   struct tu_cs *cmdbuf_start_a725_quirk_cs;
-   struct tu_cs_entry *cmdbuf_start_a725_quirk_entry;
+   struct tu_cs_entry cmdbuf_start_a725_quirk_entry;
+
+   struct tu_cs_entry bin_preamble_entry;
 
    struct util_dynarray dynamic_rendering_pending;
    VkCommandPool dynamic_rendering_pool;

@@ -1000,10 +1000,29 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
                      uint32_t tx, uint32_t ty, uint32_t pipe, uint32_t slot,
                      const struct tu_image_view *fdm)
 {
+   struct tu_physical_device *phys_dev = cmd->device->physical_device;
    const struct tu_tiling_config *tiling = cmd->state.tiling;
+   bool hw_binning = use_hw_binning(cmd);
 
    tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_GMEM));
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RENDER_START) |
+                  A6XX_CP_SET_MARKER_0_USES_GMEM);
+
+   tu6_emit_bin_size<CHIP>(
+      cs, tiling->tile0.width, tiling->tile0.height,
+      {
+         .render_mode = RENDERING_PASS,
+         .force_lrz_write_dis = !phys_dev->info->a6xx.has_lrz_feedback,
+         .buffers_location = BUFFERS_IN_GMEM,
+         .lrz_feedback_zmode_mask =
+            phys_dev->info->a6xx.has_lrz_feedback
+               ? (hw_binning ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z :
+                  LRZ_FEEDBACK_EARLY_LRZ_LATE_Z)
+               : LRZ_FEEDBACK_NONE,
+      });
+
+   tu_cs_emit_regs(cs,
+                   A6XX_VFD_MODE_CNTL(RENDERING_PASS));
 
    const uint32_t x1 = tiling->tile0.width * tx;
    const uint32_t y1 = tiling->tile0.height * ty;
@@ -1011,8 +1030,6 @@ tu6_emit_tile_select(struct tu_cmd_buffer *cmd,
    const uint32_t y2 = MIN2(y1 + tiling->tile0.height, MAX_VIEWPORT_SIZE);
    tu6_emit_window_scissor(cs, x1, y1, x2 - 1, y2 - 1);
    tu6_emit_window_offset<CHIP>(cs, x1, y1);
-
-   bool hw_binning = use_hw_binning(cmd);
 
    if (hw_binning) {
       tu_cs_emit_pkt7(cs, CP_WAIT_FOR_ME, 0);
@@ -1197,7 +1214,8 @@ tu6_emit_tile_store(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
       tu_cs_set_writeable(cs, true);
 
    tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_RESOLVE));
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RESOLVE) |
+                  A6XX_CP_SET_MARKER_0_USES_GMEM);
 
    tu6_emit_blit_scissor(cmd, cs, true);
 
@@ -1244,47 +1262,9 @@ tu_disable_draw_states(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 
 template <chip CHIP>
 static void
-tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+tu6_init_static_regs(struct tu_device *dev, struct tu_cs *cs)
 {
-   struct tu_device *dev = cmd->device;
    const struct tu_physical_device *phys_dev = dev->physical_device;
-
-   if (CHIP == A6XX) {
-      tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
-   } else {
-      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
-      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
-                     CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
-
-      tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_COLOR);
-      tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_DEPTH);
-      tu_emit_raw_event_write<CHIP>(cmd, cs, UNK_40, false);
-      tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
-      tu_cs_emit_wfi(cs);
-   }
-
-   tu_cs_emit_regs(cs, HLSQ_INVALIDATE_CMD(CHIP,
-         .vs_state = true,
-         .hs_state = true,
-         .ds_state = true,
-         .gs_state = true,
-         .fs_state = true,
-         .cs_state = true,
-         .cs_ibo = true,
-         .gfx_ibo = true,
-         .cs_shared_const = true,
-         .gfx_shared_const = true,
-         .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
-         .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
-
-   tu_cs_emit_wfi(cs);
-
-   if (dev->dbg_cmdbuf_stomp_cs) {
-      tu_cs_emit_call(cs, dev->dbg_cmdbuf_stomp_cs);
-   }
-
-   cmd->state.cache.pending_flush_bits &=
-      ~(TU_CMD_FLAG_WAIT_FOR_IDLE | TU_CMD_FLAG_CACHE_INVALIDATE);
 
    if (CHIP >= A7XX) {
       /* On A7XX, RB_CCU_CNTL was broken into two registers, RB_CCU_CNTL which has
@@ -1298,11 +1278,7 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
             !dev->physical_device->info->a6xx.has_gmem_fast_clear,
          .concurrent_resolve = dev->physical_device->info->a6xx.concurrent_resolve,
       ));
-      tu_cs_emit_wfi(cs);
    }
-
-   emit_rb_ccu_cntl<CHIP>(cs, cmd->device, false);
-   cmd->state.ccu_state = TU_CMD_CCU_SYSMEM;
 
    for (size_t i = 0; i < ARRAY_SIZE(phys_dev->info->a6xx.magic_raw); i++) {
       auto magic_reg = phys_dev->info->a6xx.magic_raw[i];
@@ -1409,8 +1385,6 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 
    tu_cs_emit_regs(cs, A6XX_RB_ALPHA_CONTROL()); /* always disable alpha test */
 
-   tu_disable_draw_states(cmd, cs);
-
    tu_cs_emit_regs(cs,
                    A6XX_SP_TP_BORDER_COLOR_BASE_ADDR(.bo = dev->global_bo,
                                                      .bo_offset = gb_offset(bcolor_builtin)));
@@ -1424,15 +1398,6 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
                       TPL1_BICUBIC_WEIGHTS_TABLE_2(CHIP, 0x3fa0ebee),
                       TPL1_BICUBIC_WEIGHTS_TABLE_3(CHIP, 0x3f5193ed),
                       TPL1_BICUBIC_WEIGHTS_TABLE_4(CHIP, 0x3f0243f0), );
-   }
-
-   if (phys_dev->info->a7xx.cmdbuf_start_a725_quirk) {
-      tu_cs_reserve(cs, 3 + 4);
-      tu_cs_emit_pkt7(cs, CP_COND_REG_EXEC, 2);
-      tu_cs_emit(cs, CP_COND_REG_EXEC_0_MODE(THREAD_MODE) |
-                     CP_COND_REG_EXEC_0_BR | CP_COND_REG_EXEC_0_LPAC);
-      tu_cs_emit(cs, RENDER_MODE_CP_COND_REG_EXEC_1_DWORDS(4));
-      tu_cs_emit_ib(cs, dev->cmdbuf_start_a725_quirk_entry);
    }
 
    if (CHIP >= A7XX) {
@@ -1463,6 +1428,152 @@ tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    if (phys_dev->info->a6xx.has_early_preamble) {
       tu_cs_emit_regs(cs, A6XX_SP_FS_CTRL_REG0());
    }
+}
+
+/* Set always-identical registers used specifically for GMEM */
+static void
+tu7_emit_tile_render_begin_regs(struct tu_cs *cs)
+{
+   tu_cs_emit_regs(cs,
+                  A7XX_RB_UNKNOWN_8812(0x0));
+   tu_cs_emit_regs(cs,
+                A7XX_RB_UNKNOWN_8E06(0x0));
+
+   tu_cs_emit_regs(cs, A7XX_GRAS_UNKNOWN_8007(0x0));
+
+   tu_cs_emit_regs(cs, A6XX_GRAS_UNKNOWN_8110(0x2));
+   tu_cs_emit_regs(cs, A7XX_RB_UNKNOWN_8E09(0x4));
+
+   tu_cs_emit_regs(cs, A7XX_RB_BLIT_CLEAR_MODE(.clear_mode = CLEAR_MODE_GMEM));
+}
+
+/* Emit the bin restore preamble, which runs in between bins when L1
+ * preemption with skipsaverestore happens and we switch back to this context.
+ * We need to restore static registers normally programmed at cmdbuf start
+ * which weren't saved, and we need to program the CCU state which is normally
+ * programmed before rendering the bins and isn't saved/restored by the CP
+ * because it is always the same for GMEM render passes.
+ */
+template <chip CHIP>
+static void
+tu_emit_bin_preamble(struct tu_device *dev, struct tu_cs *cs)
+{
+   struct tu_physical_device *phys_dev = dev->physical_device;
+
+   tu6_init_static_regs<CHIP>(dev, cs);
+   emit_rb_ccu_cntl<CHIP>(cs, dev, true);
+
+   if (CHIP == A6XX) {
+      tu_cs_emit_regs(cs,
+                     A6XX_PC_POWER_CNTL(phys_dev->info->a6xx.magic.PC_POWER_CNTL));
+
+      tu_cs_emit_regs(cs,
+                     A6XX_VFD_POWER_CNTL(phys_dev->info->a6xx.magic.PC_POWER_CNTL));
+   }
+
+   if (CHIP == A7XX) {
+      tu7_emit_tile_render_begin_regs(cs);
+   }
+
+   /* TODO use CP_MEM_TO_SCRATCH_MEM on a7xx. The VSC scratch mem should be
+    * automatically saved, unlike GPU registers, so we wouldn't have to
+    * manually restore this state.
+    */
+   tu_cs_emit_pkt7(cs, CP_MEM_TO_REG, 3);
+   tu_cs_emit(cs, CP_MEM_TO_REG_0_REG(REG_A6XX_VSC_STATE(0)) |
+                  CP_MEM_TO_REG_0_CNT(32));
+   tu_cs_emit_qw(cs, dev->global_bo->iova + gb_offset(vsc_state));
+}
+
+VkResult
+tu_init_bin_preamble(struct tu_device *device)
+{
+   struct tu_cs preamble_cs;
+   VkResult result = tu_cs_begin_sub_stream(&device->sub_cs, 256, &preamble_cs);
+   if (result != VK_SUCCESS)
+      return vk_startup_errorf(device->instance, result, "bin restore");
+
+   TU_CALLX(device, tu_emit_bin_preamble)(device, &preamble_cs);
+
+   device->bin_preamble_entry = tu_cs_end_sub_stream(&device->sub_cs, &preamble_cs);
+
+   return VK_SUCCESS;
+}
+
+template <chip CHIP>
+static void
+tu6_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+{
+   struct tu_device *dev = cmd->device;
+   const struct tu_physical_device *phys_dev = dev->physical_device;
+
+   if (CHIP == A6XX) {
+      tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
+   } else {
+      tu_cs_emit_pkt7(cs, CP_THREAD_CONTROL, 1);
+      tu_cs_emit(cs, CP_THREAD_CONTROL_0_THREAD(CP_SET_THREAD_BR) |
+                     CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE);
+
+      tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_COLOR);
+      tu_emit_event_write<CHIP>(cmd, cs, FD_CCU_INVALIDATE_DEPTH);
+      tu_emit_raw_event_write<CHIP>(cmd, cs, UNK_40, false);
+      tu_emit_event_write<CHIP>(cmd, cs, FD_CACHE_INVALIDATE);
+      tu_cs_emit_wfi(cs);
+   }
+
+   tu_cs_emit_regs(cs, HLSQ_INVALIDATE_CMD(CHIP,
+         .vs_state = true,
+         .hs_state = true,
+         .ds_state = true,
+         .gs_state = true,
+         .fs_state = true,
+         .cs_state = true,
+         .cs_ibo = true,
+         .gfx_ibo = true,
+         .cs_shared_const = true,
+         .gfx_shared_const = true,
+         .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
+         .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
+
+   tu_cs_emit_wfi(cs);
+
+   if (dev->dbg_cmdbuf_stomp_cs) {
+      tu_cs_emit_call(cs, dev->dbg_cmdbuf_stomp_cs);
+   }
+
+   cmd->state.cache.pending_flush_bits &=
+      ~(TU_CMD_FLAG_WAIT_FOR_IDLE | TU_CMD_FLAG_CACHE_INVALIDATE);
+
+   tu6_init_static_regs<CHIP>(cmd->device, cs);
+
+   emit_rb_ccu_cntl<CHIP>(cs, cmd->device, false);
+   cmd->state.ccu_state = TU_CMD_CCU_SYSMEM;
+
+   tu_disable_draw_states(cmd, cs);
+
+   if (phys_dev->info->a7xx.cmdbuf_start_a725_quirk) {
+      tu_cs_reserve(cs, 3 + 4);
+      tu_cs_emit_pkt7(cs, CP_COND_REG_EXEC, 2);
+      tu_cs_emit(cs, CP_COND_REG_EXEC_0_MODE(THREAD_MODE) |
+                     CP_COND_REG_EXEC_0_BR | CP_COND_REG_EXEC_0_LPAC);
+      tu_cs_emit(cs, RENDER_MODE_CP_COND_REG_EXEC_1_DWORDS(4));
+      tu_cs_emit_ib(cs, &dev->cmdbuf_start_a725_quirk_entry);
+   }
+
+   tu_cs_emit_pkt7(cs, CP_SET_AMBLE, 3);
+   tu_cs_emit_qw(cs, cmd->device->bin_preamble_entry.bo->iova +
+                     cmd->device->bin_preamble_entry.offset);
+   tu_cs_emit(cs, CP_SET_AMBLE_2_DWORDS(cmd->device->bin_preamble_entry.size /
+                                        sizeof(uint32_t)) |
+                  CP_SET_AMBLE_2_TYPE(BIN_PREAMBLE_AMBLE_TYPE));
+
+   tu_cs_emit_pkt7(cs, CP_SET_AMBLE, 3);
+   tu_cs_emit_qw(cs, 0);
+   tu_cs_emit(cs, CP_SET_AMBLE_2_TYPE(PREAMBLE_AMBLE_TYPE));
+
+   tu_cs_emit_pkt7(cs, CP_SET_AMBLE, 3);
+   tu_cs_emit_qw(cs, 0);
+   tu_cs_emit(cs, CP_SET_AMBLE_2_TYPE(POSTAMBLE_AMBLE_TYPE));
 
    tu_cs_sanity_check(cs);
 }
@@ -1560,7 +1671,7 @@ tu6_emit_binning_pass(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    tu6_emit_window_scissor(cs, 0, 0, fb->width - 1, fb->height - 1);
 
    tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BINNING));
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_VISIBILITY));
 
    tu_cs_emit_pkt7(cs, CP_SET_VISIBILITY_OVERRIDE, 1);
    tu_cs_emit(cs, 0x1);
@@ -1933,7 +2044,7 @@ tu6_sysmem_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
    }
 
    tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BYPASS));
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_DIRECT_RENDER));
 
    /* A7XX TODO: blob doesn't use CP_SKIP_IB2_ENABLE_* */
    tu_cs_emit_pkt7(cs, CP_SKIP_IB2_ENABLE_GLOBAL, 1);
@@ -1987,17 +2098,7 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
    tu_cs_emit(cs, 0x0);
 
    if (CHIP >= A7XX) {
-      tu_cs_emit_regs(cs,
-                     A7XX_RB_UNKNOWN_8812(0x0));
-      tu_cs_emit_regs(cs,
-                   A7XX_RB_UNKNOWN_8E06(0x0));
-
-      tu_cs_emit_regs(cs, A7XX_GRAS_UNKNOWN_8007(0x0));
-
-      tu_cs_emit_regs(cs, A6XX_GRAS_UNKNOWN_8110(0x2));
-      tu_cs_emit_regs(cs, A7XX_RB_UNKNOWN_8E09(0x4));
-
-      tu_cs_emit_regs(cs, A7XX_RB_BLIT_CLEAR_MODE(.clear_mode = CLEAR_MODE_GMEM));
+      tu7_emit_tile_render_begin_regs(cs);
    }
 
    tu_emit_cache_flush_ccu<CHIP>(cmd, cs, TU_CMD_CCU_GMEM);
@@ -2021,21 +2122,6 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
 
       tu6_emit_binning_pass<CHIP>(cmd, cs);
 
-      tu6_emit_bin_size<CHIP>(
-         cs, tiling->tile0.width, tiling->tile0.height,
-         {
-            .render_mode = RENDERING_PASS,
-            .force_lrz_write_dis = !phys_dev->info->a6xx.has_lrz_feedback,
-            .buffers_location = BUFFERS_IN_GMEM,
-            .lrz_feedback_zmode_mask =
-               phys_dev->info->a6xx.has_lrz_feedback
-                  ? LRZ_FEEDBACK_EARLY_LRZ_LATE_Z
-                  : LRZ_FEEDBACK_NONE,
-         });
-
-      tu_cs_emit_regs(cs,
-                      A6XX_VFD_MODE_CNTL(RENDERING_PASS));
-
       if (CHIP == A6XX) {
          tu_cs_emit_regs(cs,
                         A6XX_PC_POWER_CNTL(phys_dev->info->a6xx.magic.PC_POWER_CNTL));
@@ -2049,18 +2135,6 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
       tu_cs_emit_pkt7(cs, CP_SKIP_IB2_ENABLE_LOCAL, 1);
       tu_cs_emit(cs, 0x1);
    } else {
-      tu6_emit_bin_size<CHIP>(
-         cs, tiling->tile0.width, tiling->tile0.height,
-         {
-            .render_mode = RENDERING_PASS,
-            .force_lrz_write_dis = !phys_dev->info->a6xx.has_lrz_feedback,
-            .buffers_location = BUFFERS_IN_GMEM,
-            .lrz_feedback_zmode_mask =
-               phys_dev->info->a6xx.has_lrz_feedback
-                  ? LRZ_FEEDBACK_EARLY_Z_OR_EARLY_LRZ_LATE_Z
-                  : LRZ_FEEDBACK_NONE,
-         });
-
       if (tiling->binning_possible) {
          /* Mark all tiles as visible for tu6_emit_cond_for_load_stores(), since
           * the actual binner didn't run.
@@ -2070,6 +2144,16 @@ tu6_tile_render_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
          for (int i = 0; i < pipe_count; i++)
             tu_cs_emit(cs, ~0);
       }
+   }
+
+   if (tiling->binning_possible) {
+      /* Upload state regs to memory to be restored on skipsaverestore
+       * preemption.
+       */
+      tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
+      tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(REG_A6XX_VSC_STATE_REG(0)) |
+                     CP_REG_TO_MEM_0_CNT(32));
+      tu_cs_emit_qw(cs, global_iova(cmd, vsc_state));
    }
 
    tu_autotune_begin_renderpass<CHIP>(cmd, cs, autotune_result);
@@ -2084,6 +2168,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                 const struct tu_image_view *fdm)
 {
    tu6_emit_tile_select<CHIP>(cmd, &cmd->cs, tx, ty, pipe, slot, fdm);
+   tu_lrz_before_tile<CHIP>(cmd, &cmd->cs);
 
    trace_start_draw_ib_gmem(&cmd->trace, &cmd->cs);
 
@@ -2100,7 +2185,8 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
 
    if (use_hw_binning(cmd)) {
       tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_ENDVIS));
+      tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_END_OF_DRAWS) |
+                     A6XX_CP_SET_MARKER_0_USES_GMEM);
    }
 
    /* Predicate is changed in draw_cs so we have to re-emit it */
@@ -2114,6 +2200,11 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
 
    tu_clone_trace_range(cmd, cs, cmd->trace_renderpass_start,
          cmd->trace_renderpass_end);
+
+   tu_cs_emit_wfi(cs);
+
+   tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
+   tu_cs_emit(cs, A6XX_CP_SET_MARKER_0_MODE(RM6_BIN_RENDER_END));
 
    tu_cs_sanity_check(cs);
 

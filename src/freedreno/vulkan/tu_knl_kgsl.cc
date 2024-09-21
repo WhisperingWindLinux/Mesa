@@ -1094,7 +1094,7 @@ kgsl_queue_submit(struct tu_queue *queue, struct vk_queue_submit *vk_submit)
    }
 
    uint32_t perf_pass_index =
-      queue->device->perfcntrs_pass_cs ? vk_submit->perf_pass_index : ~0;
+      queue->device->perfcntrs_pass_cs_entries ? vk_submit->perf_pass_index : ~0;
 
    if (TU_DEBUG(LOG_SKIP_GMEM_OPS))
       tu_dbg_log_gmem_load_store_skips(queue->device);
@@ -1595,6 +1595,9 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
    device->has_cached_coherent_memory = kgsl_is_memory_type_supported(
       fd, KGSL_MEMFLAGS_IOCOHERENT |
              (KGSL_CACHEMODE_WRITEBACK << KGSL_CACHEMODE_SHIFT));
+
+   /* preemption is always supported on kgsl */
+   device->has_preemption = true;
 
    instance->knl = &kgsl_knl_funcs;
 

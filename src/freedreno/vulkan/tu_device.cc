@@ -1673,7 +1673,9 @@ tu_queue_init(struct tu_device *device,
       vk_find_struct_const(create_info->pNext,
             DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_KHR);
    const enum VkQueueGlobalPriorityKHR global_priority = priority_info ?
-      priority_info->globalPriority : VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR;
+      priority_info->globalPriority :
+      (TU_DEBUG(HIPRIO) ? VK_QUEUE_GLOBAL_PRIORITY_HIGH_KHR :
+       VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR);
 
    const int priority = tu_physical_device_get_submitqueue_priority(
          device->physical_device, global_priority, global_priority_query);
@@ -2113,26 +2115,8 @@ tu_init_dbg_reg_stomper(struct tu_device *device)
 static VkResult
 tu_init_cmdbuf_start_a725_quirk(struct tu_device *device)
 {
-   struct tu_cs *cs;
-
-   if (!(device->cmdbuf_start_a725_quirk_cs =
-            (struct tu_cs *) calloc(1, sizeof(struct tu_cs)))) {
-      return vk_startup_errorf(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY,
-                               "OOM");
-   }
-
-   if (!(device->cmdbuf_start_a725_quirk_entry =
-            (struct tu_cs_entry *) calloc(1, sizeof(struct tu_cs_entry)))) {
-      free(device->cmdbuf_start_a725_quirk_cs);
-      return vk_startup_errorf(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY,
-                               "OOM");
-   }
-
-   cs = device->cmdbuf_start_a725_quirk_cs;
-   tu_cs_init(cs, device, TU_CS_MODE_SUB_STREAM, 57, "a725 workaround cs");
-
    struct tu_cs shader_cs;
-   tu_cs_begin_sub_stream(cs, 10, &shader_cs);
+   tu_cs_begin_sub_stream(&device->sub_cs, 10, &shader_cs);
 
    uint32_t raw_shader[] = {
       0x00040000, 0x40600000, // mul.f hr0.x, hr0.x, hr1.x
@@ -2143,11 +2127,11 @@ tu_init_cmdbuf_start_a725_quirk(struct tu_device *device)
    };
 
    tu_cs_emit_array(&shader_cs, raw_shader, ARRAY_SIZE(raw_shader));
-   struct tu_cs_entry shader_entry = tu_cs_end_sub_stream(cs, &shader_cs);
+   struct tu_cs_entry shader_entry = tu_cs_end_sub_stream(&device->sub_cs, &shader_cs);
    uint64_t shader_iova = shader_entry.bo->iova + shader_entry.offset;
 
    struct tu_cs sub_cs;
-   tu_cs_begin_sub_stream(cs, 47, &sub_cs);
+   tu_cs_begin_sub_stream(&device->sub_cs, 47, &sub_cs);
 
    tu_cs_emit_regs(&sub_cs, HLSQ_INVALIDATE_CMD(A7XX,
             .vs_state = true, .hs_state = true, .ds_state = true,
@@ -2210,7 +2194,8 @@ tu_init_cmdbuf_start_a725_quirk(struct tu_device *device)
    tu_cs_emit(&sub_cs, CP_EXEC_CS_2_NGROUPS_Y(1));
    tu_cs_emit(&sub_cs, CP_EXEC_CS_3_NGROUPS_Z(1));
 
-   *device->cmdbuf_start_a725_quirk_entry = tu_cs_end_sub_stream(cs, &sub_cs);
+   device->cmdbuf_start_a725_quirk_entry =
+      tu_cs_end_sub_stream(&device->sub_cs, &sub_cs);
 
    return VK_SUCCESS;
 }
@@ -2467,19 +2452,13 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail_pipeline_cache;
    }
 
+   tu_cs_init(&device->sub_cs, device, TU_CS_MODE_SUB_STREAM, 1024, "device sub cs");
+
    if (device->vk.enabled_features.performanceCounterQueryPools) {
       /* Prepare command streams setting pass index to the PERF_CNTRS_REG
        * from 0 to 31. One of these will be picked up at cmd submit time
        * when the perf query is executed.
        */
-      struct tu_cs *cs;
-
-      if (!(device->perfcntrs_pass_cs =
-               (struct tu_cs *) calloc(1, sizeof(struct tu_cs)))) {
-         result = vk_startup_errorf(device->instance,
-               VK_ERROR_OUT_OF_HOST_MEMORY, "OOM");
-         goto fail_perfcntrs_pass_alloc;
-      }
 
       device->perfcntrs_pass_cs_entries =
          (struct tu_cs_entry *) calloc(32, sizeof(struct tu_cs_entry));
@@ -2489,13 +2468,10 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
          goto fail_perfcntrs_pass_entries_alloc;
       }
 
-      cs = device->perfcntrs_pass_cs;
-      tu_cs_init(cs, device, TU_CS_MODE_SUB_STREAM, 96, "perfcntrs cs");
-
       for (unsigned i = 0; i < 32; i++) {
          struct tu_cs sub_cs;
 
-         result = tu_cs_begin_sub_stream(cs, 3, &sub_cs);
+         result = tu_cs_begin_sub_stream(&device->sub_cs, 3, &sub_cs);
          if (result != VK_SUCCESS) {
             vk_startup_errorf(device->instance, result,
                   "failed to allocate commands streams");
@@ -2505,9 +2481,14 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
          tu_cs_emit_regs(&sub_cs, A6XX_CP_SCRATCH_REG(PERF_CNTRS_REG, 1 << i));
          tu_cs_emit_pkt7(&sub_cs, CP_WAIT_FOR_ME, 0);
 
-         device->perfcntrs_pass_cs_entries[i] = tu_cs_end_sub_stream(cs, &sub_cs);
+         device->perfcntrs_pass_cs_entries[i] =
+            tu_cs_end_sub_stream(&device->sub_cs, &sub_cs);
       }
    }
+
+   result = tu_init_bin_preamble(device);
+   if (result != VK_SUCCESS)
+      goto fail_bin_preamble;
 
    if (physical_device->info->a7xx.cmdbuf_start_a725_quirk) {
          result = tu_init_cmdbuf_start_a725_quirk(device);
@@ -2601,18 +2582,12 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
    return VK_SUCCESS;
 
 fail_timeline_cond:
-   if (device->cmdbuf_start_a725_quirk_entry) {
-      free(device->cmdbuf_start_a725_quirk_entry);
-      tu_cs_finish(device->cmdbuf_start_a725_quirk_cs);
-      free(device->cmdbuf_start_a725_quirk_cs);
-   }
 fail_a725_workaround:
+fail_bin_preamble:
 fail_prepare_perfcntrs_pass_cs:
    free(device->perfcntrs_pass_cs_entries);
-   tu_cs_finish(device->perfcntrs_pass_cs);
 fail_perfcntrs_pass_entries_alloc:
-   free(device->perfcntrs_pass_cs);
-fail_perfcntrs_pass_alloc:
+   tu_cs_finish(&device->sub_cs);
    vk_pipeline_cache_destroy(device->mem_cache, &device->vk.alloc);
 fail_pipeline_cache:
    tu_destroy_dynamic_rendering(device);
@@ -2684,10 +2659,10 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
 
    vk_pipeline_cache_destroy(device->mem_cache, &device->vk.alloc);
 
-   if (device->perfcntrs_pass_cs) {
+   tu_cs_finish(&device->sub_cs);
+
+   if (device->perfcntrs_pass_cs_entries) {
       free(device->perfcntrs_pass_cs_entries);
-      tu_cs_finish(device->perfcntrs_pass_cs);
-      free(device->perfcntrs_pass_cs);
    }
 
    if (device->dbg_cmdbuf_stomp_cs) {
@@ -2698,12 +2673,6 @@ tu_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
    if (device->dbg_renderpass_stomp_cs) {
       tu_cs_finish(device->dbg_renderpass_stomp_cs);
       free(device->dbg_renderpass_stomp_cs);
-   }
-
-   if (device->cmdbuf_start_a725_quirk_entry) {
-      free(device->cmdbuf_start_a725_quirk_entry);
-      tu_cs_finish(device->cmdbuf_start_a725_quirk_cs);
-      free(device->cmdbuf_start_a725_quirk_cs);
    }
 
    tu_autotune_fini(&device->autotune, device);

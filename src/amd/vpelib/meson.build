@@ -79,13 +79,16 @@ vpe_files = files(
   'src/utils/inc/fixed31_32.h',
   'src/utils/inc/conversion.h',
   'src/utils/inc/calc_u64.h',
+  'src/utils/inc/vector.h',
   'src/utils/custom_fp16.c',
   'src/utils/custom_float.c',
   'src/utils/conversion.c',
   'src/utils/fixpt31_32.c',
+  'src/utils/vector.c',
   'src/chip/vpe10/inc/vpe10_command.h',
   'src/chip/vpe10/inc/vpe10_plane_desc_writer.h',
   'src/chip/vpe10/inc/vpe10_vpe_desc_writer.h',
+  'src/chip/vpe10/inc/vpe10_config_writer.h',
   'src/chip/vpe10/inc/vpe10_background.h',
   'src/chip/vpe10/inc/vpe10_cm_common.h',
   'src/chip/vpe10/inc/vpe10_vpec.h',
@@ -112,12 +115,14 @@ vpe_files = files(
   'src/chip/vpe10/vpe10_background.c',
   'src/chip/vpe10/vpe10_cdc.c',
   'src/chip/vpe10/vpe10_vpec.c',
+  'src/chip/vpe10/vpe10_config_writer.c',
+  'src/chip/vpe11/inc/vpe11_command.h',
   'src/chip/vpe11/inc/vpe11_cmd_builder.h',
   'src/chip/vpe11/inc/vpe11_resource.h',
   'src/chip/vpe11/inc/vpe11_vpe_desc_writer.h',
   'src/chip/vpe11/vpe11_cmd_builder.c',
   'src/chip/vpe11/vpe11_resource.c',
-  'src/chip/vpe11/vpe11_vpe_desc_writer.c',
+  'src/chip/vpe11/vpe11_vpe_desc_writer.c'
 )
 
 inc_amd_vpe = include_directories(

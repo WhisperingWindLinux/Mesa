@@ -124,8 +124,8 @@ static void override_debug_option(
     if (user_debug->flags.bypass_blndgam)
         debug->bypass_blndgam = user_debug->bypass_blndgam;
 
-    if (user_debug->flags.disable_3dlut_cache)
-        debug->disable_3dlut_cache = user_debug->disable_3dlut_cache;
+    if (user_debug->flags.disable_lut_caching)
+        debug->disable_lut_caching = user_debug->disable_lut_caching;
 }
 
 #ifdef VPE_BUILD_1_1
@@ -172,6 +172,12 @@ struct vpe *vpe_create(const struct vpe_init_data *params)
         return NULL;
     }
 
+    vpe_priv->vpe_cmd_vector =
+        vpe_vector_create(vpe_priv, sizeof(struct vpe_cmd_info), MIN_VPE_CMD);
+    if (!vpe_priv->vpe_cmd_vector) {
+        vpe_free(vpe_priv);
+        return NULL;
+    }
     override_debug_option(&vpe_priv->init.debug, &params->debug);
 
     vpe_color_setup_x_points_distribution();
@@ -201,6 +207,9 @@ void vpe_destroy(struct vpe **vpe)
     vpe_free_output_ctx(vpe_priv);
 
     vpe_free_stream_ctx(vpe_priv);
+
+    if (vpe_priv->vpe_cmd_vector)
+        vpe_vector_free(vpe_priv, vpe_priv->vpe_cmd_vector);
 
     if (vpe_priv->dummy_input_param)
         vpe_free(vpe_priv->dummy_input_param);
@@ -254,26 +263,26 @@ static enum vpe_status populate_bg_stream(struct vpe_priv *vpe_priv, const struc
     surface_info                      = &stream->surface_info;
     scaling_info                      = &stream->scaling_info;
     polyphaseCoeffs                   = &stream->polyphase_scaling_coeffs;
-    surface_info->address.type        = VPE_PLN_ADDR_TYPE_GRAPHICS;
+    surface_info->address.type        = param->dst_surface.address.type;
     surface_info->address.tmz_surface = param->dst_surface.address.tmz_surface;
     surface_info->address.grph.addr.quad_part =
         param->dst_surface.address.grph.addr.quad_part;
 
-    surface_info->swizzle                   = VPE_SW_LINEAR; // treat it as linear for simple
+    surface_info->swizzle                   = param->dst_surface.swizzle; // treat it as linear for simple
     surface_info->plane_size.surface_size.x = 0;
     surface_info->plane_size.surface_size.y = 0;
-    surface_info->plane_size.surface_size.width = VPE_MIN_VIEWPORT_SIZE; // min width in pixels
-    surface_info->plane_size.surface_size.height =
-        VPE_MIN_VIEWPORT_SIZE;                                           // min height in pixels
-    surface_info->plane_size.surface_pitch          = 256 / 4;           // pitch in pixels
-    surface_info->plane_size.surface_aligned_height = VPE_MIN_VIEWPORT_SIZE;
+    // min width & height in pixels
+    surface_info->plane_size.surface_size.width     = VPE_MIN_VIEWPORT_SIZE;
+    surface_info->plane_size.surface_size.height    = VPE_MIN_VIEWPORT_SIZE;
+    surface_info->plane_size.surface_pitch          = param->dst_surface.plane_size.surface_pitch;
+    surface_info->plane_size.surface_aligned_height = param->dst_surface.plane_size.surface_aligned_height;
     surface_info->dcc.enable                        = false;
-    surface_info->format                            = VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA8888;
-    surface_info->cs.encoding                       = VPE_PIXEL_ENCODING_RGB;
-    surface_info->cs.range                          = VPE_COLOR_RANGE_FULL;
-    surface_info->cs.tf                             = VPE_TF_G22;
-    surface_info->cs.cositing                       = VPE_CHROMA_COSITING_NONE;
-    surface_info->cs.primaries                      = VPE_PRIMARIES_BT709;
+    surface_info->format                            = param->dst_surface.format;
+    surface_info->cs.encoding                       = param->dst_surface.cs.encoding;
+    surface_info->cs.range                          = param->dst_surface.cs.range;
+    surface_info->cs.tf                             = param->dst_surface.cs.tf;
+    surface_info->cs.cositing                       = param->dst_surface.cs.cositing;
+    surface_info->cs.primaries                      = param->dst_surface.cs.primaries;
     scaling_info->src_rect.x                        = 0;
     scaling_info->src_rect.y                        = 0;
     scaling_info->src_rect.width                    = VPE_MIN_VIEWPORT_SIZE;
@@ -440,11 +449,15 @@ enum vpe_status vpe_check_support(
     }
 
     if (param->num_streams == 0 || vpe_priv->init.debug.bg_color_fill_only) {
-        vpe_free_stream_ctx(vpe_priv);
-        vpe_priv->stream_ctx = vpe_alloc_stream_ctx(vpe_priv, 1);
-        vpe_priv->num_streams = required_virtual_streams;
-        vpe_priv->num_virtual_streams = required_virtual_streams;
-        vpe_priv->num_input_streams = 0;
+        if (!((vpe_priv->num_streams == 1) &&
+            (vpe_priv->num_virtual_streams == 1) &&
+            (vpe_priv->num_input_streams == 0))) {
+            vpe_free_stream_ctx(vpe_priv);
+            vpe_priv->stream_ctx = vpe_alloc_stream_ctx(vpe_priv, 1);
+            vpe_priv->num_streams = required_virtual_streams;
+            vpe_priv->num_virtual_streams = required_virtual_streams;
+            vpe_priv->num_input_streams = 0;
+        }
 
         if (!vpe_priv->stream_ctx)
             status = VPE_STATUS_NO_MEMORY;
@@ -491,7 +504,7 @@ enum vpe_status vpe_check_support(
         output_ctx->flags.hdr_metadata = param->flags.hdr_metadata;
         output_ctx->hdr_metadata       = param->hdr_metadata;
 
-        vpe_priv->num_vpe_cmds      = 0;
+        vpe_vector_clear(vpe_priv->vpe_cmd_vector);
         output_ctx->clamping_params = vpe_priv->init.debug.clamping_params;
     }
 
@@ -618,6 +631,7 @@ enum vpe_status vpe_build_commands(
     int64_t               emb_buf_size;
     uint64_t              cmd_buf_gpu_a, cmd_buf_cpu_a;
     uint64_t              emb_buf_gpu_a, emb_buf_cpu_a;
+    struct vpe_cmd_info  *cmd_info;
 
     if (!vpe || !param || !bufs)
         return VPE_STATUS_ERROR;
@@ -636,9 +650,7 @@ enum vpe_status vpe_build_commands(
     }
 
     if (status == VPE_STATUS_OK) {
-        if (param->streams->flags.geometric_scaling) {
-            vpe_geometric_scaling_feature_skip(vpe_priv, param);
-        }
+        vpe_geometric_scaling_feature_skip(vpe_priv, param);
 
         if (bufs->cmd_buf.size == 0 || bufs->emb_buf.size == 0) {
             /* Here we directly return without setting ops_support to false
@@ -670,7 +682,7 @@ enum vpe_status vpe_build_commands(
     curr_bufs = *bufs;
 
     // copy the param, reset saved configs
-    for (i = 0; i < param->num_streams; i++) {
+    for (i = 0; i < vpe_priv->num_streams; i++) {
         vpe_priv->stream_ctx[i].num_configs = 0;
         for (j = 0; j < VPE_CMD_TYPE_COUNT; j++)
             vpe_priv->stream_ctx[i].num_stream_op_configs[j] = 0;
@@ -717,22 +729,25 @@ enum vpe_status vpe_build_commands(
             }
         }
 #endif
-        for (cmd_idx = 0; cmd_idx < vpe_priv->num_vpe_cmds; cmd_idx++) {
+        for (cmd_idx = 0; cmd_idx < vpe_priv->vpe_cmd_vector->num_elements; cmd_idx++) {
             status = builder->build_vpe_cmd(vpe_priv, &curr_bufs, cmd_idx);
             if (status != VPE_STATUS_OK) {
                 vpe_log("failed in building vpe cmd %d\n", (int)status);
             }
 
 #ifdef VPE_BUILD_1_1
-            if ((vpe_priv->collaboration_mode == true) &&
-                (vpe_priv->vpe_cmd_info[cmd_idx].insert_end_csync == true)) {
+            cmd_info = vpe_vector_get(vpe_priv->vpe_cmd_vector, cmd_idx);
+            if (cmd_info == NULL)
+                return VPE_STATUS_ERROR;
+
+            if ((vpe_priv->collaboration_mode == true) && (cmd_info->insert_end_csync == true)) {
                 status = builder->build_collaborate_sync_cmd(vpe_priv, &curr_bufs);
                 if (status != VPE_STATUS_OK) {
                     vpe_log("failed in building collaborate sync cmd %d\n", (int)status);
                 }
 
                 // Add next collaborate sync start command when this vpe_cmd isn't the final one.
-                if (cmd_idx < (uint32_t)(vpe_priv->num_vpe_cmds - 1)) {
+                if (cmd_idx < (uint32_t)(vpe_priv->vpe_cmd_vector->num_elements - 1)) {
                     status = builder->build_collaborate_sync_cmd(vpe_priv, &curr_bufs);
                     if (status != VPE_STATUS_OK) {
                         vpe_log("failed in building collaborate sync cmd %d\n", (int)status);

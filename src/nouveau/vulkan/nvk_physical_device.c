@@ -21,6 +21,12 @@
 #include "util/disk_cache.h"
 #include "util/mesa-sha1.h"
 
+#if DETECT_OS_ANDROID
+#include <vulkan/vk_android_native_buffer.h>
+#include "util/u_gralloc/u_gralloc.h"
+#endif
+
+#include "vk_android.h"
 #include "vk_device.h"
 #include "vk_drm_syncobj.h"
 #include "vk_shader_module.h"
@@ -71,6 +77,10 @@ nvk_get_vk_version(const struct nv_device_info *info)
    /* If we're using codegen for anything, lock to version 1.0 */
    if (!nvk_use_nak(info))
       return VK_MAKE_VERSION(1, 0, VK_HEADER_VERSION);
+
+#if defined(ANDROID_STRICT) && ANDROID_API_LEVEL <= 32
+   return VK_MAKE_VERSION(1, 1, VK_HEADER_VERSION);
+#endif
 
    return VK_MAKE_VERSION(1, 3, VK_HEADER_VERSION);
 }
@@ -260,6 +270,12 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .NV_shader_sm_builtins = true,
       .VALVE_mutable_descriptor_type = true,
    };
+
+#if DETECT_OS_ANDROID
+   if (vk_android_get_ugralloc() != NULL) {
+      ext->ANDROID_native_buffer = true;
+   }
+#endif
 }
 
 static void
@@ -1352,9 +1368,11 @@ nvk_create_drm_physical_device(struct vk_instance *_instance,
 
    pdev->vk.supported_sync_types = nvkmd->sync_types;
 
+#ifdef NVK_USE_WSI_PLATFORM
    result = nvk_init_wsi(pdev);
    if (result != VK_SUCCESS)
       goto fail_disk_cache;
+#endif
 
    *pdev_out = &pdev->vk;
 
@@ -1378,7 +1396,9 @@ nvk_physical_device_destroy(struct vk_physical_device *vk_pdev)
    struct nvk_physical_device *pdev =
       container_of(vk_pdev, struct nvk_physical_device, vk);
 
+#ifdef NVK_USE_WSI_PLATFORM
    nvk_finish_wsi(pdev);
+#endif
    nvk_physical_device_free_disk_cache(pdev);
    nak_compiler_destroy(pdev->nak);
    nvkmd_pdev_destroy(pdev->nvkmd);

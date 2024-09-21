@@ -29,7 +29,10 @@
 
 #include "c11/threads.h"
 #include "util/list.h"
+#include "util/simple_mtx.h"
 #include "util/u_debug.h"
+
+#include "renderdoc_app.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -173,6 +176,10 @@ struct vk_instance {
 
    uint32_t trace_frame;
    char *trace_trigger_file;
+
+   /** For triggering renderdoc captures from inside the driver. */
+   simple_mtx_t renderdoc_mtx;
+   RENDERDOC_API_1_0_0 *renderdoc_api;
 };
 
 VK_DEFINE_HANDLE_CASTS(vk_instance, base, VkInstance,
@@ -245,6 +252,10 @@ vk_instance_add_driver_trace_modes(struct vk_instance *instance,
 
 uint32_t
 vk_get_negotiated_icd_version(void);
+
+void vk_instance_start_renderdoc_capture(struct vk_instance *instance);
+
+void vk_instance_end_renderdoc_capture(struct vk_instance *instance);
 
 #ifdef __cplusplus
 }

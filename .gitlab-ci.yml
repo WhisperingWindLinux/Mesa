@@ -74,6 +74,8 @@ variables:
           set +o xtrace
   S3_JWT_FILE: /s3_jwt
   S3_HOST: s3.freedesktop.org
+  # This bucket is used to fetch ANDROID prebuilts and images
+  S3_ANDROID_BUCKET: mesa-rootfs
   # This bucket is used to fetch the kernel image
   S3_KERNEL_BUCKET: mesa-rootfs
   # Bucket for git cache

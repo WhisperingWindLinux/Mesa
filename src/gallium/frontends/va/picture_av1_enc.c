@@ -593,7 +593,8 @@ static void av1_frame_header(vlVaContext *context, struct vl_vlc *vlc)
 {
    struct pipe_av1_enc_picture_desc *av1 = &context->desc.av1enc;
    uint32_t frame_type;
-   uint32_t id_len, all_frames, show_frame;
+   uint32_t id_len = 0;
+   uint32_t all_frames, show_frame;
 
    bool frame_is_intra = false;
 

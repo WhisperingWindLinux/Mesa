@@ -309,3 +309,6 @@ asan-KHR-GLES31.core.geometry_shader.input.gl_position_value
 asan-KHR-GLES31.core.geometry_shader.primitive_counter.lines_to_points_rp
 asan-KHR-GL31.ext_texture_shadow_lod.texturelodoffset.sampler2darrayshadow_vertex
 
+# Slow tests (> 1 minute to run)
+ubsan-dEQP-VK.ssbo.layout.basic_unsized_array.std430.row_major_mat4_comp_access_store_cols
+ubsan-dEQP-VK.ssbo.layout.random.16bit.all_shared_buffer.33

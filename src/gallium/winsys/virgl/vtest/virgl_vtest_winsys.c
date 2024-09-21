@@ -32,6 +32,7 @@
 
 #include "virgl_vtest_winsys.h"
 #include "virgl_vtest_public.h"
+#include "virtio-gpu/virgl_protocol.h"
 
 /* Gets a pointer to the virgl_hw_res containing the pointed to cache entry. */
 #define cache_entry_container_res(ptr) \
@@ -274,9 +275,9 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
    res->height = height;
    res->width = width;
    res->size = size;
-   virgl_vtest_send_resource_create(vtws, handle, target, pipe_to_virgl_format(format), bind,
-                                    width, height, depth, array_size,
-                                    last_level, nr_samples, size, &fd);
+   handle = virgl_vtest_send_resource_create(vtws, handle, target, pipe_to_virgl_format(format), bind,
+                                             width, height, depth, array_size,
+                                             last_level, nr_samples, size, &fd);
 
    if (vtws->protocol_version >= 2) {
       if (res->size == 0) {
@@ -363,6 +364,88 @@ static void virgl_vtest_resource_wait(struct virgl_winsys *vws,
 }
 
 static struct virgl_hw_res *
+virgl_vtest_winsys_resource_create_blob(struct virgl_winsys *vws,
+                                        enum pipe_texture_target target,
+                                        uint32_t format,
+                                        uint32_t bind,
+                                        uint32_t width,
+                                        uint32_t height,
+                                        uint32_t depth,
+                                        uint32_t array_size,
+                                        uint32_t last_level,
+                                        uint32_t nr_samples,
+                                        uint32_t flags,
+                                        uint32_t size)
+{
+   uint32_t cmd[VIRGL_PIPE_RES_CREATE_SIZE + 1] = { 0 };
+   struct virgl_vtest_winsys *vvws = virgl_vtest_winsys(vws);
+   struct virgl_hw_res *res = NULL;
+   struct virgl_resource_params params = { .size = size,
+                                          .bind = bind,
+                                          .format = format,
+                                          .flags = flags,
+                                          .nr_samples = nr_samples,
+                                          .width = width,
+                                          .height = height,
+                                          .depth = depth,
+                                          .array_size = array_size,
+                                          .last_level = last_level,
+                                          .target = target };
+
+   res = CALLOC_STRUCT(virgl_hw_res);
+   if (!res)
+      return NULL;
+
+   /* Make sure blob is page aligned. */
+   if (flags & (VIRGL_RESOURCE_FLAG_MAP_PERSISTENT |
+                VIRGL_RESOURCE_FLAG_MAP_COHERENT)) {
+      width = ALIGN(width, getpagesize());
+      size = ALIGN(size, getpagesize());
+   }
+
+   int32_t blob_id = p_atomic_inc_return(&vvws->blob_id);
+   cmd[0] = VIRGL_CMD0(VIRGL_CCMD_PIPE_RESOURCE_CREATE, 0, VIRGL_PIPE_RES_CREATE_SIZE);
+   cmd[VIRGL_PIPE_RES_CREATE_FORMAT] = format;
+   cmd[VIRGL_PIPE_RES_CREATE_BIND] = bind;
+   cmd[VIRGL_PIPE_RES_CREATE_TARGET] = target;
+   cmd[VIRGL_PIPE_RES_CREATE_WIDTH] = width;
+   cmd[VIRGL_PIPE_RES_CREATE_HEIGHT] = height;
+   cmd[VIRGL_PIPE_RES_CREATE_DEPTH] = depth;
+   cmd[VIRGL_PIPE_RES_CREATE_ARRAY_SIZE] = array_size;
+   cmd[VIRGL_PIPE_RES_CREATE_LAST_LEVEL] = last_level;
+   cmd[VIRGL_PIPE_RES_CREATE_NR_SAMPLES] = nr_samples;
+   cmd[VIRGL_PIPE_RES_CREATE_FLAGS] = flags;
+   cmd[VIRGL_PIPE_RES_CREATE_BLOB_ID] = blob_id;
+
+   virgl_vtest_send_cmd(vvws, cmd, VIRGL_PIPE_RES_CREATE_SIZE + 1);
+   int fd = -1;
+   virgl_vtest_send_create_blob(vvws, size, blob_id, res, &fd);
+
+   res->bind = bind;
+
+   //res->bo_handle = drm_rc_blob.bo_handle;
+   res->size = size;
+   //res->flags = flags;
+   pipe_reference_init(&res->reference, 1);
+   p_atomic_set(&res->num_cs_references, 0);
+   virgl_resource_cache_entry_init(&res->cache_entry, params);
+
+   res->ptr = os_mmap(NULL, res->size, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
+
+   if (res->ptr == MAP_FAILED) {
+      fprintf(stderr, "Client failed to map blob memory region\n");
+      close(fd);
+      FREE(res);
+      return NULL;
+   }
+
+   close(fd);
+
+   return res;
+}
+
+
+static struct virgl_hw_res *
 virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
                                          enum pipe_texture_target target,
                                          const void *map_front_private,
@@ -408,10 +491,18 @@ virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
    mtx_unlock(&vtws->mutex);
 
 alloc:
-   res = virgl_vtest_winsys_resource_create(vws, target, map_front_private,
-                                            format, bind, width, height, depth,
-                                            array_size, last_level, nr_samples,
-                                            size);
+
+   if (flags & (VIRGL_RESOURCE_FLAG_MAP_PERSISTENT |
+                VIRGL_RESOURCE_FLAG_MAP_COHERENT))
+      res = virgl_vtest_winsys_resource_create_blob(vws, target, format, bind,
+                                                    width, height, depth,
+                                                    array_size, last_level,
+                                                    nr_samples, flags, size);
+   else
+      res = virgl_vtest_winsys_resource_create(vws, target, map_front_private,
+                                               format, bind, width, height, depth,
+                                               array_size, last_level, nr_samples,
+                                               size);
    return res;
 }
 
@@ -737,6 +828,7 @@ virgl_vtest_winsys_wrap(struct sw_winsys *sws)
    vtws->base.fence_reference = virgl_fence_reference;
    vtws->base.supports_fences =  0;
    vtws->base.supports_encoded_transfers = (vtws->protocol_version >= 2);
+   vtws->base.supports_coherent = 1;
 
    vtws->base.flush_frontbuffer = virgl_vtest_flush_frontbuffer;
 

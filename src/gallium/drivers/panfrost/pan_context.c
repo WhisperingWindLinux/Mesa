@@ -281,15 +281,29 @@ panfrost_set_shader_images(struct pipe_context *pctx,
 
       struct panfrost_resource *rsrc = pan_resource(image->resource);
 
-      /* Images don't work with AFBC/AFRC, since they require pixel-level
-       * granularity */
+      /* Images don't work with AFBC, since they require pixel-level granularity
+       */
       if (drm_is_afbc(rsrc->image.layout.modifier) ||
           drm_is_afrc(rsrc->image.layout.modifier)) {
+         /* we have to save and restore the shader image mask and resources we are
+            currently constructing, because the blit may disturb them */
+         struct pipe_image_view save_images[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_IMAGES];
+         uint32_t save_image_mask[PIPE_SHADER_TYPES];
+
+         /* save */
+         memcpy(save_images, ctx->images, sizeof(ctx->images));
+         memcpy(save_image_mask, ctx->image_mask, sizeof(ctx->image_mask));
+         /* zero out so the blit shader doesn't use our images */
+         memset(ctx->images, 0, sizeof(ctx->images));
+         memset(ctx->image_mask, 0, sizeof(ctx->image_mask));
+         /* convert (possibly using a blit shader) */
          pan_resource_modifier_convert(
             ctx, rsrc, DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED, true,
-            "Shader image");
+            "Shader image access");
+         /* restore the shader image info we were constructing */
+         memcpy(ctx->images, save_images, sizeof(ctx->images));
+         memcpy(ctx->image_mask, save_image_mask, sizeof(ctx->image_mask));
       }
-
       util_copy_image_view(&ctx->images[shader][start_slot + i], image);
    }
 

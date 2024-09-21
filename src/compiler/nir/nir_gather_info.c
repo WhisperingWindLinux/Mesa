@@ -226,6 +226,10 @@ mark_whole_variable(nir_shader *shader, nir_variable *var,
    set_io_mask(shader, var, 0, slots, deref, is_output_read);
 }
 
+/* This function returns an offset to a field or array element of the io
+ * variable that is being dereferenced. If an array element is being accessed
+ * via a non constant index or a wildcard -1 is returned.
+ */
 static unsigned
 get_io_offset(nir_deref_instr *deref, nir_variable *var, bool is_arrayed,
               bool skip_non_arrayed)
@@ -235,6 +239,10 @@ get_io_offset(nir_deref_instr *deref, nir_variable *var, bool is_arrayed,
          assert(glsl_type_is_array(var->type));
          return 0;
       }
+
+      if (deref->deref_type == nir_deref_type_array_wildcard)
+         return -1;
+
       assert(deref->deref_type == nir_deref_type_array);
       return nir_src_is_const(deref->arr.index) ? (nir_src_as_uint(deref->arr.index) + var->data.location_frac) / 4u : (unsigned)-1;
    }

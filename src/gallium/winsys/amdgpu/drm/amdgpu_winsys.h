@@ -14,6 +14,7 @@
 #include "util/simple_mtx.h"
 #include "util/u_queue.h"
 #include <amdgpu.h>
+#include "amdgpu_userq.h"
 
 struct amdgpu_cs;
 
@@ -166,6 +167,7 @@ struct amdgpu_queue {
 
    /* The last context using this queue. */
    struct amdgpu_ctx *last_ctx;
+   struct amdgpu_userq userq;
 };
 
 /* This is part of every BO. */
@@ -253,6 +255,16 @@ struct amdgpu_winsys {
     * for invoking them because sws_list can be NULL.
     */
    struct amdgpu_screen_winsys dummy_sws;
+
+   /*
+    * In case of userq, mesa should ensure that VM page tables are available
+    * when jobs are executed. For this  VM ioctl now outputs timeline syncobj.
+    * This timeline syncobj output will be used as one of the dependency
+    * fences in userq wait ioctl.
+    */
+   uint32_t vm_timeline_syncobj;
+   uint64_t vm_timeline_seq_num;
+   simple_mtx_t vm_ioctl_lock;
 };
 
 static inline struct amdgpu_screen_winsys *

@@ -60,6 +60,9 @@ static bool do_winsys_init(struct amdgpu_winsys *aws,
    aws->zero_all_vram_allocs = strstr(debug_get_option("R600_DEBUG", ""), "zerovram") != NULL ||
                               driQueryOptionb(config->options, "radeonsi_zerovram");
 
+   for (unsigned i = 0; i < ARRAY_SIZE(aws->queues); i++)
+      simple_mtx_init(&aws->queues[i].userq.lock, mtx_plain);
+
    return true;
 
 fail:
@@ -77,13 +80,16 @@ static void do_winsys_deinit(struct amdgpu_winsys *aws)
       for (unsigned j = 0; j < ARRAY_SIZE(aws->queues[i].fences); j++)
          amdgpu_fence_reference(&aws->queues[i].fences[j], NULL);
 
+      if (aws->queues[i].userq.init_once)
+         amdgpu_userq_free(aws, &aws->queues[i].userq);
+      simple_mtx_destroy(&aws->queues[i].userq.lock);
+
       amdgpu_ctx_reference(&aws->queues[i].last_ctx, NULL);
    }
 
    if (util_queue_is_initialized(&aws->cs_queue))
       util_queue_destroy(&aws->cs_queue);
 
-   simple_mtx_destroy(&aws->bo_fence_lock);
    if (aws->bo_slabs.groups)
       pb_slabs_deinit(&aws->bo_slabs);
    pb_cache_deinit(&aws->bo_cache);
@@ -96,6 +102,9 @@ static void do_winsys_deinit(struct amdgpu_winsys *aws)
 
    ac_addrlib_destroy(aws->addrlib);
    amdgpu_device_deinitialize(aws->dev);
+   drmSyncobjDestroy(aws->fd, aws->vm_timeline_syncobj);
+   simple_mtx_destroy(&aws->bo_fence_lock);
+
    FREE(aws);
 }
 
@@ -447,6 +456,10 @@ amdgpu_winsys_create(int fd, const struct pipe_screen_config *config,
       }
       aws->info.drm_major = drm_major;
       aws->info.drm_minor = drm_minor;
+
+      if (amdgpu_cs_create_syncobj2(dev, 0, &aws->vm_timeline_syncobj))
+         goto fail_alloc;
+      simple_mtx_init(&aws->vm_ioctl_lock, mtx_plain);
 
       /* Only aws and buffer functions are used. */
       aws->dummy_sws.aws = aws;

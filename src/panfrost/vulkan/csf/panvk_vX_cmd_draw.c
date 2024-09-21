@@ -1185,10 +1185,12 @@ clear_dirty(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
             ? panvk_priv_mem_dev_addr(vs->spds.pos_points)
             : panvk_priv_mem_dev_addr(vs->spds.pos_triangles);
       cmdbuf->state.gfx.vs.spds.var = panvk_priv_mem_dev_addr(vs->spds.var);
+      cmdbuf->state.gfx.vs.dirty = false;
    }
 
    cmdbuf->state.gfx.fs.spd = fs ? panvk_priv_mem_dev_addr(fs->spd) : 0;
 
+   cmdbuf->state.gfx.vb.dirty = false;
    if (draw->index.size)
       cmdbuf->state.gfx.ib.dirty = false;
 
@@ -1275,27 +1277,49 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
       vs->info.vs.writes_point_size &&
       ia->primitive_topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 
-   pan_pack(&tiler_idvs_flags, PRIMITIVE_FLAGS, cfg) {
-      cfg.draw_mode = translate_prim_topology(ia->primitive_topology);
-      cfg.index_type = index_size_to_index_type(draw->index.size);
+   bool ss_dirty = cmdbuf->state.gfx.vs.dirty ||
+                   /* fs_required() uses ms.alpha_to_coverage_enable
+                    * and vk_color_blend_state
+                    */
+                   is_dirty(cmdbuf, MS_ALPHA_TO_COVERAGE_ENABLE) ||
+                   is_dirty(cmdbuf, CB_ATTACHMENT_COUNT) ||
+                   is_dirty(cmdbuf, CB_COLOR_WRITE_ENABLES) ||
+                   is_dirty(cmdbuf, CB_WRITE_MASKS) ||
+                   cmdbuf->state.gfx.fs.spd != panvk_priv_mem_dev_addr(fs->spd);
 
-      if (writes_point_size) {
-         cfg.point_size_array_format = MALI_POINT_SIZE_ARRAY_FORMAT_FP16;
-         cfg.position_fifo_format = MALI_FIFO_FORMAT_EXTENDED;
-      } else {
-         cfg.point_size_array_format = MALI_POINT_SIZE_ARRAY_FORMAT_NONE;
-         cfg.position_fifo_format = MALI_FIFO_FORMAT_BASIC;
+   /* Pack with nodefaults so only explicitly set fields affect the
+    * previously set register values */
+   pan_pack_nodefaults(&tiler_idvs_flags, PRIMITIVE_FLAGS, cfg) {
+      if (is_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY))
+         cfg.draw_mode = translate_prim_topology(ia->primitive_topology);
+      if (cmdbuf->state.gfx.vs.dirty ||
+          is_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY)) {
+         if (writes_point_size) {
+            cfg.point_size_array_format = MALI_POINT_SIZE_ARRAY_FORMAT_FP16;
+            cfg.position_fifo_format = MALI_FIFO_FORMAT_EXTENDED;
+         } else {
+            cfg.point_size_array_format = MALI_POINT_SIZE_ARRAY_FORMAT_NONE;
+            cfg.position_fifo_format = MALI_FIFO_FORMAT_BASIC;
+         }
       }
 
-      if (vs->info.outputs_written & VARYING_BIT_LAYER) {
+      if (cmdbuf->state.gfx.vs.dirty &&
+         (vs->info.outputs_written & VARYING_BIT_LAYER)) {
          cfg.layer_index_enable = true;
          cfg.position_fifo_format = MALI_FIFO_FORMAT_EXTENDED;
       }
 
-      cfg.secondary_shader =
-         vs->info.vs.secondary_enable && fs_required(cmdbuf);
-      cfg.primitive_restart = ia->primitive_restart_enable;
+      if (ss_dirty)
+         cfg.secondary_shader =
+            vs->info.vs.secondary_enable && fs_required(cmdbuf);
+      if (is_dirty(cmdbuf, IA_PRIMITIVE_RESTART_ENABLE))
+         cfg.primitive_restart = ia->primitive_restart_enable;
    }
+
+   if (is_dirty(cmdbuf, IA_PRIMITIVE_RESTART_ENABLE) ||
+       is_dirty(cmdbuf, IA_PRIMITIVE_TOPOLOGY) || ss_dirty)
+      cs_update_vt_ctx(b)
+         cs_move32_to(b, cs_sr_reg32(b, 56), tiler_idvs_flags.opaque[0]);
 
    uint32_t varying_size = 0;
 
@@ -1329,10 +1353,6 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
                                            cmdbuf->state.gfx.ib.offset));
       }
 
-      /* TODO: Revisit to avoid passing everything through the override flags
-       * (likely needed for state preservation in secondary command buffers). */
-      cs_move32_to(b, cs_sr_reg32(b, 56), 0);
-
       cs_move32_to(b, cs_sr_reg32(b, 48), varying_size);
 
       result = prepare_blend(cmdbuf);
@@ -1347,6 +1367,13 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
       prepare_vp(cmdbuf);
    }
 
+   struct mali_primitive_flags_packed flags_override;
+   /* Pack with nodefaults so only explicitly set override fields affect the
+    * previously set register values */
+   pan_pack_nodefaults(&flags_override, PRIMITIVE_FLAGS, cfg) {
+      cfg.index_type = index_size_to_index_type(draw->index.size);
+   };
+
    clear_dirty(cmdbuf, draw);
 
    uint32_t idvs_count = DIV_ROUND_UP(cmdbuf->state.gfx.render.layer_count,
@@ -1360,7 +1387,7 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
       cs_move32_to(b, counter_reg, idvs_count);
 
       cs_while(b, MALI_CS_CONDITION_GREATER, counter_reg) {
-         cs_run_idvs(b, tiler_idvs_flags.opaque[0], false, true,
+         cs_run_idvs(b, flags_override.opaque[0], false, true,
                      cs_shader_res_sel(0, 0, 1, 0),
                      cs_shader_res_sel(2, 2, 2, 0), cs_undef());
 
@@ -1376,11 +1403,32 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
                   -(idvs_count * pan_size(TILER_CONTEXT)));
       }
    } else {
-      cs_run_idvs(b, tiler_idvs_flags.opaque[0], false, true,
+      cs_run_idvs(b, flags_override.opaque[0], false, true,
                   cs_shader_res_sel(0, 0, 1, 0), cs_shader_res_sel(2, 2, 2, 0),
                   cs_undef());
    }
    cs_req_res(b, 0);
+}
+
+void
+panvk_per_arch(cmd_prepare_exec_cmds)(struct panvk_cmd_buffer *cmdbuf)
+{
+   const struct panvk_shader *vs = cmdbuf->state.gfx.vs.shader;
+   VkResult result;
+
+   /* FIXME: support non-IDVS. */
+   if (vs)
+      assert(vs->info.vs.idvs);
+
+   if (cmdbuf->vk.render_pass) {
+      result = get_tiler_desc(cmdbuf);
+      if (result != VK_SUCCESS)
+         return;
+
+      result = get_fb_descs(cmdbuf);
+      if (result != VK_SUCCESS)
+         return;
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -2221,6 +2269,7 @@ panvk_per_arch(CmdBindVertexBuffers)(VkCommandBuffer commandBuffer,
       MAX2(cmdbuf->state.gfx.vb.count, firstBinding + bindingCount);
    memset(&cmdbuf->state.gfx.vs.desc.driver_set, 0,
           sizeof(cmdbuf->state.gfx.vs.desc.driver_set));
+   cmdbuf->state.gfx.vb.dirty = true;
 }
 
 VKAPI_ATTR void VKAPI_CALL

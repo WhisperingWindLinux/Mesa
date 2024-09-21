@@ -48,6 +48,7 @@
 
 #include "vk_descriptor_update_template.h"
 #include "vk_format.h"
+#include "vk_render_pass.h"
 #include "vk_synchronization.h"
 
 static void
@@ -124,9 +125,9 @@ finish_cs(struct panvk_cmd_buffer *cmdbuf, uint32_t subqueue)
       cs_load32_to(b, error, debug_sync_addr,
                    offsetof(struct panvk_cs_sync32, error));
       cs_wait_slots(b, SB_ALL_MASK, false);
-      cs_sync32_add(b, true, MALI_CS_SYNC_SCOPE_SYSTEM, one, debug_sync_addr,
-                    cs_now());
-
+      if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+         cs_sync32_add(b, true, MALI_CS_SYNC_SCOPE_SYSTEM, one,
+                       debug_sync_addr, cs_now());
       cs_match(b, error, cmp_scratch) {
          cs_case(b, 0) {
             /* Do nothing. */
@@ -680,6 +681,66 @@ const struct vk_command_buffer_ops panvk_per_arch(cmd_buffer_ops) = {
    .destroy = panvk_destroy_cmdbuf,
 };
 
+static void
+panvk_cmd_inheritance_rendering_init_state(
+   struct panvk_cmd_buffer *cmdbuf,
+   const VkCommandBufferBeginInfo *pBeginInfo,
+   const VkCommandBufferInheritanceRenderingInfo *inheritanceInfo)
+{
+   struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
+   struct panvk_physical_device *phys_dev =
+      to_panvk_physical_device(dev->vk.physical);
+   struct pan_fb_info *fbinfo = &cmdbuf->state.gfx.render.fb.info;
+
+   cmdbuf->state.gfx.render.flags = inheritanceInfo->flags;
+
+   /* Resuming from a suspended pass, the state should be unchanged. */
+   if (cmdbuf->state.gfx.render.flags & VK_RENDERING_RESUMING_BIT)
+      return;
+
+   cmdbuf->state.gfx.render.dirty = true;
+   memset(cmdbuf->state.gfx.render.fb.crc_valid, 0,
+          sizeof(cmdbuf->state.gfx.render.fb.crc_valid));
+   memset(&cmdbuf->state.gfx.render.color_attachments, 0,
+          sizeof(cmdbuf->state.gfx.render.color_attachments));
+   memset(&cmdbuf->state.gfx.render.z_attachment, 0,
+          sizeof(cmdbuf->state.gfx.render.z_attachment));
+   memset(&cmdbuf->state.gfx.render.s_attachment, 0,
+          sizeof(cmdbuf->state.gfx.render.s_attachment));
+   cmdbuf->state.gfx.render.bound_attachments = 0;
+
+   cmdbuf->state.gfx.render.layer_count = 0;
+   *fbinfo = (struct pan_fb_info){
+      .tile_buf_budget = panfrost_query_optimal_tib_size(phys_dev->model),
+      .nr_samples = 1,
+      .rt_count = inheritanceInfo->colorAttachmentCount,
+   };
+
+   assert(inheritanceInfo->colorAttachmentCount <= ARRAY_SIZE(fbinfo->rts));
+
+   for (uint32_t i = 0; i < inheritanceInfo->colorAttachmentCount; i++) {
+      cmdbuf->state.gfx.render.bound_attachments |=
+         MESA_VK_RP_ATTACHMENT_COLOR_BIT(i);
+      cmdbuf->state.gfx.render.color_attachments.fmts[i] =
+         inheritanceInfo->pColorAttachmentFormats[i];
+      cmdbuf->state.gfx.render.color_attachments.samples[i] =
+         inheritanceInfo->rasterizationSamples;
+   }
+
+   /* TODO: depthAttachmentFormat and stencilAttachmentFormat */
+   const VkRenderingAttachmentLocationInfoKHR att_loc_info_default = {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+      .colorAttachmentCount = inheritanceInfo->colorAttachmentCount,
+   };
+   const VkRenderingAttachmentLocationInfoKHR *att_loc_info =
+      vk_get_command_buffer_rendering_attachment_location_info(
+         cmdbuf->vk.level, pBeginInfo);
+   if (att_loc_info == NULL)
+      att_loc_info = &att_loc_info_default;
+
+   vk_cmd_set_rendering_attachment_locations(&cmdbuf->vk, att_loc_info);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_per_arch(BeginCommandBuffer)(VkCommandBuffer commandBuffer,
                                    const VkCommandBufferBeginInfo *pBeginInfo)
@@ -702,5 +763,103 @@ panvk_per_arch(BeginCommandBuffer)(VkCommandBuffer commandBuffer,
    if (instance->debug_flags & PANVK_DEBUG_TRACE)
       cmdbuf->flags &= ~VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
+   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_SECONDARY &&
+       (pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)) {
+      assert(pBeginInfo->pInheritanceInfo);
+      char gcbiar_data[VK_GCBIARR_DATA_SIZE(MAX_RTS)];
+      const VkRenderingInfo *resume_info =
+         vk_get_command_buffer_inheritance_as_rendering_resume(cmdbuf->vk.level,
+                                                               pBeginInfo,
+                                                               gcbiar_data);
+
+      if (resume_info) {
+         panvk_per_arch(CmdBeginRendering)(panvk_cmd_buffer_to_handle(cmdbuf),
+                                           resume_info);
+      } else {
+         const VkCommandBufferInheritanceRenderingInfo *inheritance_info =
+            vk_get_command_buffer_inheritance_rendering_info(cmdbuf->vk.level,
+                                                             pBeginInfo);
+         assert(inheritance_info);
+
+         panvk_cmd_inheritance_rendering_init_state(cmdbuf, pBeginInfo,
+                                                    inheritance_info);
+      }
+   }
+
    return VK_SUCCESS;
+}
+
+static void
+panvk_cmd_invalidate_state(struct panvk_cmd_buffer *cmdbuf)
+{
+   /* From the Vulkan 1.3.275 spec:
+    *
+    *    "...There is one exception to this rule - if the primary command
+    *    buffer is inside a render pass instance, then the render pass and
+    *    subpass state is not disturbed by executing secondary command
+    *    buffers."
+    *
+    * We need to reset everything EXCEPT the render pass state.
+    */
+   struct panvk_rendering_state render_save = cmdbuf->state.gfx.render;
+   memset(&cmdbuf->state.gfx, 0, sizeof(cmdbuf->state.gfx));
+   cmdbuf->state.gfx.render = render_save;
+
+   cmdbuf->state.gfx.vs.dirty = true;
+   cmdbuf->state.gfx.vb.dirty = true;
+   cmdbuf->state.gfx.ib.dirty = true;
+
+   vk_dynamic_graphics_state_dirty_all(&cmdbuf->vk.dynamic_graphics_state);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+panvk_per_arch(CmdExecuteCommands)(VkCommandBuffer commandBuffer,
+                                   uint32_t commandBufferCount,
+                                   const VkCommandBuffer *pCommandBuffers)
+{
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+
+   if (commandBufferCount == 0)
+      return;
+
+   /* make sure the CS context is setup properly
+    * to inherit the primary command buffer state */
+   panvk_per_arch(cmd_prepare_exec_cmds)(cmdbuf);
+
+   for (uint32_t i = 0; i < commandBufferCount; i++) {
+      VK_FROM_HANDLE(panvk_cmd_buffer, secondary, pCommandBuffers[i]);
+
+      for (uint32_t j = 0; j < ARRAY_SIZE(cmdbuf->state.cs); j++) {
+         struct cs_builder *sec_b = panvk_get_cs_builder(secondary, j);
+         assert(cs_is_valid(sec_b));
+         if (!cs_is_empty(sec_b)) {
+            struct cs_builder *prim_b = panvk_get_cs_builder(cmdbuf, j);
+            struct cs_index addr = cs_scratch_reg64(prim_b, 0);
+            struct cs_index size = cs_scratch_reg32(prim_b, 2);
+            cs_move64_to(prim_b, addr, cs_root_chunk_gpu_addr(sec_b));
+            cs_move32_to(prim_b, size, cs_root_chunk_size(sec_b));
+            cs_call(prim_b, addr, size);
+         }
+      }
+   }
+
+   /* From the Vulkan 1.3.275 spec:
+    *
+    *    "When secondary command buffer(s) are recorded to execute on a
+    *    primary command buffer, the secondary command buffer inherits no
+    *    state from the primary command buffer, and all state of the primary
+    *    command buffer is undefined after an execute secondary command buffer
+    *    command is recorded. There is one exception to this rule - if the
+    *    primary command buffer is inside a render pass instance, then the
+    *    render pass and subpass state is not disturbed by executing secondary
+    *    command buffers. For state dependent commands (such as draws and
+    *    dispatches), any state consumed by those commands must not be
+    *    undefined."
+    *
+    * Therefore, it's the client's job to reset all the state in the primary
+    * after the secondary executes.  However, if we're doing any internal
+    * dirty tracking, we may miss the fact that a secondary has messed with
+    * GPU state if we don't invalidate all our internal tracking.
+    */
+   panvk_cmd_invalidate_state(cmdbuf);
 }

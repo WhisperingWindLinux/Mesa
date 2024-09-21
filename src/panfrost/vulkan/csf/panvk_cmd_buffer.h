@@ -325,6 +325,33 @@ struct panvk_resolve_attachment {
    struct panvk_image_view *dst_iview;
 };
 
+struct panvk_rendering_state {
+   VkRenderingFlags flags;
+   uint32_t layer_count;
+
+   enum vk_rp_attachment_flags bound_attachments;
+   struct {
+      VkFormat fmts[MAX_RTS];
+      uint8_t samples[MAX_RTS];
+      struct panvk_resolve_attachment resolve[MAX_RTS];
+   } color_attachments;
+
+   struct pan_image_view zs_pview;
+
+   struct {
+      struct panvk_resolve_attachment resolve;
+   } z_attachment, s_attachment;
+
+   struct {
+      struct pan_fb_info info;
+      bool crc_valid[MAX_RTS];
+   } fb;
+
+   struct panfrost_ptr fbds;
+   mali_ptr tiler;
+   bool dirty;
+};
+
 struct panvk_cmd_graphics_state {
    struct panvk_descriptor_state desc_state;
 
@@ -350,6 +377,7 @@ struct panvk_cmd_graphics_state {
       struct {
          mali_ptr pos, var;
       } spds;
+      bool dirty;
    } vs;
 
    struct {
@@ -371,32 +399,7 @@ struct panvk_cmd_graphics_state {
       struct panvk_blend_info info;
    } cb;
 
-   struct {
-      VkRenderingFlags flags;
-      uint32_t layer_count;
-
-      enum vk_rp_attachment_flags bound_attachments;
-      struct {
-         VkFormat fmts[MAX_RTS];
-         uint8_t samples[MAX_RTS];
-         struct panvk_resolve_attachment resolve[MAX_RTS];
-      } color_attachments;
-
-      struct pan_image_view zs_pview;
-
-      struct {
-         struct panvk_resolve_attachment resolve;
-      } z_attachment, s_attachment;
-
-      struct {
-         struct pan_fb_info info;
-         bool crc_valid[MAX_RTS];
-      } fb;
-
-      struct panfrost_ptr fbds;
-      mali_ptr tiler;
-      bool dirty;
-   } render;
+   struct panvk_rendering_state render;
 
    mali_ptr push_uniforms;
    mali_ptr tsd;
@@ -457,5 +460,7 @@ void panvk_per_arch(cs_pick_iter_sb)(struct panvk_cmd_buffer *cmdbuf,
 void panvk_per_arch(get_cs_deps)(struct panvk_cmd_buffer *cmdbuf,
                                  const VkDependencyInfo *in,
                                  struct panvk_cs_deps *out);
+
+void panvk_per_arch(cmd_prepare_exec_cmds)(struct panvk_cmd_buffer *cmdbuf);
 
 #endif /* PANVK_CMD_BUFFER_H */

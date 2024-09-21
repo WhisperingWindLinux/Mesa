@@ -1383,6 +1383,9 @@ panvk_cmd_bind_shader(struct panvk_cmd_buffer *cmd, const gl_shader_stage stage,
       cmd->state.gfx.vs.shader = shader;
       cmd->state.gfx.linked = false;
       memset(&cmd->state.gfx.vs.desc, 0, sizeof(cmd->state.gfx.vs.desc));
+#if PAN_ARCH >= 10
+      cmd->state.gfx.vs.dirty = true;
+#endif
       break;
    case MESA_SHADER_FRAGMENT:
       cmd->state.gfx.fs.shader = shader;

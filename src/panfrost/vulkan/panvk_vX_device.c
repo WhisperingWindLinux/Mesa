@@ -220,15 +220,8 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
 
    struct vk_device_dispatch_table dispatch_table;
 
-   /* For secondary command buffer support, overwrite any command entrypoints
-    * in the main device-level dispatch table with
-    * vk_cmd_enqueue_unless_primary_Cmd*.
-    */
    vk_device_dispatch_table_from_entrypoints(
-      &dispatch_table, &vk_cmd_enqueue_unless_primary_device_entrypoints, true);
-
-   vk_device_dispatch_table_from_entrypoints(
-      &dispatch_table, &panvk_per_arch(device_entrypoints), false);
+      &dispatch_table, &panvk_per_arch(device_entrypoints), true);
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,
                                              &panvk_device_entrypoints, false);
    vk_device_dispatch_table_from_entrypoints(&dispatch_table,

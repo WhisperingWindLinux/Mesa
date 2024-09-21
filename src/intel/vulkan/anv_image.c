@@ -35,6 +35,7 @@
 #include "vk_util.h"
 #include "util/u_math.h"
 
+#include "vk_enum_to_str.h"
 #include "vk_format.h"
 
 #define ANV_OFFSET_IMPLICIT UINT64_MAX
@@ -57,9 +58,8 @@ memory_range_end(struct anv_image_memory_range memory_range)
  * Get binding for VkImagePlaneMemoryRequirementsInfo,
  * VkBindImagePlaneMemoryInfo and VkDeviceImageMemoryRequirements.
  */
-struct anv_image_binding *
-anv_image_aspect_to_binding(struct anv_image *image,
-                            VkImageAspectFlags aspect)
+enum anv_image_memory_binding
+anv_image_aspect_to_binding(struct anv_image *image, VkImageAspectFlags aspect)
 {
    uint32_t plane = 0;
 
@@ -87,7 +87,7 @@ anv_image_aspect_to_binding(struct anv_image *image,
       plane = anv_image_aspect_to_plane(image, aspect);
    }
 
-   return &image->bindings[ANV_IMAGE_MEMORY_BINDING_PLANE_0 + plane];
+   return ANV_IMAGE_MEMORY_BINDING_PLANE_0 + plane;
 }
 
 /**
@@ -246,6 +246,12 @@ anv_image_choose_isl_surf_usage(struct anv_physical_device *device,
        vk_usage & VK_IMAGE_USAGE_VIDEO_ENCODE_DPB_BIT_KHR ||
        vk_usage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR)
       isl_usage |= ISL_SURF_USAGE_VIDEO_DECODE_BIT;
+
+   /* We disable aux surfaces for host read/write images so that we can update
+    * the main surface without caring about the auxiliary surface.
+    */
+   if (vk_usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT)
+      isl_usage |= ISL_SURF_USAGE_DISABLE_AUX_BIT;
 
    if (vk_create_flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT)
       isl_usage |= ISL_SURF_USAGE_CUBE_BIT;
@@ -1849,6 +1855,16 @@ anv_image_finish(struct anv_image *image)
       anv_device_release_bo(device, image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.bo);
    }
 
+   for (uint32_t b = 0; b < ARRAY_SIZE(image->bindings); b++) {
+      if (image->bindings[b].host_map != NULL) {
+         anv_device_unmap_bo(device,
+                             image->bindings[b].address.bo,
+                             image->bindings[b].host_map,
+                             image->bindings[b].map_size,
+                             false /* replace */);
+      }
+   }
+
    struct anv_bo *private_bo = image->bindings[ANV_IMAGE_MEMORY_BINDING_PRIVATE].address.bo;
    if (private_bo) {
       pthread_mutex_lock(&device->mutex);
@@ -2112,6 +2128,15 @@ anv_image_get_memory_requirements(struct anv_device *device,
          memory_types |= device->physical->memory.compressed_mem_types;
    }
 
+   /* Remove non host visible heaps from the types for host transfers */
+   if (image->vk.usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) {
+      for (uint32_t i = 0; i < device->physical->memory.type_count; i++) {
+         if (!(device->physical->memory.types[i].propertyFlags &
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            memory_types &= ~BITFIELD_BIT(i);
+      }
+   }
+
    vk_foreach_struct(ext, pMemoryRequirements->pNext) {
       switch (ext->sType) {
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
@@ -2150,19 +2175,19 @@ anv_image_get_memory_requirements(struct anv_device *device,
     * and only if the image is disjoint (that is, multi-planar format and
     * VK_IMAGE_CREATE_DISJOINT_BIT).
     */
-   const struct anv_image_binding *binding;
+   enum anv_image_memory_binding binding;
    if (image->disjoint) {
       assert(util_bitcount(aspects) == 1);
       assert(aspects & image->vk.aspects);
       binding = anv_image_aspect_to_binding(image, aspects);
    } else {
       assert(aspects == image->vk.aspects);
-      binding = &image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN];
+      binding = ANV_IMAGE_MEMORY_BINDING_MAIN;
    }
 
    pMemoryRequirements->memoryRequirements = (VkMemoryRequirements) {
-      .size = binding->memory_range.size,
-      .alignment = binding->memory_range.alignment,
+      .size = image->bindings[binding].memory_range.size,
+      .alignment = image->bindings[binding].memory_range.alignment,
       .memoryTypeBits = memory_types,
    };
 }
@@ -2456,12 +2481,55 @@ anv_image_map_aux_tt(struct anv_device *device,
 }
 
 static VkResult
+anv_image_bind_address(struct anv_device *device,
+                        struct anv_image *image,
+                        enum anv_image_memory_binding binding,
+                        struct anv_address address)
+{
+   image->bindings[binding].address = address;
+
+   /* Map bindings for images with host transfer usage, so that we don't have
+    * to map/unmap things at every host operation. We map cached, that means
+    * that the copy operations need to cflush on platforms that have no
+    * host_cache+host_coherent memory types.
+    */
+   if (image->vk.usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) {
+      uint64_t offset = image->bindings[binding].address.offset +
+                        image->bindings[binding].memory_range.offset;
+      /* GEM will fail to map if the offset isn't 4k-aligned.  Round down. */
+      uint64_t map_offset;
+      if (!device->physical->info.has_mmap_offset)
+         map_offset = offset & ~4095ull;
+      else
+         map_offset = 0;
+      assert(offset >= map_offset);
+      uint64_t map_size = (offset + image->bindings[binding].memory_range.size) - map_offset;
+
+      VkResult result = anv_device_map_bo(device,
+                                          image->bindings[binding].address.bo,
+                                          map_offset, map_size,
+                                          NULL /* placed_addr */,
+                                          &image->bindings[binding].host_map);
+      if (result != VK_SUCCESS)
+         return result;
+
+      image->bindings[binding].map_delta = (offset - map_offset);
+      image->bindings[binding].map_size = map_size;
+   }
+
+   ANV_RMV(image_bind, device, image, binding);
+
+   return VK_SUCCESS;
+}
+
+static VkResult
 anv_bind_image_memory(struct anv_device *device,
                       const VkBindImageMemoryInfo *bind_info)
 {
    ANV_FROM_HANDLE(anv_device_memory, mem, bind_info->memory);
    ANV_FROM_HANDLE(anv_image, image, bind_info->image);
    bool did_bind = false;
+   VkResult result = VK_SUCCESS;
 
    const VkBindMemoryStatusKHR *bind_status =
       vk_find_struct_const(bind_info->pNext, BIND_MEMORY_STATUS_KHR);
@@ -2491,16 +2559,14 @@ anv_bind_image_memory(struct anv_device *device,
          if (!image->disjoint)
             break;
 
-         struct anv_image_binding *binding =
+         enum anv_image_memory_binding binding =
             anv_image_aspect_to_binding(image, plane_info->planeAspect);
 
-         binding->address = (struct anv_address) {
-            .bo = mem->bo,
-            .offset = bind_info->memoryOffset,
-         };
-
-         ANV_RMV(image_bind, device, image,
-                 binding - image->bindings);
+         anv_image_bind_address(device, image, binding,
+                                (struct anv_address) {
+                                   .bo = mem->bo,
+                                   .offset = bind_info->memoryOffset,
+                                });
 
          did_bind = true;
          break;
@@ -2522,7 +2588,10 @@ anv_bind_image_memory(struct anv_device *device,
          for (int j = 0; j < ARRAY_SIZE(image->bindings); ++j) {
             assert(memory_ranges_equal(image->bindings[j].memory_range,
                                        swapchain_image->bindings[j].memory_range));
-            image->bindings[j].address = swapchain_image->bindings[j].address;
+            if (image->bindings[j].memory_range.size != 0) {
+               anv_image_bind_address(device, image, j,
+                                      swapchain_image->bindings[j].address);
+            }
          }
 
          /* We must bump the private binding's bo's refcount because, unlike the other
@@ -2542,8 +2611,7 @@ anv_bind_image_memory(struct anv_device *device,
       case VK_STRUCTURE_TYPE_NATIVE_BUFFER_ANDROID: {
          const VkNativeBufferANDROID *gralloc_info =
             (const VkNativeBufferANDROID *)s;
-         VkResult result = anv_image_bind_from_gralloc(device, image,
-                                                       gralloc_info);
+         result = anv_image_bind_from_gralloc(device, image, gralloc_info);
          if (result != VK_SUCCESS)
             return result;
 
@@ -2560,16 +2628,12 @@ anv_bind_image_memory(struct anv_device *device,
 
    if (!did_bind) {
       assert(!image->disjoint);
-
-      image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address =
-         (struct anv_address) {
-         .bo = mem->bo,
-         .offset = bind_info->memoryOffset,
-      };
-
-      ANV_RMV(image_bind, device, image,
-              ANV_IMAGE_MEMORY_BINDING_MAIN);
-
+      result = anv_image_bind_address(device, image,
+                                      ANV_IMAGE_MEMORY_BINDING_MAIN,
+                                      (struct anv_address) {
+                                         .bo = mem->bo,
+                                         .offset = bind_info->memoryOffset,
+                                      });
       did_bind = true;
    }
 
@@ -2621,9 +2685,9 @@ anv_bind_image_memory(struct anv_device *device,
    }
 
    if (bind_status)
-      *bind_status->pResult = VK_SUCCESS;
+      *bind_status->pResult = result;
 
-   return VK_SUCCESS;
+   return result;
 }
 
 VkResult anv_BindImageMemory2(
@@ -2644,7 +2708,8 @@ VkResult anv_BindImageMemory2(
 }
 
 static void
-anv_get_image_subresource_layout(const struct anv_image *image,
+anv_get_image_subresource_layout(struct anv_device *device,
+                                 const struct anv_image *image,
                                  const VkImageSubresource2KHR *subresource,
                                  VkSubresourceLayout2KHR *layout)
 {
@@ -2753,22 +2818,49 @@ anv_get_image_subresource_layout(const struct anv_image *image,
       layout->subresourceLayout.arrayPitch =
          isl_surf_get_array_pitch(isl_surf);
 
+      VkSubresourceHostMemcpySizeEXT *host_memcpy_size =
+         vk_find_struct(layout->pNext, SUBRESOURCE_HOST_MEMCPY_SIZE_EXT);
+
       const uint32_t level = subresource->imageSubresource.mipLevel;
       const uint32_t layer = subresource->imageSubresource.arrayLayer;
       if (level > 0 || layer > 0) {
-         assert(isl_surf->tiling == ISL_TILING_LINEAR);
-
+         struct isl_surf sub_surf;
+         uint32_t x_offset_sa, y_offset_sa;
          uint64_t offset_B;
-         isl_surf_get_image_offset_B_tile_sa(isl_surf, level, layer,
-                                             0 /* logical_z_offset_px */,
-                                             &offset_B, NULL, NULL);
+         isl_surf_get_image_surf(&device->physical->isl_dev, isl_surf,
+                                 subresource->imageSubresource.mipLevel,
+                                 subresource->imageSubresource.arrayLayer,
+                                 0,
+                                 &sub_surf,
+                                 &offset_B,
+                                 &x_offset_sa,
+                                 &y_offset_sa);
+
          layout->subresourceLayout.offset += offset_B;
-         layout->subresourceLayout.size =
-            layout->subresourceLayout.rowPitch *
-            u_minify(image->vk.extent.height, level) *
-            image->vk.extent.depth;
+         layout->subresourceLayout.size = isl_surf_get_array_pitch(&sub_surf) *
+                                          u_minify(isl_surf->logical_level0_px.d,
+                                                   subresource->imageSubresource.mipLevel) *
+                                          (isl_surf->logical_level0_px.a -
+                                           subresource->imageSubresource.arrayLayer);
+#if 0
+         /* TODO: Not sure why those don't work */
+         layout->subresourceLayout.arrayPitch = isl_surf_get_array_pitch(&sub_surf);
+         layout->subresourceLayout.depthPitch = isl_surf_get_array_pitch(&sub_surf);
+#endif
+         if (host_memcpy_size) {
+            host_memcpy_size->size = sub_surf.row_pitch_B *
+                                     sub_surf.logical_level0_px.h *
+                                     sub_surf.logical_level0_px.d *
+                                     sub_surf.logical_level0_px.a;
+         }
       } else {
          layout->subresourceLayout.size = mem_range->size;
+         if (host_memcpy_size) {
+            host_memcpy_size->size = isl_surf->row_pitch_B *
+                                     isl_surf->logical_level0_px.h *
+                                     isl_surf->logical_level0_px.d *
+                                     isl_surf->logical_level0_px.a;
+         }
       }
    }
 
@@ -2802,18 +2894,19 @@ void anv_GetDeviceImageSubresourceLayoutKHR(
       return;
    }
 
-   anv_get_image_subresource_layout(&image, pInfo->pSubresource, pLayout);
+   anv_get_image_subresource_layout(device, &image, pInfo->pSubresource, pLayout);
 }
 
 void anv_GetImageSubresourceLayout2KHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkImage                                     _image,
     const VkImageSubresource2KHR*               pSubresource,
     VkSubresourceLayout2KHR*                    pLayout)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    ANV_FROM_HANDLE(anv_image, image, _image);
 
-   anv_get_image_subresource_layout(image, pSubresource, pLayout);
+   anv_get_image_subresource_layout(device, image, pSubresource, pLayout);
 }
 
 static VkImageUsageFlags

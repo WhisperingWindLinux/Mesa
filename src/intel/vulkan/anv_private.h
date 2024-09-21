@@ -5303,11 +5303,16 @@ struct anv_image {
     * Usually, the app will provide the address via the parameters of
     * vkBindImageMemory.  However, special-case bindings may be bound to
     * driver-private memory.
+    *
+    * If needed a host pointer to the image is mapped for host image copies.
     */
    struct anv_image_binding {
       struct anv_image_memory_range memory_range;
       struct anv_address address;
       struct anv_sparse_binding_data sparse_data;
+      void *host_map;
+      uint64_t map_delta;
+      uint64_t map_size;
    } bindings[ANV_IMAGE_MEMORY_BINDING_END];
 
    /**
@@ -5681,7 +5686,7 @@ anv_cmd_buffer_load_clear_color_from_image(struct anv_cmd_buffer *cmd_buffer,
                                            struct anv_state state,
                                            const struct anv_image *image);
 
-struct anv_image_binding *
+enum anv_image_memory_binding
 anv_image_aspect_to_binding(struct anv_image *image,
                             VkImageAspectFlags aspect);
 

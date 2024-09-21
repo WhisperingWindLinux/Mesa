@@ -209,6 +209,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_global_priority_query             = device->max_context_priority >=
                                                VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_KHR,
       .EXT_graphics_pipeline_library         = !debug_get_bool_option("ANV_NO_GPL", false),
+      .EXT_host_image_copy                   = !device->emu_astc_ldr,
       .EXT_host_query_reset                  = true,
       .EXT_image_2d_view_of_3d               = true,
       /* Because of Xe2 PAT selected compression and the Vulkan spec
@@ -809,6 +810,9 @@ get_features(const struct anv_physical_device *pdevice,
 
       /* VK_KHR_shader_relaxed_extended_instruction */
       .shaderRelaxedExtendedInstruction = true,
+
+      /* VK_EXT_host_image_copy */
+      .hostImageCopy = true,
    };
 
    /* The new DOOM and Wolfenstein games require depthBounds without
@@ -1506,6 +1510,70 @@ get_properties(const struct anv_physical_device *pdevice,
    {
       props->graphicsPipelineLibraryFastLinking = true;
       props->graphicsPipelineLibraryIndependentInterpolationDecoration = true;
+   }
+
+   /* VK_EXT_host_image_copy */
+   {
+      static const VkImageLayout supported_layouts[] = {
+         VK_IMAGE_LAYOUT_GENERAL,
+         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL,
+         VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+         VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+         /* VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR would
+          * require Tile64 memcpy support
+          */
+      };
+
+      props->pCopySrcLayouts = supported_layouts;
+      props->copySrcLayoutCount = ARRAY_SIZE(supported_layouts);
+      props->pCopyDstLayouts = supported_layouts;
+      props->copyDstLayoutCount = ARRAY_SIZE(supported_layouts);
+
+      /* This UUID essentially tells you if you can share an optimially tiling
+       * image with another driver. Much of the tiling decisions are based on
+       * the generation for Intel (spanning multiple platforms). So we're
+       * using a hash of the verx10 field.
+       *
+       * Unfortunately there is a HW issue on SKL GT4 that makes it use some
+       * different tilings sometimes (see isl_gfx7.c).
+       */
+      {
+         struct mesa_sha1 sha1_ctx;
+         uint8_t sha1[20];
+         uint32_t vendor_id = 0x8086;
+
+         /* Make sure we don't match with other vendors */
+         _mesa_sha1_init(&sha1_ctx);
+         _mesa_sha1_update(&sha1_ctx, &vendor_id, sizeof(vendor_id));
+         _mesa_sha1_update(&sha1_ctx, &pdevice->info.verx10,
+                           sizeof(pdevice->info.verx10));
+         if (pdevice->info.platform == INTEL_PLATFORM_SKL &&
+             pdevice->info.gt == 4) {
+            bool is_gt4 = true;
+            _mesa_sha1_update(&sha1_ctx, &is_gt4, sizeof(is_gt4));
+         }
+         _mesa_sha1_final(&sha1_ctx, sha1);
+
+         memcpy(props->optimalTilingLayoutUUID, sha1, VK_UUID_SIZE);
+      }
+
+      /* System without ReBAR cannot map all memory types on the host and that
+       * affects the memory types an image can use for host memory copies.
+       */
+      props->identicalMemoryTypeRequirements =
+         !anv_physical_device_has_vram(pdevice) ||
+         pdevice->vram_non_mappable.size != 0;
    }
 
    /* VK_EXT_legacy_vertex_attributes */

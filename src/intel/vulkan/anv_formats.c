@@ -567,7 +567,8 @@ anv_get_image_format_features2(const struct anv_physical_device *physical_device
                VK_FORMAT_FEATURE_2_BLIT_SRC_BIT |
                VK_FORMAT_FEATURE_2_BLIT_DST_BIT |
                VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
-               VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+               VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT |
+               VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT;
 
       if (aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
          flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
@@ -620,7 +621,8 @@ anv_get_image_format_features2(const struct anv_physical_device *physical_device
                 VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
 
       flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
-               VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT;
+               VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT |
+               VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT;
 
       if (isl_format_supports_filtering(devinfo, plane_format.isl_format))
          flags |= VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
@@ -1297,6 +1299,7 @@ anv_get_image_format_properties(
    VkAndroidHardwareBufferUsageANDROID *android_usage = NULL;
    VkTextureLODGatherFormatPropertiesAMD *texture_lod_gather_props = NULL;
    VkImageCompressionPropertiesEXT *comp_props = NULL;
+   VkHostImageCopyDevicePerformanceQueryEXT *host_props = NULL;
    bool from_wsi = false;
 
    /* Extract input structs */
@@ -1347,6 +1350,9 @@ anv_get_image_format_properties(
       case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT:
          comp_props = (void *) s;
          break;
+      case VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT:
+         host_props = (void *) s;
+         break;
       default:
          vk_debug_ignored_stype(s->sType);
          break;
@@ -1356,9 +1362,18 @@ anv_get_image_format_properties(
    if (format == NULL)
       goto unsupported;
 
+   /* Would require some annoying tracking or kernel support. */
+   if ((info->flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT) &&
+       (info->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT))
+      goto unsupported;
+
    if (info->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       isl_mod_info = isl_drm_modifier_get_info(modifier_info->drmFormatModifier);
       if (isl_mod_info == NULL)
+         goto unsupported;
+
+      if ((info->usage & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) &&
+          isl_drm_modifier_has_aux(modifier_info->drmFormatModifier))
          goto unsupported;
 
       /* only allow Y-tiling/Tile4 for video decode. */
@@ -1772,6 +1787,27 @@ anv_get_image_format_properties(
       comp_props->imageCompressionFlags = ccs_supported ?
          VK_IMAGE_COMPRESSION_DEFAULT_EXT :
          VK_IMAGE_COMPRESSION_DISABLED_EXT;
+   }
+
+   if (host_props) {
+      /* When compression might be involved the size of the image will be
+       * different if we disable it for host image copies so we have to report
+       * identicalMemoryLayout=false.
+       *
+       * TODO: We might be able to still allocate the compression data so that
+       * we can report identicalMemoryLayout=true, but we might still have to
+       * report optimalDeviceAccess=false to signal potential perf loss.
+       */
+      if ((format->n_planes == 1 &&
+           (isl_format_supports_ccs_d(devinfo, format->planes[0].isl_format) ||
+            isl_format_supports_ccs_e(devinfo, format->planes[0].isl_format))) ||
+          vk_format_has_depth(info->format)) {
+         host_props->optimalDeviceAccess = false;
+         host_props->identicalMemoryLayout = false;
+      } else {
+         host_props->optimalDeviceAccess = true;
+         host_props->identicalMemoryLayout = true;
+      }
    }
 
    return VK_SUCCESS;

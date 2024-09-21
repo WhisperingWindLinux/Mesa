@@ -77,6 +77,9 @@ panvk_errno_to_vk_error(void)
    }
 }
 
+float panvk_get_gpu_system_timestamp_period(
+   const struct panvk_physical_device *device);
+
 VkResult panvk_physical_device_init(struct panvk_physical_device *device,
                                     struct panvk_instance *instance,
                                     drmDevicePtr drm_device);

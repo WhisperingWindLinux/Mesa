@@ -22,6 +22,7 @@
 #include "panvk_macros.h"
 #include "panvk_mempool.h"
 #include "panvk_shader.h"
+#include "panvk_query_pool.h"
 
 #include "pan_jc.h"
 
@@ -62,6 +63,7 @@ struct panvk_batch {
    struct pan_tls_info tlsinfo;
    unsigned wls_total_size;
    bool issued;
+   bool needs_job_req_cycle_count;
 };
 
 enum panvk_cmd_event_op_type {
@@ -86,6 +88,11 @@ struct panvk_resolve_attachment {
    struct panvk_image_view *dst_iview;
 };
 
+struct panvk_occlusion_query_state {
+   mali_ptr ptr;
+   enum mali_occlusion_mode mode;
+};
+
 struct panvk_cmd_graphics_state {
    struct panvk_descriptor_state desc_state;
 
@@ -95,6 +102,8 @@ struct panvk_cmd_graphics_state {
    } dynamic;
 
    uint32_t dirty;
+
+   struct panvk_occlusion_query_state occlusion_query;
 
    struct panvk_graphics_sysvals sysvals;
 
@@ -251,4 +260,14 @@ void panvk_per_arch(cmd_bind_shaders)(struct vk_command_buffer *vk_cmd,
                                       const gl_shader_stage *stages,
                                       struct vk_shader **const shaders);
 
+void panvk_per_arch(cmd_write_timestamp)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkPipelineStageFlags2 stage);
+
+void panvk_per_arch(cmd_begin_end_query)(struct panvk_cmd_buffer *cmd,
+                                         struct panvk_query_pool *pool,
+                                         uint32_t query,
+                                         VkQueryControlFlags flags,
+                                         uint32_t index, bool end);
 #endif

@@ -3,8 +3,15 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "nir_builder.h"
+
+#include "vk_meta.h"
+#include "vk_pipeline.h"
+
+#include "panvk_buffer.h"
 #include "panvk_cmd_meta.h"
 #include "panvk_entrypoints.h"
+#include "panvk_query_pool.h"
 
 void
 panvk_per_arch(cmd_meta_compute_start)(
@@ -84,6 +91,11 @@ panvk_per_arch(cmd_meta_gfx_start)(
    save_ctx->dyn_state.all = cmdbuf->vk.dynamic_graphics_state;
    save_ctx->dyn_state.vi = cmdbuf->state.gfx.dynamic.vi;
    save_ctx->dyn_state.sl = cmdbuf->state.gfx.dynamic.sl;
+   save_ctx->occlusion_query = cmdbuf->state.gfx.occlusion_query;
+
+   /* Ensure occlusion queries are disabled */
+   cmdbuf->state.gfx.occlusion_query.ptr = 0;
+   cmdbuf->state.gfx.occlusion_query.mode = MALI_OCCLUSION_MODE_DISABLED;
 }
 
 void
@@ -124,6 +136,7 @@ panvk_per_arch(cmd_meta_gfx_end)(
    cmdbuf->vk.dynamic_graphics_state = save_ctx->dyn_state.all;
    cmdbuf->state.gfx.dynamic.vi = save_ctx->dyn_state.vi;
    cmdbuf->state.gfx.dynamic.sl = save_ctx->dyn_state.sl;
+   cmdbuf->state.gfx.occlusion_query = save_ctx->occlusion_query;
    memcpy(cmdbuf->vk.dynamic_graphics_state.dirty,
           cmdbuf->vk.dynamic_graphics_state.set,
           sizeof(cmdbuf->vk.dynamic_graphics_state.set));

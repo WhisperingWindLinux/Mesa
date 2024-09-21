@@ -409,7 +409,8 @@ panvk_draw_prepare_fs_rsd(struct panvk_cmd_buffer *cmdbuf,
 
          bool writes_zs = writes_z || writes_s;
          bool zs_always_passes = ds_test_always_passes(cmdbuf);
-         bool oq = false; /* TODO: Occlusion queries */
+         bool oq = cmdbuf->state.gfx.occlusion_query.mode !=
+                   MALI_OCCLUSION_MODE_DISABLED;
 
          struct pan_earlyzs_state earlyzs =
             pan_earlyzs_get(pan_earlyzs_analyze(fs_info), writes_zs || oq,
@@ -1023,8 +1024,8 @@ panvk_emit_tiler_dcd(struct panvk_cmd_buffer *cmdbuf,
       cfg.push_uniforms = draw->push_uniforms;
       cfg.textures = fs_desc_state->tables[PANVK_BIFROST_DESC_TABLE_TEXTURE];
       cfg.samplers = fs_desc_state->tables[PANVK_BIFROST_DESC_TABLE_SAMPLER];
-
-      /* TODO: occlusion queries */
+      cfg.occlusion_query = cmdbuf->state.gfx.occlusion_query.mode;
+      cfg.occlusion = cmdbuf->state.gfx.occlusion_query.ptr;
    }
 }
 
@@ -1236,6 +1237,20 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
       return;
 
    if (!rs->rasterizer_discard_enable) {
+      struct pan_fb_info *fbinfo = &cmdbuf->state.gfx.render.fb.info;
+      uint32_t rasterization_samples =
+         cmdbuf->vk.dynamic_graphics_state.ms.rasterization_samples;
+
+      /* If there's no attachment, and the FB descriptor hasn't been allocated
+       * yet, we patch nr_samples to match rasterization_samples, otherwise, we
+       * make sure those two numbers match. */
+      if (!batch->fb.desc.gpu && !cmdbuf->state.gfx.render.bound_attachments) {
+         assert(rasterization_samples > 0);
+         fbinfo->nr_samples = rasterization_samples;
+      } else {
+         assert(rasterization_samples == fbinfo->nr_samples);
+      }
+
       result = panvk_per_arch(cmd_alloc_fb_desc)(cmdbuf);
       if (result != VK_SUCCESS)
          return;
@@ -1270,7 +1285,10 @@ panvk_cmd_draw(struct panvk_cmd_buffer *cmdbuf, struct panvk_draw_info *draw)
 
    bool vs_writes_pos =
       cmdbuf->state.gfx.link.buf_strides[PANVK_VARY_BUF_POSITION] > 0;
-   bool needs_tiling = !rs->rasterizer_discard_enable && vs_writes_pos;
+   bool active_occlusion =
+      cmdbuf->state.gfx.occlusion_query.mode != MALI_OCCLUSION_MODE_DISABLED;
+   bool needs_tiling =
+      !rs->rasterizer_discard_enable && (vs_writes_pos || active_occlusion);
 
    /* No need to setup the FS desc tables if the FS is not executed. */
    if (needs_tiling && fs_required(cmdbuf)) {

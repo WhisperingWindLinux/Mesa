@@ -59,6 +59,9 @@ panvk_queue_submit_batch(struct panvk_queue *queue, struct panvk_batch *batch,
       }
    }
 
+   unsigned reqs =
+      batch->needs_job_req_cycle_count ? PANFROST_JD_REQ_CYCLE_COUNT : 0;
+
    if (batch->vtc_jc.first_job) {
       struct drm_panfrost_submit submit = {
          .bo_handles = (uintptr_t)bos,
@@ -67,6 +70,7 @@ panvk_queue_submit_batch(struct panvk_queue *queue, struct panvk_batch *batch,
          .in_sync_count = nr_in_fences,
          .out_sync = queue->sync,
          .jc = batch->vtc_jc.first_job,
+         .requirements = reqs,
       };
 
       ret = drmIoctl(dev->vk.drm_fd, DRM_IOCTL_PANFROST_SUBMIT, &submit);
@@ -97,7 +101,7 @@ panvk_queue_submit_batch(struct panvk_queue *queue, struct panvk_batch *batch,
          .bo_handle_count = nr_bos,
          .out_sync = queue->sync,
          .jc = batch->frag_jc.first_job,
-         .requirements = PANFROST_JD_REQ_FS,
+         .requirements = reqs | PANFROST_JD_REQ_FS,
       };
 
       if (batch->vtc_jc.first_job) {

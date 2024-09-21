@@ -12,6 +12,7 @@
 #include "winsys/radeon_winsys.h"
 #include "util/u_blitter.h"
 #include "util/u_idalloc.h"
+#include "util/u_log.h"
 #include "util/u_suballoc.h"
 #include "util/u_threaded_context.h"
 #include "util/u_vertex_state_cache.h"
@@ -498,6 +499,7 @@ struct radeon_saved_cs {
 
 struct si_aux_context {
    struct pipe_context *ctx;
+   struct u_log_context log;
    mtx_t lock;
 };
 
@@ -510,13 +512,6 @@ struct si_screen {
    struct nir_shader_compiler_options *nir_options;
    uint64_t debug_flags;
    char renderer_string[183];
-
-   void (*make_texture_descriptor)(struct si_screen *screen, struct si_texture *tex, bool sampler,
-                                   enum pipe_texture_target target, enum pipe_format pipe_format,
-                                   const unsigned char state_swizzle[4], unsigned first_level,
-                                   unsigned last_level, unsigned first_layer, unsigned last_layer,
-                                   unsigned width, unsigned height, unsigned depth,
-                                   bool get_bo_metadata, uint32_t *state, uint32_t *fmask_state);
 
    unsigned pa_sc_raster_config;
    unsigned pa_sc_raster_config_1;

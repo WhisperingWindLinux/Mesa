@@ -113,15 +113,16 @@ driver_llvmpipe = declare_dependency(
 
 if with_tests
   foreach t : ['lp_test_format', 'lp_test_arit', 'lp_test_blend',
-               'lp_test_conv', 'lp_test_printf', 'lp_test_lookup_multiple']
+               'lp_test_conv', 'lp_test_printf', 'lp_test_lookup_multiple',
+               'lp_test_helper_invocation']
     test(
       t,
       executable(
         t,
         ['@0@.c'.format(t), 'lp_test_main.c', sha1_h],
-        dependencies : [dep_llvm, dep_dl, dep_clock, idep_mesautil],
+        dependencies : [dep_llvm, dep_dl, dep_clock, idep_mesautil, idep_nir],
         include_directories : [inc_gallium, inc_gallium_aux, inc_include, inc_src],
-        link_with : [libllvmpipe, libgallium],
+        link_with : [libllvmpipe, libgallium, libws_null],
       ),
       suite : ['llvmpipe'],
       should_fail : meson.get_external_property('xfail', '').contains(t),

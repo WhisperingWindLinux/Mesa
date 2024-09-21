@@ -3715,8 +3715,8 @@ lp_fs_get_ir_cache_key(struct lp_fragment_shader_variant *variant,
  * Generate a new fragment shader variant from the shader code and
  * other state indicated by the key.
  */
-static struct lp_fragment_shader_variant *
-generate_variant(struct llvmpipe_context *lp,
+struct lp_fragment_shader_variant *
+lp_generate_variant(struct llvmpipe_context *lp,
                  struct lp_fragment_shader *shader,
                  const struct lp_fragment_shader_variant_key *key)
 {
@@ -4711,7 +4711,7 @@ llvmpipe_update_fs(struct llvmpipe_context *lp)
        * Generate the new variant.
        */
       int64_t t0 = os_time_get();
-      variant = generate_variant(lp, shader, key);
+      variant = lp_generate_variant(lp, shader, key);
       int64_t t1 = os_time_get();
       int64_t dt = t1 - t0;
       LP_COUNT_ADD(llvm_compile_time, dt);

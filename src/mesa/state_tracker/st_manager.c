@@ -68,7 +68,7 @@ struct hash_table;
 
 struct st_screen
 {
-   struct hash_table *drawable_ht; /* pipe_frontend_drawable objects hash table */
+   struct hash_table_u64 *drawable_ht; /* pipe_frontend_drawable objects hash table */
    simple_mtx_t st_mutex;
 };
 
@@ -674,24 +674,9 @@ st_framebuffer_create(struct st_context *st,
    return stfb;
 }
 
-
-static uint32_t
-drawable_hash(const void *key)
-{
-   return (uintptr_t)key;
-}
-
-
-static bool
-drawable_equal(const void *a, const void *b)
-{
-   return (struct pipe_frontend_drawable *)a == (struct pipe_frontend_drawable *)b;
-}
-
-
 static bool
 drawable_lookup(struct pipe_frontend_screen *fscreen,
-                const struct pipe_frontend_drawable *drawable)
+		uint32_t drawable_ID)
 {
    struct st_screen *screen =
       (struct st_screen *)fscreen->st_screen;
@@ -701,7 +686,7 @@ drawable_lookup(struct pipe_frontend_screen *fscreen,
    assert(screen->drawable_ht);
 
    simple_mtx_lock(&screen->st_mutex);
-   entry = _mesa_hash_table_search(screen->drawable_ht, drawable);
+   entry = _mesa_hash_table_u64_search(screen->drawable_ht, (uint64_t)(uintptr_t)drawable_ID);
    simple_mtx_unlock(&screen->st_mutex);
 
    return entry != NULL;
@@ -720,7 +705,7 @@ drawable_insert(struct pipe_frontend_screen *fscreen,
    assert(screen->drawable_ht);
 
    simple_mtx_lock(&screen->st_mutex);
-   entry = _mesa_hash_table_insert(screen->drawable_ht, drawable, drawable);
+   entry = _mesa_hash_table_u64_insert(screen->drawable_ht, (uint64_t)(uintptr_t)drawable->ID, drawable);
    simple_mtx_unlock(&screen->st_mutex);
 
    return entry != NULL;
@@ -739,11 +724,11 @@ drawable_remove(struct pipe_frontend_screen *fscreen,
       return;
 
    simple_mtx_lock(&screen->st_mutex);
-   entry = _mesa_hash_table_search(screen->drawable_ht, drawable);
+   entry = _mesa_hash_table_u64_search(screen->drawable_ht, (uint64_t)(uintptr_t)drawable->ID);
    if (!entry)
       goto unlock;
 
-   _mesa_hash_table_remove(screen->drawable_ht, entry);
+   _mesa_hash_table_u64_remove(screen->drawable_ht, (uint64_t)(uintptr_t)drawable->ID);
 
 unlock:
    simple_mtx_unlock(&screen->st_mutex);
@@ -787,7 +772,7 @@ st_framebuffers_purge(struct st_context *st)
        * and unreference the framebuffer object, so its resources can be
        * deleted.
        */
-      if (!drawable_lookup(fscreen, drawable)) {
+      if (!drawable_lookup(fscreen, stfb->drawable_ID)) {
          list_del(&stfb->head);
          _mesa_reference_framebuffer(&stfb, NULL);
       }
@@ -936,7 +921,7 @@ st_screen_destroy(struct pipe_frontend_screen *fscreen)
    struct st_screen *screen = fscreen->st_screen;
 
    if (screen && screen->drawable_ht) {
-      _mesa_hash_table_destroy(screen->drawable_ht, NULL);
+      _mesa_hash_table_u64_destroy(screen->drawable_ht);
       simple_mtx_destroy(&screen->st_mutex);
       FREE(screen);
       fscreen->st_screen = NULL;
@@ -968,9 +953,7 @@ st_api_create_context(struct pipe_frontend_screen *fscreen,
 
       screen = CALLOC_STRUCT(st_screen);
       simple_mtx_init(&screen->st_mutex, mtx_plain);
-      screen->drawable_ht = _mesa_hash_table_create(NULL,
-                                                 drawable_hash,
-                                                 drawable_equal);
+      screen->drawable_ht = _mesa_hash_table_u64_create(NULL);
       fscreen->st_screen = screen;
    }
 

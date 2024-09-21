@@ -875,7 +875,7 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
          if (level->tiling.is_tiled) {
             const enum pipe_format p_format =
-               vk_format_to_pipe_format(iview->vk.format);
+               nvk_format_to_pipe_format(iview->vk.format);
 
             /* We use the stride for depth/stencil targets because the Z/S
              * hardware has no concept of a tile width.  Instead, we just set
@@ -912,7 +912,7 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
 
             uint32_t pitch = level->row_stride_B;
             const enum pipe_format p_format =
-               vk_format_to_pipe_format(iview->vk.format);
+               nvk_format_to_pipe_format(iview->vk.format);
             /* When memory layout is set to LAYOUT_PITCH, the WIDTH field
              * takes row pitch
              */
@@ -990,7 +990,7 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
       P_NV9097_SET_ZT_A(p, addr >> 32);
       P_NV9097_SET_ZT_B(p, addr);
       const enum pipe_format p_format =
-         vk_format_to_pipe_format(iview->vk.format);
+         nvk_format_to_pipe_format(iview->vk.format);
       const uint8_t zs_format = nil_format_to_depth_stencil(p_format);
       P_NV9097_SET_ZT_FORMAT(p, zs_format);
       assert(level->tiling.is_tiled);

@@ -429,8 +429,9 @@ flush_previous_aux_mode(struct iris_batch *batch,
     * to avoid extra cache flushing.
     */
    void *v_aux_usage = (void *) (uintptr_t)
-      (aux_usage == ISL_AUX_USAGE_FCV_CCS_E ?
-       ISL_AUX_USAGE_CCS_E : aux_usage);
+      (aux_usage == ISL_AUX_USAGE_FCV_CCS_E ? ISL_AUX_USAGE_CCS_E :
+       aux_usage == ISL_AUX_USAGE_HIZ_CCS_WT ? ISL_AUX_USAGE_HIZ_CCS :
+       aux_usage);
 
    struct hash_entry *entry =
       _mesa_hash_table_search_pre_hashed(batch->bo_aux_modes, bo->hash, bo);
@@ -1010,6 +1011,7 @@ iris_resource_set_aux_state(struct iris_context *ice,
       assert(isl_drm_modifier_has_aux(res->mod_info->modifier));
       if (aux_state == ISL_AUX_STATE_CLEAR ||
           aux_state == ISL_AUX_STATE_COMPRESSED_CLEAR ||
+          aux_state == ISL_AUX_STATE_COMPRESSED_HIZ ||
           aux_state == ISL_AUX_STATE_PARTIAL_CLEAR) {
          iris_mark_dirty_dmabuf(ice, &res->base.b);
       }
@@ -1031,8 +1033,10 @@ iris_resource_texture_aux_usage(struct iris_context *ice,
    case ISL_AUX_USAGE_HIZ_CCS:
    case ISL_AUX_USAGE_HIZ_CCS_WT:
       assert(res->surf.format == view_format);
-      return iris_sample_with_depth_aux(devinfo, res) ?
-             res->aux.usage : ISL_AUX_USAGE_NONE;
+      return (iris_sample_with_depth_aux(devinfo, res) ? res->aux.usage :
+              devinfo->verx10 >= 125 && res->aux.usage == ISL_AUX_USAGE_HIZ_CCS ?
+                 ISL_AUX_USAGE_HIZ_CCS_WT :
+              ISL_AUX_USAGE_NONE);
 
    case ISL_AUX_USAGE_MCS:
    case ISL_AUX_USAGE_MCS_CCS:

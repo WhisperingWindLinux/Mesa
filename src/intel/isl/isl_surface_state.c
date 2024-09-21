@@ -734,7 +734,7 @@ isl_genX(surf_fill_state_s)(const struct isl_device *dev, void *state,
           *
           * Bspec 57023 (r58975)
           */
-         assert(GFX_VER >= 20 || info->surf->samples == 1);
+         assert(GFX_VERx10 >= 125 || info->surf->samples == 1);
 
          /* Prior to Gfx12, the dimension must not be 3D */
          if (info->aux_usage == ISL_AUX_USAGE_HIZ)

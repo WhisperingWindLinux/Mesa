@@ -52,6 +52,7 @@ pub struct Device {
 #[derive(Default)]
 pub struct DeviceCaps {
     pub has_3d_image_writes: bool,
+    pub has_depth_images: bool,
     pub has_images: bool,
     pub has_rw_images: bool,
     pub has_timestamp: bool,
@@ -252,6 +253,13 @@ impl Device {
         for f in FORMATS {
             let mut fs = HashMap::new();
             for t in CL_IMAGE_TYPES {
+                // depth images are only valid for 2D and 2DArray
+                if [CL_DEPTH, CL_DEPTH_STENCIL].contains(&f.cl_image_format.image_channel_order)
+                    && ![CL_MEM_OBJECT_IMAGE2D, CL_MEM_OBJECT_IMAGE2D_ARRAY].contains(&t)
+                {
+                    continue;
+                }
+
                 // the CTS doesn't test them, so let's not advertize them by accident if they are
                 // broken
                 if t == CL_MEM_OBJECT_IMAGE1D_BUFFER
@@ -298,7 +306,7 @@ impl Device {
 
             // Restrict supported formats with 1DBuffer images. This is an OpenCL CTS workaround.
             // See https://github.com/KhronosGroup/OpenCL-CTS/issues/1889
-            let image1d_mask = fs[&CL_MEM_OBJECT_IMAGE1D];
+            let image1d_mask = fs.get(&CL_MEM_OBJECT_IMAGE1D).copied().unwrap_or_default();
             if let Some(entry) = fs.get_mut(&CL_MEM_OBJECT_IMAGE1D_BUFFER) {
                 *entry &= image1d_mask;
             }
@@ -318,6 +326,13 @@ impl Device {
             })
             .map(|f| self.formats[&f.cl_image_format][&CL_MEM_OBJECT_IMAGE3D])
             .any(|f| f & cl_mem_flags::from(CL_MEM_WRITE_ONLY) == 0);
+
+        self.caps.has_depth_images = self
+            .formats
+            .iter()
+            .filter_map(|(k, v)| (k.image_channel_order == CL_DEPTH).then_some(v.values()))
+            .flatten()
+            .any(|mask| *mask != 0);
 
         // if we can't advertize 3d image write ext, we have to disable them all
         if !self.caps.has_3d_image_writes {
@@ -649,6 +664,10 @@ impl Device {
             if self.caps.has_3d_image_writes {
                 add_ext(1, 0, 0, "cl_khr_3d_image_writes");
                 add_feat(1, 0, 0, "__opencl_c_3d_image_writes");
+            }
+
+            if self.caps.has_depth_images {
+                add_ext(1, 0, 0, "cl_khr_depth_images");
             }
         }
 
@@ -1080,6 +1099,7 @@ impl Device {
             fp64: self.fp64_supported(),
             int64: self.int64_supported(),
             images: self.caps.has_images,
+            images_depth: self.caps.has_depth_images,
             images_read_write: self.caps.has_rw_images,
             images_write_3d: self.caps.has_3d_image_writes,
             integer_dot_product: true,

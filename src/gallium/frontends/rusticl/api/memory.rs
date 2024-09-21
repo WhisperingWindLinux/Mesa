@@ -394,6 +394,12 @@ fn validate_image_format<'a>(
         .pixel_size()
         .ok_or(CL_INVALID_IMAGE_FORMAT_DESCRIPTOR)?;
 
+    // Depth images with an image channel order of CL_DEPTH_STENCIL can only be created using the
+    // clCreateFromGLTexture API
+    if format.image_channel_order == CL_DEPTH_STENCIL {
+        return Err(CL_INVALID_IMAGE_FORMAT_DESCRIPTOR);
+    }
+
     // special validation
     let valid_combination = match format.image_channel_data_type {
         CL_UNORM_SHORT_565 | CL_UNORM_SHORT_555 | CL_UNORM_INT_101010 => {
@@ -1714,6 +1720,11 @@ fn enqueue_read_image(
         return Err(CL_INVALID_OPERATION);
     }
 
+    // Not supported with depth stencil or msaa images.
+    if i.image_format.image_channel_order == CL_DEPTH_STENCIL || i.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
+    }
+
     // CL_INVALID_VALUE if origin or region is NULL.
     // CL_INVALID_VALUE if ptr is NULL.
     if origin.is_null() || region.is_null() || ptr.is_null() {
@@ -1793,6 +1804,11 @@ fn enqueue_write_image(
         return Err(CL_INVALID_OPERATION);
     }
 
+    // Not supported with depth stencil or msaa images.
+    if i.image_format.image_channel_order == CL_DEPTH_STENCIL || i.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
+    }
+
     // CL_INVALID_VALUE if origin or region is NULL.
     // CL_INVALID_VALUE if ptr is NULL.
     if origin.is_null() || region.is_null() || ptr.is_null() {
@@ -1868,6 +1884,15 @@ fn enqueue_copy_image(
         return Err(CL_IMAGE_FORMAT_MISMATCH);
     }
 
+    // Not supported with depth stencil or msaa images.
+    if src_image.image_format.image_channel_order == CL_DEPTH_STENCIL
+        || dst_image.image_format.image_channel_order == CL_DEPTH_STENCIL
+        || src_image.image_desc.num_samples > 0
+        || dst_image.image_desc.num_samples > 0
+    {
+        return Err(CL_INVALID_OPERATION);
+    }
+
     // CL_INVALID_VALUE if src_origin, dst_origin, or region is NULL.
     if src_origin.is_null() || dst_origin.is_null() || region.is_null() {
         return Err(CL_INVALID_VALUE);
@@ -1922,6 +1947,11 @@ fn enqueue_fill_image(
         return Err(CL_INVALID_CONTEXT);
     }
 
+    // Not supported with depth stencil or msaa images.
+    if i.image_format.image_channel_order == CL_DEPTH_STENCIL || i.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
+    }
+
     // CL_INVALID_VALUE if fill_color is NULL.
     // CL_INVALID_VALUE if origin or region is NULL.
     if fill_color.is_null() || origin.is_null() || region.is_null() {
@@ -1937,9 +1967,19 @@ fn enqueue_fill_image(
     // description for origin and region.
     validate_image_bounds(&i, origin, region)?;
 
-    // we have to copy memory and it's always a 4 component int value
-    // TODO but not for CL_DEPTH
-    let fill_color = unsafe { slice::from_raw_parts(fill_color.cast(), 4).to_vec() };
+    // The fill color is a single floating-point value if the channel order is CL_DEPTH. Otherwise,
+    // the fill color is a four component RGBA floating-point color value if the image channel data
+    // type is not an unnormalized signed or unsigned integer type, is a four component signed
+    // integer value if the image channel data type is an unnormalized signed integer type and is a
+    // four component unsigned integer value if the image channel data type is an unnormalized
+    // unsigned integer type.
+    let fill_color = if i.image_format.image_channel_order == CL_DEPTH {
+        let value = unsafe { fill_color.cast::<u32>().read() };
+        [value, 0, 0, 0].to_vec()
+    } else {
+        unsafe { slice::from_raw_parts(fill_color.cast(), 4) }.to_vec()
+    };
+
     create_and_queue(
         q,
         CL_COMMAND_FILL_BUFFER,
@@ -1975,6 +2015,11 @@ fn enqueue_copy_buffer_to_image(
     // are not the same
     if q.context != src.context || q.context != dst.context {
         return Err(CL_INVALID_CONTEXT);
+    }
+
+    // Not supported with depth stencil or msaa images.
+    if dst.image_format.image_channel_order == CL_DEPTH_STENCIL || dst.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
     }
 
     // CL_INVALID_VALUE if dst_origin or region is NULL.
@@ -2030,6 +2075,11 @@ fn enqueue_copy_image_to_buffer(
     // are not the same
     if q.context != src.context || q.context != dst.context {
         return Err(CL_INVALID_CONTEXT);
+    }
+
+    // Not supported with depth stencil or msaa images.
+    if src.image_format.image_channel_order == CL_DEPTH_STENCIL || src.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
     }
 
     // CL_INVALID_VALUE if src_origin or region is NULL.
@@ -2090,6 +2140,11 @@ fn enqueue_map_image(
     // CL_INVALID_CONTEXT if context associated with command_queue and image are not the same
     if i.context != q.context {
         return Err(CL_INVALID_CONTEXT);
+    }
+
+    // Not supported with depth stencil or msaa images.
+    if i.image_format.image_channel_order == CL_DEPTH_STENCIL || i.image_desc.num_samples > 0 {
+        return Err(CL_INVALID_OPERATION);
     }
 
     // CL_INVALID_VALUE if origin or region is NULL.

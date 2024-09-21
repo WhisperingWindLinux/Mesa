@@ -106,10 +106,8 @@ yaml-toml-shell-test:
   variables:
     S3_ARTIFACT_NAME: mesa-x86_64-android-debug
   needs:
-    - job: debian-testing
-      artifacts: true  # On the host we want the Linux build
     - job: debian-android
-      artifacts: false  # The Android build will be downloaded later
+      artifacts: true
     - job: debian/x86_64_test-android
       artifacts: false
     - !reference [.required-for-hardware-jobs, needs]

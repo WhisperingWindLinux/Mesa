@@ -20,7 +20,7 @@ Signed-off-by: Tomeu Vizoso <tomeu.vizoso@collabora.com>
  3 files changed, 34 insertions(+), 52 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index eb58cc7ba..98b8fc6cc 100644
+index eb58cc7..98b8fc6 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -272,7 +272,7 @@ include_directories(
@@ -90,54 +90,54 @@ index eb58cc7ba..98b8fc6cc 100644
  	set(DEQP_IOS_CODE_SIGN_IDENTITY "drawElements" CACHE STRING "Code sign identity for iOS build")
  
 diff --git a/framework/platform/android/tcuAndroidNativeActivity.cpp b/framework/platform/android/tcuAndroidNativeActivity.cpp
-index 6f8cd8fc5..b83e30f41 100644
+index 82a9ab6..4eab14a 100644
 --- a/framework/platform/android/tcuAndroidNativeActivity.cpp
 +++ b/framework/platform/android/tcuAndroidNativeActivity.cpp
-@@ -116,23 +116,25 @@ namespace Android
- NativeActivity::NativeActivity (ANativeActivity* activity)
- 	: m_activity(activity)
+@@ -115,23 +115,25 @@ namespace Android
+
+ NativeActivity::NativeActivity(ANativeActivity *activity) : m_activity(activity)
  {
--	activity->instance								= (void*)this;
--	activity->callbacks->onStart					= onStartCallback;
--	activity->callbacks->onResume					= onResumeCallback;
--	activity->callbacks->onSaveInstanceState		= onSaveInstanceStateCallback;
--	activity->callbacks->onPause					= onPauseCallback;
--	activity->callbacks->onStop						= onStopCallback;
--	activity->callbacks->onDestroy					= onDestroyCallback;
--	activity->callbacks->onWindowFocusChanged		= onWindowFocusChangedCallback;
--	activity->callbacks->onNativeWindowCreated		= onNativeWindowCreatedCallback;
--	activity->callbacks->onNativeWindowResized		= onNativeWindowResizedCallback;
--	activity->callbacks->onNativeWindowRedrawNeeded	= onNativeWindowRedrawNeededCallback;
--	activity->callbacks->onNativeWindowDestroyed	= onNativeWindowDestroyedCallback;
--	activity->callbacks->onInputQueueCreated		= onInputQueueCreatedCallback;
--	activity->callbacks->onInputQueueDestroyed		= onInputQueueDestroyedCallback;
--	activity->callbacks->onContentRectChanged		= onContentRectChangedCallback;
--	activity->callbacks->onConfigurationChanged		= onConfigurationChangedCallback;
--	activity->callbacks->onLowMemory				= onLowMemoryCallback;
-+	if (activity) {
-+		activity->instance								= (void*)this;
-+		activity->callbacks->onStart					= onStartCallback;
-+		activity->callbacks->onResume					= onResumeCallback;
-+		activity->callbacks->onSaveInstanceState		= onSaveInstanceStateCallback;
-+		activity->callbacks->onPause					= onPauseCallback;
-+		activity->callbacks->onStop						= onStopCallback;
-+		activity->callbacks->onDestroy					= onDestroyCallback;
-+		activity->callbacks->onWindowFocusChanged		= onWindowFocusChangedCallback;
-+		activity->callbacks->onNativeWindowCreated		= onNativeWindowCreatedCallback;
-+		activity->callbacks->onNativeWindowResized		= onNativeWindowResizedCallback;
-+		activity->callbacks->onNativeWindowRedrawNeeded	= onNativeWindowRedrawNeededCallback;
-+		activity->callbacks->onNativeWindowDestroyed	= onNativeWindowDestroyedCallback;
-+		activity->callbacks->onInputQueueCreated		= onInputQueueCreatedCallback;
-+		activity->callbacks->onInputQueueDestroyed		= onInputQueueDestroyedCallback;
-+		activity->callbacks->onContentRectChanged		= onContentRectChangedCallback;
-+		activity->callbacks->onConfigurationChanged		= onConfigurationChangedCallback;
-+		activity->callbacks->onLowMemory				= onLowMemoryCallback;
-+	}
+-    activity->instance                              = (void *)this;
+-    activity->callbacks->onStart                    = onStartCallback;
+-    activity->callbacks->onResume                   = onResumeCallback;
+-    activity->callbacks->onSaveInstanceState        = onSaveInstanceStateCallback;
+-    activity->callbacks->onPause                    = onPauseCallback;
+-    activity->callbacks->onStop                     = onStopCallback;
+-    activity->callbacks->onDestroy                  = onDestroyCallback;
+-    activity->callbacks->onWindowFocusChanged       = onWindowFocusChangedCallback;
+-    activity->callbacks->onNativeWindowCreated      = onNativeWindowCreatedCallback;
+-    activity->callbacks->onNativeWindowResized      = onNativeWindowResizedCallback;
+-    activity->callbacks->onNativeWindowRedrawNeeded = onNativeWindowRedrawNeededCallback;
+-    activity->callbacks->onNativeWindowDestroyed    = onNativeWindowDestroyedCallback;
+-    activity->callbacks->onInputQueueCreated        = onInputQueueCreatedCallback;
+-    activity->callbacks->onInputQueueDestroyed      = onInputQueueDestroyedCallback;
+-    activity->callbacks->onContentRectChanged       = onContentRectChangedCallback;
+-    activity->callbacks->onConfigurationChanged     = onConfigurationChangedCallback;
+-    activity->callbacks->onLowMemory                = onLowMemoryCallback;
++    if (activity) {
++        activity->instance                              = (void *)this;
++        activity->callbacks->onStart                    = onStartCallback;
++        activity->callbacks->onResume                   = onResumeCallback;
++        activity->callbacks->onSaveInstanceState        = onSaveInstanceStateCallback;
++        activity->callbacks->onPause                    = onPauseCallback;
++        activity->callbacks->onStop                     = onStopCallback;
++        activity->callbacks->onDestroy                  = onDestroyCallback;
++        activity->callbacks->onWindowFocusChanged       = onWindowFocusChangedCallback;
++        activity->callbacks->onNativeWindowCreated      = onNativeWindowCreatedCallback;
++        activity->callbacks->onNativeWindowResized      = onNativeWindowResizedCallback;
++        activity->callbacks->onNativeWindowRedrawNeeded = onNativeWindowRedrawNeededCallback;
++        activity->callbacks->onNativeWindowDestroyed    = onNativeWindowDestroyedCallback;
++        activity->callbacks->onInputQueueCreated        = onInputQueueCreatedCallback;
++        activity->callbacks->onInputQueueDestroyed      = onInputQueueDestroyedCallback;
++        activity->callbacks->onContentRectChanged       = onContentRectChangedCallback;
++        activity->callbacks->onConfigurationChanged     = onConfigurationChangedCallback;
++        activity->callbacks->onLowMemory                = onLowMemoryCallback;
++    }
  }
  
- NativeActivity::~NativeActivity (void)
+ NativeActivity::~NativeActivity(void)
 diff --git a/framework/platform/android/tcuAndroidPlatform.cpp b/framework/platform/android/tcuAndroidPlatform.cpp
-index b8a35898c..cf02e6b70 100644
+index 0472fa6..ff89294 100644
 --- a/framework/platform/android/tcuAndroidPlatform.cpp
 +++ b/framework/platform/android/tcuAndroidPlatform.cpp
 @@ -22,6 +22,7 @@
@@ -148,35 +148,35 @@ index b8a35898c..cf02e6b70 100644
  #include "tcuAndroidUtil.hpp"
  #include "gluRenderContext.hpp"
  #include "egluNativeDisplay.hpp"
-@@ -170,7 +171,7 @@ eglu::NativeWindow* NativeWindowFactory::createWindow (const eglu::WindowParams&
- 	Window* window = m_windowRegistry.tryAcquireWindow();
+@@ -198,7 +199,7 @@ eglu::NativeWindow *NativeWindowFactory::createWindow(const eglu::WindowParams &
+     Window *window = m_windowRegistry.tryAcquireWindow();
  
- 	if (!window)
--		throw ResourceError("Native window is not available", DE_NULL, __FILE__, __LINE__);
-+		throw NotSupportedError("Native window is not available", DE_NULL, __FILE__, __LINE__);
+     if (!window)
+-        throw ResourceError("Native window is not available", DE_NULL, __FILE__, __LINE__);
++        throw NotSupportedError("Native window is not available", DE_NULL, __FILE__, __LINE__);
  
- 	return new NativeWindow(window, params.width, params.height, format);
+     return new NativeWindow(window, params.width, params.height, format);
  }
-@@ -292,6 +293,9 @@ static size_t getTotalSystemMemory (ANativeActivity* activity)
+@@ -319,6 +320,9 @@ static size_t getTotalSystemMemory(ANativeActivity *activity)
  
- 	try
- 	{
-+		if (!activity)
-+			throw tcu::InternalError("No activity (running from command line?");
+     try
+     {
++        if (!activity)
++            throw tcu::InternalError("No activity (running from command line?");
 +
- 		const size_t totalMemory = getTotalAndroidSystemMemory(activity);
- 		print("Device has %.2f MiB of system memory\n", static_cast<double>(totalMemory) / static_cast<double>(MiB));
- 		return totalMemory;
-@@ -388,3 +392,9 @@ bool Platform::hasDisplay (vk::wsi::Type wsiType) const
+         const size_t totalMemory = getTotalAndroidSystemMemory(activity);
+         print("Device has %.2f MiB of system memory\n", static_cast<double>(totalMemory) / static_cast<double>(MiB));
+         return totalMemory;
+@@ -416,3 +420,9 @@ bool Platform::hasDisplay(vk::wsi::Type wsiType) const
  
- } // Android
- } // tcu
+ } // namespace Android
+ } // namespace tcu
 +
 +tcu::Platform* createPlatform (void)
 +{
-+	tcu::Android::NativeActivity activity(NULL);
-+	return new tcu::Android::Platform(activity);
++    tcu::Android::NativeActivity activity(NULL);
++    return new tcu::Android::Platform(activity);
 +}
 -- 
-2.42.0
+2.45.1
 

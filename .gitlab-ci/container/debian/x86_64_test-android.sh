@@ -17,6 +17,7 @@ EPHEMERAL=(
    dpkg-dev
    ninja-build
    unzip
+   sudo
 )
 
 DEPS=(
@@ -62,25 +63,30 @@ EXTRA_CMAKE_ARGS="-DDEQP_TARGET_TOOLCHAIN=ndk-modern -DANDROID_NDK_PATH=/$ndk -D
 
 ############### Downloading Cuttlefish resources ...
 
-CUTTLEFISH_VERSION=9082637   # Chosen from https://ci.android.com/builds/branches/aosp-master/grid?
+CUTTLEFISH_PROJECT_PATH=ao2/aosp-manifest
+CUTTLEFISH_BUILD_VERSION_TAGS=mesa-llvmpipe
+CUTTLEFISH_BUILD_NUMBER=20240902.001
 
 mkdir /cuttlefish
 pushd /cuttlefish
 
 curl -L --retry 4 -f --retry-all-errors --retry-delay 60 \
-  -o aosp_cf_x86_64_phone-img-$CUTTLEFISH_VERSION.zip https://ci.android.com/builds/submitted/$CUTTLEFISH_VERSION/aosp_cf_x86_64_phone-userdebug/latest/raw/aosp_cf_x86_64_phone-img-$CUTTLEFISH_VERSION.zip
-unzip aosp_cf_x86_64_phone-img-$CUTTLEFISH_VERSION.zip
-rm aosp_cf_x86_64_phone-img-$CUTTLEFISH_VERSION.zip
+  -o aosp_cf_x86_64_phone-img-$CUTTLEFISH_BUILD_NUMBER.zip "https://${S3_HOST}/${S3_ANDROID_BUCKET}/${CUTTLEFISH_PROJECT_PATH}/aosp-${CUTTLEFISH_BUILD_VERSION_TAGS}.${CUTTLEFISH_BUILD_NUMBER}/aosp_cf_x86_64_phone-img-$CUTTLEFISH_BUILD_NUMBER.zip"
+
+unzip aosp_cf_x86_64_phone-img-$CUTTLEFISH_BUILD_NUMBER.zip
+rm aosp_cf_x86_64_phone-img-$CUTTLEFISH_BUILD_NUMBER.zip
 ls -lhS ./*
 
 curl -L --retry 4 -f --retry-all-errors --retry-delay 60 \
-  https://ci.android.com/builds/submitted/$CUTTLEFISH_VERSION/aosp_cf_x86_64_phone-userdebug/latest/raw/cvd-host_package.tar.gz | tar -xzvf-
+  -o cvd-host_package.tar.gz "https://${S3_HOST}/${S3_ANDROID_BUCKET}/${CUTTLEFISH_PROJECT_PATH}/aosp-${CUTTLEFISH_BUILD_VERSION_TAGS}.${CUTTLEFISH_BUILD_NUMBER}/cvd-host_package.tar.gz"
+tar -xzvf cvd-host_package.tar.gz
+rm cvd-host_package.tar.gz
 
 popd
 
 ############### Building and installing Debian package ...
 
-ANDROID_CUTTLEFISH_VERSION=f6494d9fbeaa9974b56923e3029909e5d5f440dd
+ANDROID_CUTTLEFISH_VERSION=v0.9.31
 
 mkdir android-cuttlefish
 pushd android-cuttlefish
@@ -89,11 +95,9 @@ git remote add origin https://github.com/google/android-cuttlefish.git
 git fetch --depth 1 origin "$ANDROID_CUTTLEFISH_VERSION"
 git checkout FETCH_HEAD
 
-pushd base
-dpkg-buildpackage -uc -us
-popd
+./tools/buildutils/build_packages.sh
 
-apt-get install -y ./cuttlefish-base_*.deb
+apt-get install -y ./cuttlefish-base_*.deb ./cuttlefish-user_*.deb
 
 popd
 rm -rf android-cuttlefish
@@ -105,6 +109,7 @@ usermod -a -G kvm,cvdnetwork root
 
 rm -rf "/${ndk:?}"
 
+export SUDO_FORCE_REMOVE=yes
 apt-get purge -y "${EPHEMERAL[@]}"
 
 . .gitlab-ci/container/container_post_build.sh

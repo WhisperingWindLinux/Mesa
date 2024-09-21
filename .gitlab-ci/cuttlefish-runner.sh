@@ -17,6 +17,11 @@ chown root.kvm /dev/kvm
 
 cd /cuttlefish
 
+# stop cuttlefish if the script ends prematurely or is interrupted
+trap '$ROOT_PATH/cuttlefish/bin/stop_cvd' EXIT
+trap 'exit 2' HUP INT PIPE TERM
+
+ulimit -S -n 32768
 launch_cvd --verbosity=DEBUG --report_anonymous_usage_stats=n --cpus=8 --memory_mb=8192 --gpu_mode="$ANDROID_GPU_MODE" --daemon --enable_minimal_mode=true --guest_enforce_security=false --use_overlay=false
 sleep 1
 
@@ -63,30 +68,42 @@ $ADB push install/deqp-$DEQP_SUITE.toml /data/.
 
 # remove 32 bits libs from /vendor/lib
 
-$ADB shell rm /vendor/lib/dri/${ANDROID_DRIVER}_dri.so
-$ADB shell rm /vendor/lib/libglapi.so
-$ADB shell rm /vendor/lib/egl/libGLES_mesa.so
+$ADB shell rm -f /vendor/lib/libglapi.so
+$ADB shell rm -f /vendor/lib/egl/libGLES_mesa.so
 
-$ADB shell rm /vendor/lib/egl/libEGL_angle.so
-$ADB shell rm /vendor/lib/egl/libEGL_emulation.so
-$ADB shell rm /vendor/lib/egl/libGLESv1_CM_angle.so
-$ADB shell rm /vendor/lib/egl/libGLESv1_CM_emulation.so
-$ADB shell rm /vendor/lib/egl/libGLESv2_angle.so
-$ADB shell rm /vendor/lib/egl/libGLESv2_emulation.so
+$ADB shell rm -f /vendor/lib/egl/libEGL_angle.so
+$ADB shell rm -f /vendor/lib/egl/libEGL_emulation.so
+$ADB shell rm -f /vendor/lib/egl/libGLESv1_CM_angle.so
+$ADB shell rm -f /vendor/lib/egl/libGLESv1_CM_emulation.so
+$ADB shell rm -f /vendor/lib/egl/libGLESv2_angle.so
+$ADB shell rm -f /vendor/lib/egl/libGLESv2_emulation.so
 
 # replace on /vendor/lib64
 
-$ADB push install/lib/dri/${ANDROID_DRIVER}_dri.so /vendor/lib64/dri/${ANDROID_DRIVER}_dri.so
+$ADB push install/lib/libgallium_dri.so /vendor/lib64/libgallium_dri.so
 $ADB push install/lib/libglapi.so /vendor/lib64/libglapi.so
 $ADB push install/lib/libEGL.so /vendor/lib64/egl/libEGL_mesa.so
+$ADB push install/lib/libGLESv1_CM.so /vendor/lib64/egl/libGLESv1_CM_mesa.so
+$ADB push install/lib/libGLESv2.so /vendor/lib64/egl/libGLESv2_mesa.so
 
-$ADB shell rm /vendor/lib64/egl/libEGL_angle.so
-$ADB shell rm /vendor/lib64/egl/libEGL_emulation.so
-$ADB shell rm /vendor/lib64/egl/libGLESv1_CM_angle.so
-$ADB shell rm /vendor/lib64/egl/libGLESv1_CM_emulation.so
-$ADB shell rm /vendor/lib64/egl/libGLESv2_angle.so
-$ADB shell rm /vendor/lib64/egl/libGLESv2_emulation.so
+$ADB shell rm -f /vendor/lib64/egl/libEGL_angle.so
+$ADB shell rm -f /vendor/lib64/egl/libEGL_emulation.so
+$ADB shell rm -f /vendor/lib64/egl/libGLESv1_CM_angle.so
+$ADB shell rm -f /vendor/lib64/egl/libGLESv1_CM_emulation.so
+$ADB shell rm -f /vendor/lib64/egl/libGLESv2_angle.so
+$ADB shell rm -f /vendor/lib64/egl/libGLESv2_emulation.so
 
+# Check what GLES implementation Surfaceflinger is using before copying the new mesa libraries
+while [ "`$ADB shell dumpsys SurfaceFlinger | grep GLES`" = "" ] ; do sleep 1; done
+$ADB shell dumpsys SurfaceFlinger | grep GLES
+
+# restart Android shell, so that surfaceflinger uses the new libraries
+$ADB shell stop
+$ADB shell start
+
+# Check what GLES implementation Surfaceflinger is using after copying the new mesa libraries
+while [ "`$ADB shell dumpsys SurfaceFlinger | grep GLES`" = "" ] ; do sleep 1; done
+$ADB shell dumpsys SurfaceFlinger | grep GLES
 
 AOSP_RESULTS=/data/results
 uncollapsed_section_switch cuttlefish_test "cuttlefish: testing"

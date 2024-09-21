@@ -1183,6 +1183,12 @@ nir_src_is_undef(nir_src src)
 }
 
 static inline bool
+nir_src_is_alu(nir_src src)
+{
+   return src.ssa->parent_instr->type == nir_instr_type_alu;
+}
+
+static inline bool
 nir_src_is_divergent(nir_src src)
 {
    return src.ssa->divergent;
@@ -6817,6 +6823,8 @@ bool nir_opt_ray_queries(nir_shader *shader);
 bool nir_opt_ray_query_ranges(nir_shader *shader);
 
 bool nir_opt_reuse_constants(nir_shader *shader);
+
+bool nir_opt_select(nir_shader *shader);
 
 void nir_sweep(nir_shader *shader);
 

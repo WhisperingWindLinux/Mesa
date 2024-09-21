@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "amd_family.h"
+#include "glsl_types.h"
+#include "nir.h"
 #include "nir_builder.h"
+#include "nir_builder_opcodes.h"
 #include "radv_nir.h"
 
 static unsigned
@@ -94,8 +98,135 @@ radv_nir_translate_matrix_type(const struct glsl_type *orig_type, struct hash_ta
       return orig_type;
 }
 
+static void
+radv_nir_cmat_emulate_muladd(nir_builder *b, unsigned wave_size, nir_intrinsic_instr *intr)
+{
+   nir_def *local_idx = nir_load_subgroup_invocation(b);
+   nir_def *in_range = NULL;
+   {
+      nir_def *trait = nir_iand_imm(b, local_idx, 0x18);
+      nir_def *reverse = nir_bitfield_reverse(b, trait);
+      nir_def *shifted = nir_ushr_imm(b, reverse, 24);
+      in_range = nir_ine(b, trait, shifted);
+   }
+   nir_def *hi_range = nir_ige_imm(b, local_idx, 32);
+
+   /* Collect base info. */
+   struct {
+      nir_alu_type base_type;
+      nir_def *(*idot)(nir_builder *, nir_def *, nir_def *, nir_def *);
+   } info = {};
+   {
+      nir_deref_instr *deref_a = nir_instr_as_deref(intr->src[1].ssa->parent_instr);
+      const struct glsl_cmat_description desc_a = *glsl_get_cmat_description(deref_a->type);
+      nir_deref_instr *deref_c = nir_instr_as_deref(intr->src[3].ssa->parent_instr);
+      const struct glsl_cmat_description desc_c = *glsl_get_cmat_description(deref_c->type);
+      info.base_type = nir_get_nir_type_for_glsl_base_type(desc_a.element_type) |
+         nir_get_nir_type_for_glsl_base_type(desc_c.element_type);
+      if (glsl_base_type_is_integer(desc_a.element_type)) {
+         const bool saturate = nir_intrinsic_saturate(intr);
+         switch (info.base_type & (nir_type_int | nir_type_uint)) {
+         default:
+            assert(false && "cannot handle this type");
+            break;
+         case nir_type_int:
+            info.idot = saturate ? &nir_sdot_4x8_iadd_sat : &nir_sdot_4x8_iadd;
+            break;
+         case nir_type_uint:
+            info.idot = saturate ? &nir_udot_4x8_uadd_sat : &nir_udot_4x8_uadd;
+            break;
+         case nir_type_int | nir_type_uint:
+            info.idot = saturate ? &nir_sudot_4x8_iadd_sat : &nir_udot_4x8_uadd;
+            break;
+         }
+      }
+   }
+
+   /* Prepare the matrix B */
+   nir_def *B = radv_nir_load_cmat(b, wave_size, intr->src[2].ssa);
+   nir_def *tempb[16] = {NULL};
+   for (unsigned idx = 0U; idx < B->num_components; idx++) {
+      nir_def *channel = nir_channel(b, B, idx);
+      nir_def *inrange_idx = nir_ixor(b, local_idx, nir_imm_int(b, 8));
+      nir_def *shuffled = nir_shuffle(b, channel, inrange_idx);
+      tempb[idx] = nir_bcsel(b, in_range, shuffled, channel);
+   }
+
+   nir_def *results[16] = {NULL};
+   nir_def *C = radv_nir_load_cmat(b, wave_size, intr->src[3].ssa);
+   nir_def *c_shuffled_idx = NULL;
+   nir_def *A = radv_nir_load_cmat(b, wave_size, intr->src[1].ssa);
+   nir_def *a_shuffled_idx = NULL;
+   {
+      nir_def *extract_idx = nir_ushr_imm(b, nir_iand_imm(b, local_idx, 8), 3);
+      a_shuffled_idx = nir_iadd(b, nir_iand_imm(b, local_idx, 0x30), extract_idx);
+      nir_def *hi_idx = nir_iadd_imm(b, a_shuffled_idx, 2);
+      a_shuffled_idx = nir_bcsel(b, hi_range, hi_idx, a_shuffled_idx);
+      nir_def *inrange_idx = nir_ixor(b, local_idx, nir_imm_int(b, 0x18));
+      c_shuffled_idx = nir_bcsel(b, in_range, inrange_idx, local_idx);
+   }
+   /* Prepare the matrix C for integer because of cannot insert shuffle between dot and add */
+   if (info.base_type & (nir_type_int | nir_type_uint)) {
+      nir_def *tmpc[16] = {NULL};
+      for (unsigned idx = 0U; idx < C->num_components; idx++) {
+         tmpc[idx] = nir_shuffle(b, nir_channel(b, C, idx), c_shuffled_idx);
+      }
+      C = nir_vec(b, tmpc, C->num_components);
+   }
+   for (unsigned loop = 0; loop < C->num_components; loop++) {
+      /* Skip the undef src operand */
+      if ((info.base_type ^ nir_type_float16) == 0 && (loop % 2 == 1)) {
+         results[loop] = nir_undef(b, 1, C->bit_size);
+         continue;
+      }
+      /* Prepare the matrix A */
+      nir_def *tempa[16] = {NULL};
+      for (unsigned idx = 0; idx < A->num_components; idx++) {
+         nir_def *channel = nir_channel(b, A, idx);
+         tempa[idx] = nir_shuffle(b, channel, a_shuffled_idx);
+      }
+      a_shuffled_idx = nir_iadd_imm(b, a_shuffled_idx, wave_size == 32 ? 2 : 4);
+      /* Accumulate result */
+      if (info.base_type & nir_type_float) {
+         nir_def *veca = nir_vec(b, tempa, A->num_components);
+         nir_def *vecb = nir_vec(b, tempb, B->num_components);
+         nir_def *dot = nir_fdot(b, veca, vecb);
+         nir_def *tmpc = nir_shuffle(b, dot, c_shuffled_idx);
+         tmpc = nir_convert_to_bit_size(b, tmpc, nir_type_float, C->bit_size);
+         results[loop] = nir_fadd(b, tmpc, nir_channel(b, C, loop));
+      } else {
+         const unsigned packed_num = 32 / A->bit_size;
+         const unsigned iter_num = A->num_components / packed_num;
+         nir_def *dot = nir_channel(b, C, loop);
+         for (unsigned idx = 0; idx < iter_num; idx++)
+            dot = info.idot(b, nir_pack_32_4x8(b, nir_vec(b, &tempa[packed_num * idx], packed_num)),
+                            nir_pack_32_4x8(b, nir_vec(b, &tempb[packed_num * idx], packed_num)) , dot);
+         results[loop] = nir_shuffle(b, dot, c_shuffled_idx);
+      }
+   }
+   nir_def *ret = nir_vec(b, results, C->num_components);
+
+   nir_store_deref(b, nir_instr_as_deref(intr->src[0].ssa->parent_instr), ret,
+                   nir_component_mask(ret->num_components));
+}
+
+static void
+radv_nir_cmat_lower_muladd(nir_builder *b, unsigned wave_size, nir_intrinsic_instr *intr)
+{
+   nir_def *A = radv_nir_load_cmat(b, wave_size, intr->src[1].ssa);
+   nir_def *B = radv_nir_load_cmat(b, wave_size, intr->src[2].ssa);
+   nir_def *C = radv_nir_load_cmat(b, wave_size, intr->src[3].ssa);
+   nir_def *ret;
+
+   ret = nir_cmat_muladd_amd(b, A, B, C, .saturate = nir_intrinsic_saturate(intr),
+                             .cmat_signed_mask = nir_intrinsic_cmat_signed_mask(intr));
+
+   nir_store_deref(b, nir_instr_as_deref(intr->src[0].ssa->parent_instr), ret,
+                   nir_component_mask(ret->num_components));
+}
+
 bool
-radv_nir_lower_cooperative_matrix(nir_shader *shader, unsigned wave_size)
+radv_nir_lower_cooperative_matrix(nir_shader *shader, unsigned wave_size, enum amd_gfx_level gfxip)
 {
    bool progress = false;
 
@@ -307,16 +438,10 @@ radv_nir_lower_cooperative_matrix(nir_shader *shader, unsigned wave_size)
                break;
             }
             case nir_intrinsic_cmat_muladd: {
-               nir_def *A = radv_nir_load_cmat(&b, wave_size, intr->src[1].ssa);
-               nir_def *B = radv_nir_load_cmat(&b, wave_size, intr->src[2].ssa);
-               nir_def *C = radv_nir_load_cmat(&b, wave_size, intr->src[3].ssa);
-               nir_def *ret;
-
-               ret = nir_cmat_muladd_amd(&b, A, B, C, .saturate = nir_intrinsic_saturate(intr),
-                                         .cmat_signed_mask = nir_intrinsic_cmat_signed_mask(intr));
-
-               nir_store_deref(&b, nir_instr_as_deref(intr->src[0].ssa->parent_instr), ret,
-                               nir_component_mask(ret->num_components));
+               /* if (gfxip < GFX11) */
+                  radv_nir_cmat_emulate_muladd(&b, wave_size, intr);
+               /* else */
+                  /* radv_nir_cmat_lower_muladd(&b, wave_size, intr); */
                nir_instr_remove(instr);
                progress = true;
                break;

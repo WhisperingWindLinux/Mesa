@@ -156,6 +156,7 @@ get_device_extensions(const struct tu_physical_device *device,
       .KHR_draw_indirect_count = true,
       .KHR_driver_properties = true,
       .KHR_dynamic_rendering = true,
+      .KHR_dynamic_rendering_local_read = true,
       .KHR_external_fence = true,
       .KHR_external_fence_fd = true,
       .KHR_external_memory = true,
@@ -451,6 +452,9 @@ tu_get_features(struct tu_physical_device *pdevice,
    features->dynamicRendering                    = true;
    features->shaderIntegerDotProduct             = true;
    features->maintenance4                        = true;
+
+   /* VK_KHR_dynamic_rendering_local_read */
+   features->dynamicRenderingLocalRead = true;
 
    /* VK_KHR_index_type_uint8 */
    features->indexTypeUint8 = true;
@@ -1124,8 +1128,7 @@ tu_get_properties(struct tu_physical_device *pdevice,
       COND(pdevice->info->a7xx.storage_8bit, 1));
    props->robustStorageBufferDescriptorSize =
       props->storageBufferDescriptorSize;
-   props->inputAttachmentDescriptorSize = TU_DEBUG(DYNAMIC) ?
-      A6XX_TEX_CONST_DWORDS * 4 : 0;
+   props->inputAttachmentDescriptorSize = A6XX_TEX_CONST_DWORDS * 4;
    props->maxSamplerDescriptorBufferRange = ~0ull;
    props->maxResourceDescriptorBufferRange = ~0ull;
    props->samplerDescriptorBufferAddressSpaceSize = ~0ull;

@@ -363,7 +363,9 @@ static nir_def *
 build_bindless(struct tu_device *dev, nir_builder *b,
                nir_deref_instr *deref, bool is_sampler,
                struct tu_shader *shader,
-               const struct tu_pipeline_layout *layout)
+               const struct tu_pipeline_layout *layout,
+               uint32_t read_only_input_attachments,
+               bool dynamic_renderpass)
 {
    nir_variable *var = nir_deref_instr_get_variable(deref);
 
@@ -374,9 +376,30 @@ build_bindless(struct tu_device *dev, nir_builder *b,
 
    /* input attachments use non bindless workaround */
    if (bind_layout->type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT &&
+       (!dynamic_renderpass ||
+        (var->data.index == ~0u ? !(read_only_input_attachments & 0x1) :
+        !(read_only_input_attachments & (1u << (var->data.index + 1))))) &&
        !TU_DEBUG(DYNAMIC)) {
       const struct glsl_type *glsl_type = glsl_without_array(var->type);
-      uint32_t idx = var->data.index * 2;
+      uint32_t idx;
+
+      /* With dynamic renderpasses, we reserve the first two attachments for
+       * input attachments without an InputAttachmentIndex, which must be for
+       * depth/stencil if they are not read-only, and shift over the rest of
+       * the indices.
+       */
+      if (var->data.index == ~0u) {
+         assert(dynamic_renderpass);
+         idx = 0;
+      } else if (dynamic_renderpass) {
+         idx = (var->data.index + 1) * 2;
+      } else {
+         idx = var->data.index * 2;
+      }
+
+      /* Record which input attachments are used for tracking feedback loops */
+      if (dynamic_renderpass)
+         shader->fs.dynamic_input_attachments_used |= (1u << (idx / 2));
 
       BITSET_SET_RANGE_INSIDE_WORD(b->shader->info.textures_used, idx, (idx + bind_layout->array_size * 2) - 1);
 
@@ -425,7 +448,7 @@ lower_image_deref(struct tu_device *dev, nir_builder *b,
                   const struct tu_pipeline_layout *layout)
 {
    nir_deref_instr *deref = nir_src_as_deref(instr->src[0]);
-   nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout);
+   nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout, 0, false);
    nir_rewrite_image_intrinsic(instr, bindless, true);
 }
 
@@ -570,14 +593,17 @@ lower_tex_ycbcr(const struct tu_pipeline_layout *layout,
 
 static bool
 lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
-          struct tu_shader *shader, const struct tu_pipeline_layout *layout)
+          struct tu_shader *shader, const struct tu_pipeline_layout *layout,
+          uint32_t read_only_input_attachments, bool dynamic_renderpass)
 {
    lower_tex_ycbcr(layout, b, tex);
 
    int sampler_src_idx = nir_tex_instr_src_index(tex, nir_tex_src_sampler_deref);
    if (sampler_src_idx >= 0) {
       nir_deref_instr *deref = nir_src_as_deref(tex->src[sampler_src_idx].src);
-      nir_def *bindless = build_bindless(dev, b, deref, true, shader, layout);
+      nir_def *bindless = build_bindless(dev, b, deref, true, shader, layout,
+                                         read_only_input_attachments,
+                                         dynamic_renderpass);
       nir_src_rewrite(&tex->src[sampler_src_idx].src, bindless);
       tex->src[sampler_src_idx].src_type = nir_tex_src_sampler_handle;
    }
@@ -585,7 +611,9 @@ lower_tex(nir_builder *b, nir_tex_instr *tex, struct tu_device *dev,
    int tex_src_idx = nir_tex_instr_src_index(tex, nir_tex_src_texture_deref);
    if (tex_src_idx >= 0) {
       nir_deref_instr *deref = nir_src_as_deref(tex->src[tex_src_idx].src);
-      nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout);
+      nir_def *bindless = build_bindless(dev, b, deref, false, shader, layout,
+                                         read_only_input_attachments,
+                                         dynamic_renderpass);
       nir_src_rewrite(&tex->src[tex_src_idx].src, bindless);
       tex->src[tex_src_idx].src_type = nir_tex_src_texture_handle;
 
@@ -601,6 +629,8 @@ struct lower_instr_params {
    struct tu_device *dev;
    struct tu_shader *shader;
    const struct tu_pipeline_layout *layout;
+   uint32_t read_only_input_attachments;
+   bool dynamic_renderpass;
 };
 
 static bool
@@ -610,7 +640,9 @@ lower_instr(nir_builder *b, nir_instr *instr, void *cb_data)
    b->cursor = nir_before_instr(instr);
    switch (instr->type) {
    case nir_instr_type_tex:
-      return lower_tex(b, nir_instr_as_tex(instr), params->dev, params->shader, params->layout);
+      return lower_tex(b, nir_instr_as_tex(instr), params->dev, params->shader, params->layout,
+                       params->read_only_input_attachments,
+                       params->dynamic_renderpass);
    case nir_instr_type_intrinsic:
       return lower_intrinsic(b, nir_instr_as_intrinsic(instr), params->dev, params->shader, params->layout);
    default:
@@ -780,6 +812,8 @@ static bool
 tu_lower_io(nir_shader *shader, struct tu_device *dev,
             struct tu_shader *tu_shader,
             const struct tu_pipeline_layout *layout,
+            uint32_t read_only_input_attachments,
+            bool dynamic_renderpass,
             unsigned *reserved_consts_vec4_out)
 {
    tu_shader->const_state.push_consts = (struct tu_push_constant_range) {
@@ -891,6 +925,8 @@ tu_lower_io(nir_shader *shader, struct tu_device *dev,
       .dev = dev,
       .shader = tu_shader,
       .layout = layout,
+      .read_only_input_attachments = read_only_input_attachments,
+      .dynamic_renderpass = dynamic_renderpass,
    };
 
    bool progress = false;
@@ -2366,7 +2402,12 @@ tu_shader_create(struct tu_device *dev,
           * multiview is enabled.
           */
          .use_view_id_for_layer = key->multiview_mask != 0,
-         .unscaled_input_attachment_ir3 = key->unscaled_input_fragcoord,
+         .unscaled_depth_stencil_ir3 =
+            key->dynamic_renderpass && !(key->read_only_input_attachments & 1),
+         .unscaled_input_attachment_ir3 =
+            key->dynamic_renderpass ?
+            ~(key->read_only_input_attachments >> 1) :
+            key->unscaled_input_fragcoord,
       };
       NIR_PASS_V(nir, nir_lower_input_attachments, &att_options);
    }
@@ -2461,7 +2502,9 @@ tu_shader_create(struct tu_device *dev,
    }
 
    unsigned reserved_consts_vec4 = 0;
-   NIR_PASS_V(nir, tu_lower_io, dev, shader, layout, &reserved_consts_vec4);
+   NIR_PASS_V(nir, tu_lower_io, dev, shader, layout,
+              key->read_only_input_attachments, key->dynamic_renderpass,
+              &reserved_consts_vec4);
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 

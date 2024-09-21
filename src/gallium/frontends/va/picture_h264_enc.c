@@ -716,6 +716,19 @@ static void parseEncPpsParamsH264(vlVaContext *context, struct vl_rbsp *rbsp)
    }
 }
 
+static void parseEncPrefixH264(vlVaContext *context, struct vl_rbsp *rbsp)
+{
+   if (!vl_rbsp_u(rbsp, 1)) /* svc_extension_flag */
+      return;
+
+   vl_rbsp_u(rbsp, 1); /* idr_flag */
+   vl_rbsp_u(rbsp, 6); /* priority_id */
+   vl_rbsp_u(rbsp, 1); /* no_inter_layer_pred_flag */
+   vl_rbsp_u(rbsp, 3); /* dependency_id */
+   vl_rbsp_u(rbsp, 4); /* quality_id */
+   context->desc.h264enc.pic_ctrl.temporal_id = vl_rbsp_u(rbsp, 3);
+}
+
 VAStatus
 vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *buf)
 {
@@ -774,6 +787,9 @@ vlVaHandleVAEncPackedHeaderDataBufferTypeH264(vlVaContext *context, vlVaBuffer *
       case PIPE_H264_NAL_PPS:
          parseEncPpsParamsH264(context, &rbsp);
          break;
+      case PIPE_H264_NAL_PREFIX:
+         parseEncPrefixH264(context, &rbsp);
+         break;
       default:
          break;
       }
@@ -824,13 +840,23 @@ vlVaHandleVAEncMiscParameterTypeHRDH264(vlVaContext *context, VAEncMiscParameter
 {
    VAEncMiscParameterHRD *ms = (VAEncMiscParameterHRD *)misc->data;
 
-   if (ms->buffer_size) {
-      context->desc.h264enc.rate_ctrl[0].vbv_buffer_size = ms->buffer_size;
-      context->desc.h264enc.rate_ctrl[0].vbv_buf_lv = (ms->initial_buffer_fullness << 6 ) / ms->buffer_size;
-      context->desc.h264enc.rate_ctrl[0].vbv_buf_initial_size = ms->initial_buffer_fullness;
-      /* Distinguishes from the default params set for these values in other
+   if (ms->buffer_size == 0)
+      return VA_STATUS_ERROR_INVALID_PARAMETER;
+
+   /* Distinguishes from the default params set for these values in other
       functions and app specific params passed down via HRD buffer */
-      context->desc.h264enc.rate_ctrl[0].app_requested_hrd_buffer = true;
+   context->desc.h264enc.rate_ctrl[0].app_requested_hrd_buffer = true;
+   context->desc.h264enc.rate_ctrl[0].vbv_buffer_size = ms->buffer_size;
+   context->desc.h264enc.rate_ctrl[0].vbv_buf_lv = (ms->initial_buffer_fullness << 6) / ms->buffer_size;
+   context->desc.h264enc.rate_ctrl[0].vbv_buf_initial_size = ms->initial_buffer_fullness;
+
+   for (unsigned i = 1; i < context->desc.h264enc.seq.num_temporal_layers; i++) {
+      context->desc.h264enc.rate_ctrl[i].vbv_buffer_size =
+         (float)ms->buffer_size / context->desc.h264enc.rate_ctrl[0].target_bitrate *
+         context->desc.h264enc.rate_ctrl[i].target_bitrate;
+      context->desc.h264enc.rate_ctrl[i].vbv_buf_lv = context->desc.h264enc.rate_ctrl[0].vbv_buf_lv;
+      context->desc.h264enc.rate_ctrl[i].vbv_buf_initial_size =
+         (context->desc.h264enc.rate_ctrl[i].vbv_buffer_size >> 6) * context->desc.h264enc.rate_ctrl[i].vbv_buf_lv;
    }
 
    return VA_STATUS_SUCCESS;
